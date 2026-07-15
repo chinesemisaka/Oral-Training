@@ -1,0 +1,87 @@
+<!-- pages/result/result.wxml -->
+<view class="container">
+  
+  <!-- 得分卡片 -->
+  <view class="score-card {{passed ? 'pass' : 'fail'}}">
+    <view class="score-value">{{score}}</view>
+    <view class="score-label">{{passed ? '通过' : '未通过'}}</view>
+  </view>
+
+  <!-- 评价 -->
+  <view class="evaluation">
+    <text class="evaluation-text">{{evaluation}}</text>
+  </view>
+
+  <!-- 雷达图 -->
+  <view class="radar-section">
+    <view class="section-title">能力维度评估</view>
+    <canvas type="2d" id="radarCanvas" class="radar-canvas"></canvas>
+  </view>
+
+  <!-- 详细得分 -->
+  <view class="scores-section">
+    <view class="section-title">详细得分</view>
+    
+    <!-- 同理心得分 -->
+    <view class="score-item">
+      <view class="score-header">
+        <text class="score-name">❤️ 同理心与温度</text>
+        <text class="score-num">{{empathyScore}}分</text>
+      </view>
+      <view class="score-bar">
+        <view class="score-fill" style="width: {{empathyScore+'%'}}; background: #52c41a;"></view>
+      </view>
+    </view>
+
+    <!-- 需求挖掘力 -->
+    <view class="score-item">
+      <view class="score-header">
+        <text class="score-name">🔍 需求挖掘力</text>
+        <text class="score-num">{{demandScore}}分</text>
+      </view>
+      <view class="score-bar">
+        <view class="score-fill" style="width: {{demandScore+'%'}}; background: #1890ff;"></view>
+      </view>
+    </view>
+
+    <!-- 价值塑造力 -->
+    <view class="score-item">
+      <view class="score-header">
+        <text class="score-name">💰 价值塑造力</text>
+        <text class="score-num">{{valueScore}}分</text>
+      </view>
+      <view class="score-bar">
+        <view class="score-fill" style="width: {{valueScore+'%'}}; background: #fa8c16;"></view>
+      </view>
+    </view>
+
+    <!-- 邀约转化 -->
+    <view class="score-item">
+      <view class="score-header">
+        <text class="score-name">📞 邀约转化</text>
+        <text class="score-num">{{appointmentScore}}分</text>
+      </view>
+      <view class="score-bar">
+        <view class="score-fill" style="width: {{appointmentScore+'%'}}; background: #eb2f96;"></view>
+      </view>
+    </view>
+
+    <!-- 合规意识 -->
+    <view class="score-item">
+      <view class="score-header">
+        <text class="score-name">⚖️ 合规意识</text>
+        <text class="score-num">{{complianceScore}}分</text>
+      </view>
+      <view class="score-bar">
+        <view class="score-fill" style="width: {{complianceScore+'%'}}; background: #722ed1;"></view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 按钮区域 -->
+  <view class="action-buttons">
+    <button class="btn btn-secondary" bindtap="retry">重新挑战</button>
+    <button class="btn btn-primary" bindtap="nextLevel">继续挑战</button>
+    <button class="btn btn-outline" bindtap="viewDetailReport">查看详细报告</button>
+  </view>
+</view>

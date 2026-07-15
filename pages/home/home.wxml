@@ -1,0 +1,58 @@
+<!-- pages/home/home.wxml -->
+<view class="container">
+  <!-- 大标题 -->
+  <view class="hero-title">
+    <text class="hero-title-text">口腔客服陪练系统</text>
+  </view>
+
+  <!-- 去训练按钮 -->
+  <view class="train-btn-wrap">
+    <button class="train-btn" bindtap="goTraining">去训练</button>
+  </view>
+
+  <!-- 热门话术 -->
+  <view class="section">
+    <view class="section-header">
+      <text class="section-title">🔥 热门话术</text>
+      <text class="section-more" bindtap="viewAllScripts">{{showAll ? '收起' : '查看全部'}} ›</text>
+    </view>
+    <view class="script-list">
+      <view
+        class="script-card"
+        wx:for="{{hotScripts}}"
+        wx:key="id"
+        bindtap="onScriptTap"
+        data-id="{{item.id}}"
+      >
+        <view class="script-header">
+          <text class="script-title">{{item.title}}</text>
+        </view>
+        <text class="script-summary">{{item.summary}}</text>
+        <view class="script-tags">
+          <text class="script-tag" wx:for="{{item.tags}}" wx:for-item="tag" wx:key="*this">{{tag}}</text>
+        </view>
+        <!-- 示范对话 -->
+        <view class="script-dialogue" wx:if="{{expandedIds[item.id]}}">
+          <view class="dialogue-round" wx:for="{{item.dialogues}}" wx:for-item="dialogue" wx:key="index">
+            <view class="dialogue-bubble {{dialogue.role === 'patient' ? 'patient' : 'service'}}">
+              <text class="dialogue-role">{{dialogue.role === 'patient' ? '患者' : '客服'}}</text>
+              <text class="dialogue-text">{{dialogue.text}}</text>
+            </view>
+          </view>
+        </view>
+        <view class="script-footer">
+          <view class="script-meta">
+            <text class="meta-item">⭐ {{item.score}}分</text>
+            <text class="meta-item">📖 {{item.usageCount}}人使用</text>
+          </view>
+          <text class="script-expand-hint">{{expandedIds[item.id] ? '收起对话 ▲' : '点击查看示范对话 ▼'}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 加载状态 -->
+  <view wx:if="{{loading}}" class="loading">
+    <text>加载中...</text>
+  </view>
+</view>

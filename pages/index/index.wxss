@@ -1,0 +1,264 @@
+/* pages/index/index.wxss */
+.container {
+  min-height: 100vh;
+  background: #f5f5f5;
+  padding-bottom: 30rpx;
+}
+
+/* 用户卡片 */
+.user-card {
+  background: linear-gradient(135deg, #007aff, #00c6fb);
+  margin: 20rpx;
+  padding: 30rpx;
+  border-radius: 24rpx;
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
+.avatar {
+  width: 100rpx;
+  height: 100rpx;
+  border-radius: 50%;
+  border: 4rpx solid #fff;
+}
+
+.user-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.nickname {
+  font-size: 36rpx;
+  font-weight: bold;
+  color: #fff;
+}
+
+.level {
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* 欢迎卡片 */
+.welcome-card {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  margin: 20rpx;
+  padding: 40rpx;
+  border-radius: 24rpx;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 15rpx;
+}
+
+.welcome-title {
+  font-size: 40rpx;
+  font-weight: bold;
+  color: #fff;
+}
+
+.welcome-desc {
+  font-size: 28rpx;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.welcome-tip {
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* 分类列表 */
+.category-list {
+  padding: 20rpx;
+}
+
+.category-card {
+  background: #fff;
+  border-radius: 24rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 4rpx 20rpx rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+}
+
+.category-card.expanded {
+  box-shadow: 0 6rpx 30rpx rgba(0, 0, 0, 0.08);
+}
+
+/* 分类头部 */
+.category-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 30rpx;
+}
+
+.category-left {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+  flex: 1;
+}
+
+.category-icon-wrap {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.category-icon {
+  font-size: 44rpx;
+}
+
+.category-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.category-name {
+  font-size: 34rpx;
+  font-weight: bold;
+  color: #333;
+}
+
+.category-desc {
+  font-size: 24rpx;
+  color: #999;
+}
+
+.category-right {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  flex-shrink: 0;
+}
+
+.category-progress {
+  font-size: 24rpx;
+  color: #007aff;
+  font-weight: bold;
+  background: #e6f2ff;
+  padding: 4rpx 16rpx;
+  border-radius: 16rpx;
+}
+
+.category-arrow {
+  font-size: 40rpx;
+  color: #ccc;
+  transition: transform 0.3s ease;
+}
+
+.category-arrow.rotate {
+  transform: rotate(90deg);
+}
+
+/* 情景题目列表 */
+.scenario-list {
+  padding: 0 30rpx 24rpx;
+  border-top: 1rpx solid #f5f5f5;
+}
+
+.scenario-card {
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid #f5f5f5;
+}
+
+.scenario-card:last-child {
+  border-bottom: none;
+}
+
+.scenario-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12rpx;
+}
+
+.scenario-name {
+  font-size: 30rpx;
+  font-weight: bold;
+  color: #333;
+  flex: 1;
+  margin-right: 16rpx;
+}
+
+.scenario-difficulty {
+  font-size: 22rpx;
+  padding: 4rpx 18rpx;
+  border-radius: 20rpx;
+  flex-shrink: 0;
+}
+
+.scenario-difficulty.easy {
+  background: #e6f7e6;
+  color: #52c41a;
+}
+
+.scenario-difficulty.medium {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.scenario-difficulty.hard {
+  background: #ffe6e6;
+  color: #f5222d;
+}
+
+.scenario-desc {
+  font-size: 26rpx;
+  color: #666;
+  line-height: 1.5;
+  display: block;
+  margin-bottom: 16rpx;
+}
+
+.scenario-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.scenario-meta {
+  display: flex;
+  gap: 24rpx;
+}
+
+.meta-item {
+  font-size: 22rpx;
+  color: #999;
+}
+
+.scenario-btn {
+  width: 120rpx;
+  height: 60rpx;
+  line-height: 60rpx;
+  text-align: center;
+  border-radius: 30rpx;
+  font-size: 26rpx;
+  border: none;
+  padding: 0;
+}
+
+.scenario-btn.start {
+  background: #007aff;
+  color: #fff;
+}
+
+.scenario-btn.replay {
+  background: #f0f7ff;
+  color: #007aff;
+}
+
+/* 加载 */
+.loading {
+  text-align: center;
+  padding: 100rpx;
+  color: #999;
+}

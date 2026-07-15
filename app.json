@@ -1,0 +1,53 @@
+{
+  "pages": [
+    "pages/home/home",
+    "pages/index/index",
+    "pages/training/training",
+    "pages/result/result",
+    "pages/report/report",
+    "pages/admin/admin",
+    "pages/mine/mine"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#007aff",
+    "navigationBarTitleText": "AI口腔客服陪练",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f5f5f5",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#999999",
+    "selectedColor": "#007aff",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/home/home",
+        "text": "首页",
+        "iconPath": "static/image/tabbar/home.png",
+        "selectedIconPath": "static/image/tabbar/home_selected.png"
+      },
+      {
+        "pagePath": "pages/index/index",
+        "text": "训练",
+        "iconPath": "static/image/tabbar/training.png",
+        "selectedIconPath": "static/image/tabbar/training_selected.png"
+      },
+      {
+        "pagePath": "pages/report/report",
+        "text": "报告",
+        "iconPath": "static/image/tabbar/report.png",
+        "selectedIconPath": "static/image/tabbar/report_selected.png"
+      },
+      {
+        "pagePath": "pages/mine/mine",
+        "text": "我的",
+        "iconPath": "static/image/tabbar/mine.png",
+        "selectedIconPath": "static/image/tabbar/mine_selected.png"
+      }
+    ]
+  },
+  "sitemapLocation": "sitemap.json",
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents"
+}

@@ -1,0 +1,71 @@
+<!-- pages/training/training.wxml -->
+<view class="container">
+  <!-- 患者信息卡片 -->
+  <view class="patient-card">
+    <image class="patient-avatar" src="/static/images/patient-avatar.png" mode="aspectFill"></image>
+    <view class="patient-info">
+      <text class="patient-name">模拟患者</text>
+      <text class="patient-desc">{{patientProfile}}</text>
+      <text class="remaining-turns">剩余对话轮次: {{remainingTurns}}</text>
+    </view>
+    <view class="level-badge">{{levelName}}</view>
+  </view>
+
+  <!-- 聊天区域 -->
+  <scroll-view class="chat-area" scroll-y scroll-into-view="{{scrollToView}}" enhanced="{{true}}" show-scrollbar="{{false}}">
+    <block wx:for="{{messages}}" wx:key="id">
+      <view class="message-item {{item.role === 'user' ? 'user-message' : 'ai-message'}}">
+        <image class="avatar" src="{{item.role === 'user' ? '/static/images/user-avatar.png' : '/static/images/ai-avatar.png'}}"></image>
+        <view class="message-bubble">
+          <text class="message-content">{{item.content}}</text>
+          <view class="message-time">{{item.timestamp}}</view>
+        </view>
+      </view>
+    </block>
+    <view id="msg-bottom"></view>
+  </scroll-view>
+
+  <!-- 黄金话术推荐 -->
+  <view class="suggestions-bar" wx:if="{{showSuggestions && messages.length > 0 && !isTrainingEnd}}">
+    <view class="suggestions-header" bindtap="toggleSuggestions">
+      <text class="suggestions-title">💡 黄金话术推荐</text>
+      <text class="suggestions-arrow">{{showSuggestions ? '▼' : '▲'}}</text>
+    </view>
+    <view class="suggestions-list" wx:if="{{showSuggestions}}">
+      <view class="suggestion-item" bindtap="useGoldenPhrase" data-phrase="我理解您对价格的关心。我们的优势在于医生资质和术后保障，很多客户都是看中这点选择我们的。">
+        <text>💰 价格异议处理</text>
+      </view>
+      <view class="suggestion-item" bindtap="useGoldenPhrase" data-phrase="您有这样的担心很正常，我给您详细解释一下种植牙的原理和安全性...">
+        <text>🔒 信任危机应对</text>
+      </view>
+      <view class="suggestion-item" bindtap="useGoldenPhrase" data-phrase="非常抱歉给您带来不好的体验，我马上帮您联系医生处理。您方便描述一下具体情况吗？">
+        <text>😊 投诉安抚话术</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 输入区域 -->
+  <view class="input-area" wx:if="{{!isTrainingEnd}}">
+    <view class="voice-btn" bindtap="startVoiceInput">
+      <image src="/static/images/voice.png"></image>
+    </view>
+    <input 
+      class="input-field" 
+      placeholder="输入你的回复..." 
+      value="{{inputValue}}" 
+      bindinput="onInputChange" 
+      confirm-type="send" 
+      bindconfirm="sendMessage"
+      disabled="{{sending}}"
+    />
+    <button class="send-btn" bindtap="sendMessage" disabled="{{sending}}">
+      {{sending ? '发送中' : '发送'}}
+    </button>
+  </view>
+
+  <!-- 训练结束loading -->
+  <view wx:if="{{isTrainingEnd}}" class="end-loading">
+    <view class="loading-spinner"></view>
+    <text>训练结束，正在分析中...</text>
+  </view>
+</view>

@@ -1,0 +1,219 @@
+<!-- pages/report/report.wxml -->
+<view class="container">
+  
+  <!-- 顶部统计卡片 -->
+  <view class="stats-card">
+    <view class="stat-item">
+      <text class="stat-value">{{stats.totalTrainings || 0}}</text>
+      <text class="stat-label">总训练次数</text>
+    </view>
+    <view class="stat-divider"></view>
+    <view class="stat-item">
+      <text class="stat-value">{{stats.avgScore || 0}}</text>
+      <text class="stat-label">平均分</text>
+    </view>
+    <view class="stat-divider"></view>
+    <view class="stat-item">
+      <text class="stat-value">{{stats.bestScore || 0}}</text>
+      <text class="stat-label">最高分</text>
+    </view>
+    <view class="stat-divider"></view>
+    <view class="stat-item">
+      <text class="stat-value">{{stats.totalHours || 0}}</text>
+      <text class="stat-label">训练时长(h)</text>
+    </view>
+  </view>
+
+  <!-- 五维能力图 -->
+  <view class="ability-card">
+    <view class="card-title">能力雷达图</view>
+    <view class="ability-chart">
+      <block wx:for="{{scores}}" wx:key="index">
+        <view class="ability-item">
+          <view class="ability-name">{{item.name}}</view>
+          <view class="ability-bar">
+            <view class="ability-fill" style="width: {{item.value+'%'}}; background: {{item.color}}"></view>
+          </view>
+          <view class="ability-value">{{item.value}}分</view>
+        </view>
+      </block>
+    </view>
+  </view>
+
+  <!-- 标签页切换 -->
+  <view class="tab-bar">
+    <view class="tab-item {{activeTab === 'overview' ? 'active' : ''}}" bindtap="switchTab" data-tab="overview">综合概览</view>
+    <view class="tab-item {{activeTab === 'history' ? 'active' : ''}}" bindtap="switchTab" data-tab="history">训练历史</view>
+    <view class="tab-item {{activeTab === 'mistake' ? 'active' : ''}}" bindtap="switchTab" data-tab="mistake">错题本</view>
+    <view class="tab-item {{activeTab === 'progress' ? 'active' : ''}}" bindtap="switchTab" data-tab="progress">成长轨迹</view>
+    <view class="tab-item {{activeTab === 'rank' ? 'active' : ''}}" bindtap="switchTab" data-tab="rank">排行榜</view>
+  </view>
+
+  <!-- 综合概览 -->
+  <block wx:if="{{activeTab === 'overview'}}">
+    <view class="weakness-card">
+      <view class="card-title">薄弱项分析</view>
+      <view class="weakness-list">
+        <block wx:for="{{redFlagStats}}" wx:key="word">
+          <view class="weakness-item">
+            <text class="weakness-word">⚠️ {{item.word}}</text>
+            <text class="weakness-count">出现 {{item.count}} 次</text>
+          </view>
+        </block>
+        <view wx:if="{{redFlagStats.length === 0}}" class="empty-tip">
+          <text>🎉 太棒了！没有发现违规词</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="recommend-card">
+      <view class="card-title">推荐练习</view>
+      <view class="recommend-list">
+        <block wx:for="{{levelProgress}}" wx:key="id">
+          <view class="recommend-item">
+            <view class="recommend-info">
+              <text class="recommend-name">{{item.name}}</text>
+              <text class="recommend-desc">{{item.scenarioDescription}}</text>
+            </view>
+            <button class="recommend-btn" data-id="{{item.id}}" bindtap="practiceMistake">去练习</button>
+          </view>
+        </block>
+      </view>
+    </view>
+  </block>
+
+  <!-- 训练历史 -->
+  <block wx:if="{{activeTab === 'history'}}">
+    <view class="history-list">
+      <block wx:for="{{recentTrainings}}" wx:key="id">
+        <view class="history-item" bindtap="viewTrainingDetail" data-id="{{item.id}}">
+          <view class="history-info">
+            <text class="history-level">{{item.levelName}}</text>
+            <text class="history-time">{{item.time}}</text>
+          </view>
+          <view class="history-score {{item.score >= 60 ? 'pass' : 'fail'}}">{{item.score}}分</view>
+        </view>
+      </block>
+      <view wx:if="{{recentTrainings.length === 0}}" class="empty-tip">
+        <text>暂无训练记录</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- 错题本 -->
+  <block wx:if="{{activeTab === 'mistake'}}">
+    <view class="mistake-list">
+      <block wx:for="{{mistakeList}}" wx:key="id">
+        <view class="mistake-item">
+          <view class="mistake-header">
+            <text class="mistake-scene">{{item.sceneType}}</text>
+            <text class="mistake-time">{{item.time}}</text>
+          </view>
+          <view class="mistake-content">
+            <text class="mistake-label">你的回答：</text>
+            <text class="mistake-text">{{item.userMessage}}</text>
+          </view>
+          <view class="mistake-suggestion">
+            <text class="suggestion-label">💡 建议回复：</text>
+            <text class="suggestion-text">{{item.suggestedReply}}</text>
+          </view>
+          <button class="practice-btn" data-mistake="{{item}}" bindtap="practiceMistake">再次练习</button>
+        </view>
+      </block>
+      <view wx:if="{{mistakeList.length === 0}}" class="empty-tip">
+        <text>🎉 暂无错题，继续保持！</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- 成长轨迹 -->
+  <block wx:if="{{activeTab === 'progress'}}">
+    <view class="progress-card">
+      <view class="card-title">得分趋势</view>
+      <canvas type="2d" id="trendCanvas" class="trend-canvas"></canvas>
+    </view>
+
+    <view class="progress-card">
+      <view class="card-title">关卡通关进度</view>
+      <view class="level-progress">
+        <block wx:for="{{levelProgress}}" wx:key="id">
+          <view class="progress-item">
+            <text class="progress-name">{{item.name}}</text>
+            <view class="progress-bar">
+              <view class="progress-fill" style="width: {{item.progress+'%'}}"></view>
+            </view>
+            <text class="progress-status">{{item.status}}</text>
+          </view>
+        </block>
+      </view>
+    </view>
+  </block>
+
+  <!-- 排行榜 -->
+  <block wx:if="{{activeTab === 'rank'}}">
+    <!-- 我的排名 -->
+    <view class="rank-my-card" wx:if="{{myRank}}">
+      <view class="rank-my-left">
+        <text class="rank-my-label">我的排名</text>
+        <text class="rank-my-position">第 {{myRank.rank}} 名</text>
+      </view>
+      <view class="rank-my-stats">
+        <view class="rank-my-stat">
+          <text class="rank-my-stat-value">{{myRank.avgScore}}</text>
+          <text class="rank-my-stat-label">平均分</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 前三名 podium -->
+    <view class="rank-podium" wx:if="{{rankList.length >= 3}}">
+      <view class="podium-item second">
+        <view class="podium-avatar-wrap">
+          <image class="podium-avatar" src="{{rankList[1].avatar || '/static/images/default-avatar.png'}}"></image>
+          <view class="podium-medal silver">2</view>
+        </view>
+        <text class="podium-name">{{rankList[1].nickname}}</text>
+        <text class="podium-score">{{rankList[1].avgScore}}分</text>
+      </view>
+      <view class="podium-item first">
+        <view class="podium-crown">👑</view>
+        <view class="podium-avatar-wrap">
+          <image class="podium-avatar" src="{{rankList[0].avatar || '/static/images/default-avatar.png'}}"></image>
+          <view class="podium-medal gold">1</view>
+        </view>
+        <text class="podium-name">{{rankList[0].nickname}}</text>
+        <text class="podium-score">{{rankList[0].avgScore}}分</text>
+      </view>
+      <view class="podium-item third">
+        <view class="podium-avatar-wrap">
+          <image class="podium-avatar" src="{{rankList[2].avatar || '/static/images/default-avatar.png'}}"></image>
+          <view class="podium-medal bronze">3</view>
+        </view>
+        <text class="podium-name">{{rankList[2].nickname}}</text>
+        <text class="podium-score">{{rankList[2].avgScore}}分</text>
+      </view>
+    </view>
+
+    <!-- 排行列表 -->
+    <view class="rank-list">
+      <view class="rank-item {{item.isMe ? 'is-me' : ''}}" wx:for="{{rankList}}" wx:key="rank">
+        <view class="rank-left">
+          <text class="rank-num {{item.rank <= 3 ? 'top' : ''}}">{{item.rank}}</text>
+          <image class="rank-avatar" src="{{item.avatar || '/static/images/default-avatar.png'}}"></image>
+          <view class="rank-user">
+            <text class="rank-nickname">{{item.nickname}}</text>
+            <text class="rank-title-badge">{{item.title}}</text>
+          </view>
+        </view>
+        <view class="rank-right">
+          <text class="rank-total-score">均分{{item.avgScore}}</text>
+        </view>
+      </view>
+    </view>
+  </block>
+
+  <!-- 底部按钮 -->
+  <view class="bottom-btn">
+    <button class="export-btn" bindtap="exportReport">导出报告</button>
+  </view>
+</view>
