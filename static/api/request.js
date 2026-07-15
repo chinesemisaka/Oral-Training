@@ -1,57 +1,58 @@
-// static/api/request.js
 const app = getApp();
 
-/**
- * 网络请求封装
- * @param {string} url - 请求路径
- * @param {object} options - 请求选项
- * @returns {Promise}
- */
+const createError = (code, message, statusCode, data = null) => ({
+  code,
+  message,
+  statusCode,
+  data
+});
+
 const request = (url, options = {}) => {
   return new Promise((resolve, reject) => {
-    const token = wx.getStorageSync('token');
-    
+    const baseUrl = app.globalData.apiBaseUrl.replace(/\/$/, '');
+    const path = url.startsWith('/') ? url : `/${url}`;
+
     wx.request({
-      url: app.globalData.apiBaseUrl + url,
+      url: `${baseUrl}${path}`,
       method: options.method || 'GET',
       data: options.data || {},
       header: {
         'Content-Type': 'application/json',
-        'Authorization': token ? `Bearer ${token}` : ''
+        'X-Demo-User-Id': app.globalData.demoUserId || 'demo-user-001'
       },
       success: (res) => {
-        if (res.statusCode === 200) {
-          if (res.data.code === 0) {
-            resolve(res.data.data);
-          } else {
-            reject(res.data.message || '请求失败');
-          }
-        } else if (res.statusCode === 401) {
-          // 未授权，清除登录信息
-          wx.clearStorageSync();
-          reject('登录已过期，请重新登录');
-        } else {
-          reject(`网络错误: ${res.statusCode}`);
+        const body = res.data || {};
+        const isHttpSuccess = res.statusCode >= 200 && res.statusCode < 300;
+
+        if (isHttpSuccess && body.code === 0) {
+          resolve(body.data);
+          return;
         }
+
+        reject(createError(
+          body.code || `HTTP_${res.statusCode}`,
+          body.message || `网络请求失败（${res.statusCode}）`,
+          res.statusCode,
+          body.data || null
+        ));
       },
       fail: (err) => {
-        console.error('请求失败', err);
-        reject(err.errMsg || '网络请求失败');
+        console.error('API 请求失败', err);
+        reject(createError('NETWORK_ERROR', err.errMsg || '网络请求失败', 0));
       }
     });
   });
 };
 
-// 封装常用方法
 const get = (url, data) => request(url, { method: 'GET', data });
 const post = (url, data) => request(url, { method: 'POST', data });
-const put = (url, data) => request(url, { method: 'PUT', data });
-const del = (url, data) => request(url, { method: 'DELETE', data });
 
 module.exports = {
   request,
   get,
   post,
-  put,
-  delete: del
+  getErrorMessage: (error, fallback = '操作失败，请稍后重试') => {
+    if (!error) return fallback;
+    return error.message || String(error) || fallback;
+  }
 };
