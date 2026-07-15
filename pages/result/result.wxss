@@ -62,6 +62,41 @@
   line-height: 1.7;
 }
 
+.transcript-item {
+  display: flex;
+  flex-direction: column;
+  max-width: 88%;
+  margin-top: 16rpx;
+  padding: 16rpx 18rpx;
+  border-radius: 16rpx;
+  color: #35465b;
+  background: #f5f8fc;
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+
+.transcript-user {
+  margin-left: auto;
+  background: #e8f2ff;
+}
+
+.transcript-role {
+  color: #1677e8;
+  font-size: 23rpx;
+  font-weight: 600;
+}
+
+.transcript-content {
+  margin-top: 4rpx;
+}
+
+.transcript-time {
+  margin-top: 6rpx;
+  color: #8b99aa;
+  font-size: 21rpx;
+  text-align: right;
+}
+
 .radar-section {
   text-align: center;
 }

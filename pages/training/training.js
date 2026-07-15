@@ -36,6 +36,10 @@ Page({
     }
   },
 
+  sessionPath(suffix = '') {
+    return `/sessions/${encodeURIComponent(this.data.sessionId)}${suffix}`;
+  },
+
   async createSession() {
     try {
       const data = await request.post('/sessions', {
@@ -57,7 +61,7 @@ Page({
 
   async loadSession() {
     try {
-      const data = await request.get(`/sessions/${this.data.sessionId}`);
+      const data = await request.get(this.sessionPath());
       this.applySessionData(data);
       if (data && data.session) {
         this.loadScenarioProfile(data.session.scenarioId);
@@ -124,7 +128,7 @@ Page({
     this.setData({ sending: true, inputValue: '' });
 
     try {
-      const data = await request.post(`/sessions/${this.data.sessionId}/messages`, {
+      const data = await request.post(this.sessionPath('/messages'), {
         clientMessageId: pending.clientMessageId,
         content: pending.content
       });
@@ -186,7 +190,7 @@ Page({
       if (!this.data.sessionId) {
         throw new Error('缺少训练会话 ID');
       }
-      await request.post(`/sessions/${this.data.sessionId}/finish`, { reason });
+      await request.post(this.sessionPath('/finish'), { reason });
       wx.redirectTo({
         url: `/pages/result/result?sessionId=${encodeURIComponent(this.data.sessionId)}`
       });

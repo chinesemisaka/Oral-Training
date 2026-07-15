@@ -15,6 +15,7 @@ Page({
     passed: false,
     radarData: [],
     dimensions: [],
+    messages: [],
     errorMessage: ''
   },
 
@@ -33,17 +34,22 @@ Page({
     this.loadEvaluation();
   },
 
+  sessionPath(suffix = '') {
+    return `/sessions/${encodeURIComponent(this.data.sessionId)}${suffix}`;
+  },
+
   onUnload() {
     if (this.pollTimer) clearTimeout(this.pollTimer);
   },
 
   async loadSessionMeta() {
     try {
-      const data = await request.get(`/sessions/${this.data.sessionId}`);
+      const data = await request.get(this.sessionPath());
       if (!data || !data.session) return;
       this.setData({
         scenarioId: data.session.scenarioId || '',
-        scenarioName: data.session.scenarioName || ''
+        scenarioName: data.session.scenarioName || '',
+        messages: Array.isArray(data.messages) ? data.messages : []
       });
     } catch (error) {
       console.warn('加载训练元数据失败', error);
@@ -52,7 +58,7 @@ Page({
 
   async loadEvaluation() {
     try {
-      const data = await request.get(`/sessions/${this.data.sessionId}/evaluation`);
+      const data = await request.get(this.sessionPath('/evaluation'));
       const status = data.status || 'generating';
 
       if (status === 'ready' && data.evaluation) {
@@ -195,7 +201,7 @@ Page({
 
   async retryEvaluation() {
     try {
-      await request.post(`/sessions/${this.data.sessionId}/evaluation/retry`);
+      await request.post(this.sessionPath('/evaluation/retry'));
       this.pollCount = 0;
       this.setData({
         loading: true,
@@ -227,7 +233,7 @@ Page({
       return;
     }
     wx.navigateTo({
-      url: `/pages/training/training?scenarioId=${this.data.scenarioId}`
+      url: `/pages/training/training?scenarioId=${encodeURIComponent(this.data.scenarioId)}`
     });
   },
 

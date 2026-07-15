@@ -26,6 +26,15 @@
       <text class="summary-text">{{evaluation.summary}}</text>
     </view>
 
+    <view class="section-card" wx:if="{{messages.length}}">
+      <text class="section-title">对话回顾</text>
+      <view class="transcript-item {{item.role === 'user' ? 'transcript-user' : 'transcript-patient'}}" wx:for="{{messages}}" wx:key="id">
+        <text class="transcript-role">{{item.role === 'user' ? '我' : '患者'}}</text>
+        <text class="transcript-content">{{item.content}}</text>
+        <text class="transcript-time">{{item.createdAt}}</text>
+      </view>
+    </view>
+
     <view class="section-card radar-section">
       <text class="section-title">五维评分</text>
       <canvas type="2d" id="radarCanvas" class="radar-canvas"></canvas>
