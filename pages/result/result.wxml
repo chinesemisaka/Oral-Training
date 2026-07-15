@@ -6,7 +6,7 @@
   <view wx:if="{{status === 'generating'}}" class="status-card">
     <view class="loading-dot"></view>
     <text>{{timedOut ? '评分生成时间较长，可稍后重试' : '正在生成评分报告…'}}</text>
-    <button wx:if="{{timedOut}}" class="outline-button" bindtap="retryEvaluation">重新获取评分</button>
+    <button wx:if="{{timedOut}}" class="outline-button" bindtap="refreshEvaluation">重新获取评分</button>
   </view>
 
   <view wx:if="{{status === 'failed'}}" class="status-card failed-card">

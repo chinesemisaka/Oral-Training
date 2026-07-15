@@ -40,6 +40,7 @@ Page({
   async loadSessionMeta() {
     try {
       const data = await request.get(`/sessions/${this.data.sessionId}`);
+      if (!data || !data.session) return;
       this.setData({
         scenarioId: data.session.scenarioId || '',
         scenarioName: data.session.scenarioName || ''
@@ -85,6 +86,8 @@ Page({
     } catch (error) {
       this.setData({
         loading: false,
+        status: 'failed',
+        retryable: true,
         errorMessage: request.getErrorMessage(error, '评分报告加载失败')
       });
     }
@@ -93,10 +96,10 @@ Page({
   applyEvaluation(evaluation) {
     evaluation = {
       ...evaluation,
-      strengths: evaluation.strengths || [],
-      improvements: evaluation.improvements || [],
-      violations: evaluation.violations || [],
-      roundComments: evaluation.roundComments || []
+      strengths: Array.isArray(evaluation.strengths) ? evaluation.strengths : [],
+      improvements: Array.isArray(evaluation.improvements) ? evaluation.improvements : [],
+      violations: Array.isArray(evaluation.violations) ? evaluation.violations : [],
+      roundComments: Array.isArray(evaluation.roundComments) ? evaluation.roundComments : []
     };
     const scores = evaluation.dimensionScores || {};
     const dimensions = [
@@ -204,6 +207,17 @@ Page({
     } catch (error) {
       util.showToast(request.getErrorMessage(error, '重新生成评分失败'));
     }
+  },
+
+  refreshEvaluation() {
+    this.pollCount = 0;
+    this.setData({
+      loading: true,
+      status: 'generating',
+      timedOut: false,
+      errorMessage: ''
+    });
+    this.loadEvaluation();
   },
 
   retryTraining() {

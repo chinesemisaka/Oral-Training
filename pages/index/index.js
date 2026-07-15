@@ -36,12 +36,13 @@ Page({
   },
 
   findScenario(id) {
-    return this.data.scenarios.find(item => item.id === id);
+    return this.data.scenarios.find(item => String(item.id) === String(id));
   },
 
   goToTraining(sessionId) {
+    if (!sessionId) return;
     wx.navigateTo({
-      url: `/pages/training/training?sessionId=${sessionId}`
+      url: `/pages/training/training?sessionId=${encodeURIComponent(sessionId)}`
     });
   },
 
@@ -59,11 +60,15 @@ Page({
     try {
       const data = await request.post('/sessions', { scenarioId });
       util.hideLoading();
+      if (!data || !data.session || !data.session.id) {
+        throw new Error('服务端未返回有效训练会话');
+      }
       this.goToTraining(data.session.id);
     } catch (error) {
       util.hideLoading();
-      if (error.code === 'SESSION_IN_PROGRESS' && error.data && error.data.sessionId) {
-        this.goToTraining(error.data.sessionId);
+      const existingSessionId = error.data && (error.data.sessionId || error.data.id);
+      if (error.code === 'SESSION_IN_PROGRESS' && existingSessionId) {
+        this.goToTraining(existingSessionId);
         return;
       }
       util.showToast(request.getErrorMessage(error, '创建训练失败'));
@@ -86,8 +91,11 @@ Page({
       if (!confirmed) return;
       util.showLoading('重新创建中...');
       try {
-        const data = await request.post(`/sessions/${sessionId}/restart`);
+        const data = await request.post(`/sessions/${encodeURIComponent(sessionId)}/restart`);
         util.hideLoading();
+        if (!data || !data.session || !data.session.id) {
+          throw new Error('服务端未返回有效训练会话');
+        }
         this.goToTraining(data.session.id);
       } catch (error) {
         util.hideLoading();

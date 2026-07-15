@@ -41,6 +41,9 @@ Page({
       const data = await request.post('/sessions', {
         scenarioId: this.data.scenarioId
       });
+      if (!data || !data.session || !data.session.id) {
+        throw new Error('服务端未返回有效训练会话');
+      }
       this.setData({ sessionId: data.session.id });
       this.applySessionData(data);
       this.loadScenarioProfile(this.data.scenarioId);
@@ -56,7 +59,9 @@ Page({
     try {
       const data = await request.get(`/sessions/${this.data.sessionId}`);
       this.applySessionData(data);
-      this.loadScenarioProfile(data.session.scenarioId);
+      if (data && data.session) {
+        this.loadScenarioProfile(data.session.scenarioId);
+      }
     } catch (error) {
       this.setData({
         loading: false,
@@ -68,8 +73,8 @@ Page({
   async loadScenarioProfile(scenarioId) {
     try {
       const data = await request.get('/scenarios');
-      const scenario = (data.items || []).find(item => item.id === scenarioId);
-      if (scenario) {
+      const scenario = (data.items || []).find(item => String(item.id) === String(scenarioId));
+      if (scenario && scenario.patientProfile) {
         this.setData({
           scenarioName: scenario.name,
           patientProfile: `${scenario.patientProfile.age}岁 · ${scenario.patientProfile.description}`
@@ -82,7 +87,7 @@ Page({
 
   applySessionData(data) {
     const session = data.session || {};
-    const messages = data.messages || [];
+    const messages = Array.isArray(data.messages) ? data.messages : [];
     const currentRound = session.currentRound || 0;
     const maxRounds = session.maxRounds || 10;
 
@@ -123,6 +128,9 @@ Page({
         clientMessageId: pending.clientMessageId,
         content: pending.content
       });
+      if (!data || !data.userMessage || !data.patientMessage) {
+        throw new Error('患者回复数据不完整');
+      }
       const messages = [
         ...this.data.messages,
         data.userMessage,
@@ -134,7 +142,9 @@ Page({
       this.setData({
         messages,
         currentRound: session.currentRound || this.data.currentRound + 1,
-        remainingRounds: session.remainingRounds || 0,
+        remainingRounds: session.remainingRounds === undefined
+          ? Math.max(this.data.maxRounds - (session.currentRound || this.data.currentRound + 1), 0)
+          : session.remainingRounds,
         sending: false,
         scrollToView: 'msg-bottom'
       });
@@ -173,9 +183,12 @@ Page({
 
     this.setData({ finishing: true, isTrainingEnd: true });
     try {
+      if (!this.data.sessionId) {
+        throw new Error('缺少训练会话 ID');
+      }
       await request.post(`/sessions/${this.data.sessionId}/finish`, { reason });
       wx.redirectTo({
-        url: `/pages/result/result?sessionId=${this.data.sessionId}`
+        url: `/pages/result/result?sessionId=${encodeURIComponent(this.data.sessionId)}`
       });
     } catch (error) {
       this.setData({ finishing: false, isTrainingEnd: false });
