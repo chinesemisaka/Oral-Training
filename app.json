@@ -5,7 +5,6 @@
     "pages/training/training",
     "pages/result/result",
     "pages/report/report",
-    "pages/admin/admin",
     "pages/mine/mine"
   ],
   "window": {
@@ -35,13 +34,13 @@
       },
       {
         "pagePath": "pages/report/report",
-        "text": "报告",
+        "text": "历史",
         "iconPath": "static/image/tabbar/report.png",
         "selectedIconPath": "static/image/tabbar/report_selected.png"
       },
       {
         "pagePath": "pages/mine/mine",
-        "text": "我的",
+        "text": "数据",
         "iconPath": "static/image/tabbar/mine.png",
         "selectedIconPath": "static/image/tabbar/mine_selected.png"
       }

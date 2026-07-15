@@ -1,87 +1,96 @@
-<!-- pages/result/result.wxml -->
-<view class="container">
-  
-  <!-- 得分卡片 -->
-  <view class="score-card {{passed ? 'pass' : 'fail'}}">
-    <view class="score-value">{{score}}</view>
-    <view class="score-label">{{passed ? '通过' : '未通过'}}</view>
+<view class="result-page">
+  <view wx:if="{{errorMessage}}" class="error-card">
+    <text>{{errorMessage}}</text>
   </view>
 
-  <!-- 评价 -->
-  <view class="evaluation">
-    <text class="evaluation-text">{{evaluation}}</text>
+  <view wx:if="{{status === 'generating'}}" class="status-card">
+    <view class="loading-dot"></view>
+    <text>{{timedOut ? '评分生成时间较长，可稍后重试' : '正在生成评分报告…'}}</text>
+    <button wx:if="{{timedOut}}" class="outline-button" bindtap="refreshEvaluation">重新获取评分</button>
   </view>
 
-  <!-- 雷达图 -->
-  <view class="radar-section">
-    <view class="section-title">能力维度评估</view>
-    <canvas type="2d" id="radarCanvas" class="radar-canvas"></canvas>
+  <view wx:if="{{status === 'failed'}}" class="status-card failed-card">
+    <text class="status-title">评分生成失败</text>
+    <text class="status-desc">训练记录已经保存，可以重新请求评分。</text>
+    <button wx:if="{{retryable}}" class="primary-button" bindtap="retryEvaluation">重新生成评分</button>
   </view>
 
-  <!-- 详细得分 -->
-  <view class="scores-section">
-    <view class="section-title">详细得分</view>
-    
-    <!-- 同理心得分 -->
-    <view class="score-item">
-      <view class="score-header">
-        <text class="score-name">❤️ 同理心与温度</text>
-        <text class="score-num">{{empathyScore}}分</text>
-      </view>
-      <view class="score-bar">
-        <view class="score-fill" style="width: {{empathyScore+'%'}}; background: #52c41a;"></view>
+  <block wx:if="{{status === 'ready' && evaluation}}">
+    <view class="score-card {{passed ? 'pass' : 'fail'}}">
+      <text class="score-value">{{score}}</text>
+      <text class="score-label">{{passed ? '通过' : '未通过'}}</text>
+    </view>
+
+    <view class="section-card">
+      <text class="section-title">综合评价</text>
+      <text class="summary-text">{{evaluation.summary}}</text>
+    </view>
+
+    <view class="section-card" wx:if="{{messages.length}}">
+      <text class="section-title">对话回顾</text>
+      <view class="transcript-item {{item.role === 'user' ? 'transcript-user' : 'transcript-patient'}}" wx:for="{{messages}}" wx:key="id">
+        <text class="transcript-role">{{item.role === 'user' ? '我' : '患者'}}</text>
+        <text class="transcript-content">{{item.content}}</text>
+        <text class="transcript-time">{{item.createdAt}}</text>
       </view>
     </view>
 
-    <!-- 需求挖掘力 -->
-    <view class="score-item">
-      <view class="score-header">
-        <text class="score-name">🔍 需求挖掘力</text>
-        <text class="score-num">{{demandScore}}分</text>
-      </view>
-      <view class="score-bar">
-        <view class="score-fill" style="width: {{demandScore+'%'}}; background: #1890ff;"></view>
-      </view>
-    </view>
-
-    <!-- 价值塑造力 -->
-    <view class="score-item">
-      <view class="score-header">
-        <text class="score-name">💰 价值塑造力</text>
-        <text class="score-num">{{valueScore}}分</text>
-      </view>
-      <view class="score-bar">
-        <view class="score-fill" style="width: {{valueScore+'%'}}; background: #fa8c16;"></view>
+    <view class="section-card radar-section">
+      <text class="section-title">五维评分</text>
+      <canvas type="2d" id="radarCanvas" class="radar-canvas"></canvas>
+      <view class="dimension-list">
+        <view class="dimension-item" wx:for="{{dimensions}}" wx:key="name">
+          <view class="dimension-head">
+            <text>{{item.name}}</text>
+            <text class="dimension-score">{{item.value}}分</text>
+          </view>
+          <view class="score-bar">
+            <view class="score-fill" style="width: {{item.value}}%; background: {{item.color}};"></view>
+          </view>
+        </view>
       </view>
     </view>
 
-    <!-- 邀约转化 -->
-    <view class="score-item">
-      <view class="score-header">
-        <text class="score-name">📞 邀约转化</text>
-        <text class="score-num">{{appointmentScore}}分</text>
-      </view>
-      <view class="score-bar">
-        <view class="score-fill" style="width: {{appointmentScore+'%'}}; background: #eb2f96;"></view>
+    <view class="section-card" wx:if="{{evaluation.strengths.length}}">
+      <text class="section-title">做得好的地方</text>
+      <view class="feedback-item" wx:for="{{evaluation.strengths}}" wx:key="index">
+        <text class="feedback-round">第 {{item.round}} 轮</text>
+        <text>{{item.content}}</text>
+        <text class="feedback-evidence">{{item.evidence}}</text>
       </view>
     </view>
 
-    <!-- 合规意识 -->
-    <view class="score-item">
-      <view class="score-header">
-        <text class="score-name">⚖️ 合规意识</text>
-        <text class="score-num">{{complianceScore}}分</text>
-      </view>
-      <view class="score-bar">
-        <view class="score-fill" style="width: {{complianceScore+'%'}}; background: #722ed1;"></view>
+    <view class="section-card" wx:if="{{evaluation.improvements.length}}">
+      <text class="section-title">改进建议</text>
+      <view class="feedback-item improvement" wx:for="{{evaluation.improvements}}" wx:key="index">
+        <text class="feedback-round">第 {{item.round}} 轮</text>
+        <text>{{item.content}}</text>
       </view>
     </view>
-  </view>
 
-  <!-- 按钮区域 -->
-  <view class="action-buttons">
-    <button class="btn btn-secondary" bindtap="retry">重新挑战</button>
-    <button class="btn btn-primary" bindtap="nextLevel">继续挑战</button>
-    <button class="btn btn-outline" bindtap="viewDetailReport">查看详细报告</button>
-  </view>
+    <view class="section-card" wx:if="{{evaluation.violations.length}}">
+      <text class="section-title danger-title">严重违规与风险提示</text>
+      <view class="violation-item" wx:for="{{evaluation.violations}}" wx:key="index">
+        <text class="violation-type">{{item.type}} · 扣 {{item.deduction}} 分</text>
+        <text class="quote">“{{item.originalQuote}}”</text>
+        <text class="reason">{{item.reason}}</text>
+        <text class="rewrite">建议改写：{{item.recommendedRewrite}}</text>
+      </view>
+    </view>
+
+    <view class="section-card" wx:if="{{evaluation.roundComments.length}}">
+      <text class="section-title">关键轮次点评</text>
+      <view class="feedback-item" wx:for="{{evaluation.roundComments}}" wx:key="index">
+        <text class="feedback-round">第 {{item.round}} 轮</text>
+        <text>{{item.comment}}</text>
+        <text class="rewrite">推荐表达：{{item.recommendedRewrite}}</text>
+      </view>
+    </view>
+
+    <view class="action-list">
+      <button class="primary-button" bindtap="retryTraining">重新训练</button>
+      <button class="secondary-button" bindtap="backToScenarios">返回场景列表</button>
+      <button class="outline-button" bindtap="viewHistory">查看历史记录</button>
+    </view>
+  </block>
 </view>

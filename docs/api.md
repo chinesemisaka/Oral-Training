@@ -329,6 +329,18 @@ Content-Type: application/json
 
 如果该场景已有 `in_progress` 会话，返回 `409 SESSION_IN_PROGRESS`，前端应提示用户选择继续或调用重新开始接口。
 
+为便于前端直接恢复会话，建议错误响应携带当前会话 ID：
+
+```json
+{
+  "code": "SESSION_IN_PROGRESS",
+  "message": "该场景已有进行中的训练",
+  "data": {
+    "sessionId": "sess_01JZ..."
+  }
+}
+```
+
 ### 6.2 重新开始会话
 
 ```http

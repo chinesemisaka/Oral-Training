@@ -1,229 +1,188 @@
-/* pages/training/training.wxss */
-.container {
+.training-page {
   display: flex;
+  min-height: 100vh;
   flex-direction: column;
-  height: 100vh;
-  background-color: #f5f5f5;
+  background: #f5f7fb;
 }
 
-/* 患者卡片 */
-.patient-card {
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  padding: 30rpx;
+.session-header {
   display: flex;
-  align-items: center;
-  gap: 20rpx;
-  position: relative;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 28rpx 24rpx;
+  background: #1677e8;
 }
 
-.patient-avatar {
-  width: 100rpx;
-  height: 100rpx;
-  border-radius: 50%;
-  border: 3rpx solid #fff;
-}
-
-.patient-info {
+.session-copy {
+  display: flex;
   flex: 1;
-  display: flex;
   flex-direction: column;
-  gap: 8rpx;
+  padding-right: 20rpx;
 }
 
-.patient-name {
+.scenario-name {
+  color: #fff;
   font-size: 32rpx;
-  font-weight: bold;
-  color: #fff;
+  font-weight: 700;
 }
 
-.patient-desc {
-  font-size: 24rpx;
-  color: rgba(255, 255, 255, 0.85);
+.patient-profile,
+.round-text {
+  margin-top: 10rpx;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 23rpx;
+  line-height: 1.5;
 }
 
-.remaining-turns {
-  font-size: 22rpx;
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.level-badge {
-  background: rgba(255, 255, 255, 0.2);
-  padding: 8rpx 20rpx;
+.finish-button {
+  height: 60rpx;
+  margin: 0;
+  padding: 0 20rpx;
+  color: #1677e8;
+  background: #fff;
   border-radius: 30rpx;
-  font-size: 24rpx;
-  color: #fff;
+  font-size: 23rpx;
+  line-height: 60rpx;
 }
 
-/* 聊天区域 */
+.finish-button::after {
+  border: none;
+}
+
 .chat-area {
   flex: 1;
-  padding: 20rpx;
-  overflow-y: auto;
+  height: 0;
+  padding: 24rpx;
+  box-sizing: border-box;
 }
 
-.message-item {
+.message-item,
+.typing-state {
   display: flex;
-  margin-bottom: 30rpx;
   align-items: flex-start;
+  margin-bottom: 26rpx;
 }
 
 .user-message {
   flex-direction: row-reverse;
 }
 
-.user-message .message-bubble {
-  background-color: #007aff;
-  color: #fff;
-  margin-right: 20rpx;
-  margin-left: 0;
-}
-
-.ai-message .message-bubble {
-  background-color: #fff;
-  color: #333;
-  margin-left: 20rpx;
-  border: 1rpx solid #e0e0e0;
-}
-
-.avatar {
-  width: 70rpx;
-  height: 70rpx;
-  border-radius: 50%;
+.message-avatar {
+  display: flex;
+  width: 64rpx;
+  height: 64rpx;
   flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: #1677e8;
+  background: #dcecff;
+  border-radius: 50%;
+  font-size: 24rpx;
+}
+
+.user-message .message-avatar {
+  color: #fff;
+  background: #1677e8;
+}
+
+.message-body {
+  max-width: 75%;
+  margin: 0 16rpx;
+}
+
+.user-message .message-body {
+  text-align: right;
 }
 
 .message-bubble {
-  max-width: 500rpx;
-  padding: 20rpx 25rpx;
-  border-radius: 20rpx;
-  word-wrap: break-word;
-  position: relative;
+  padding: 18rpx 22rpx;
+  color: #26364a;
+  background: #fff;
+  border-radius: 18rpx;
+  text-align: left;
+}
+
+.user-message .message-bubble {
+  color: #fff;
+  background: #1677e8;
 }
 
 .message-content {
   font-size: 28rpx;
-  line-height: 1.5;
+  line-height: 1.6;
+  word-break: break-all;
 }
 
 .message-time {
+  display: block;
+  margin-top: 8rpx;
+  color: #9aa7b7;
   font-size: 20rpx;
-  color: rgba(0, 0, 0, 0.4);
-  margin-top: 10rpx;
-  text-align: right;
 }
 
-.user-message .message-time {
-  color: rgba(255, 255, 255, 0.6);
-}
-
-/* 黄金话术推荐 */
-.suggestions-bar {
-  background: #fff;
-  border-top: 1rpx solid #eee;
-  border-bottom: 1rpx solid #eee;
-}
-
-.suggestions-header {
-  display: flex;
-  justify-content: space-between;
+.typing-state {
   align-items: center;
-  padding: 20rpx 30rpx;
-  background: #fafafa;
-}
-
-.suggestions-title {
-  font-size: 26rpx;
-  color: #fa8c16;
-}
-
-.suggestions-arrow {
+  color: #8a97a8;
   font-size: 24rpx;
-  color: #999;
 }
 
-.suggestions-list {
-  padding: 20rpx 30rpx;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 20rpx;
-  border-top: 1rpx solid #eee;
+.typing-state .message-avatar {
+  margin-right: 16rpx;
 }
 
-.suggestion-item {
-  background: #f0f7ff;
-  padding: 15rpx 25rpx;
-  border-radius: 40rpx;
-  font-size: 24rpx;
-  color: #007aff;
-  border: 1rpx solid #d9e8ff;
-}
-
-/* 输入区域 */
 .input-area {
   display: flex;
   align-items: center;
-  padding: 20rpx 30rpx;
-  background-color: #fff;
-  border-top: 1rpx solid #eee;
-  gap: 20rpx;
-}
-
-.voice-btn image {
-  width: 50rpx;
-  height: 50rpx;
+  padding: 18rpx 24rpx calc(18rpx + env(safe-area-inset-bottom));
+  gap: 16rpx;
+  background: #fff;
+  border-top: 1rpx solid #e8edf3;
 }
 
 .input-field {
   flex: 1;
-  height: 70rpx;
-  padding: 0 25rpx;
-  background-color: #f5f5f5;
-  border-radius: 35rpx;
-  font-size: 28rpx;
+  height: 72rpx;
+  padding: 0 22rpx;
+  color: #26364a;
+  background: #f3f6fa;
+  border-radius: 36rpx;
+  font-size: 27rpx;
 }
 
-.send-btn {
+.send-button {
   width: 120rpx;
-  height: 70rpx;
-  line-height: 70rpx;
-  background-color: #007aff;
-  color: #fff;
-  font-size: 28rpx;
-  border-radius: 35rpx;
-  padding: 0;
+  height: 72rpx;
   margin: 0;
-}
-
-.send-btn[disabled] {
-  background-color: #ccc;
-}
-
-/* 结束加载 */
-.end-loading {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background-color: rgba(0, 0, 0, 0.85);
-  padding: 30rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 20rpx;
+  padding: 0;
   color: #fff;
-  font-size: 28rpx;
-  z-index: 100;
+  background: #1677e8;
+  border-radius: 36rpx;
+  font-size: 27rpx;
+  line-height: 72rpx;
 }
 
-.loading-spinner {
-  width: 40rpx;
-  height: 40rpx;
-  border: 4rpx solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+.send-button::after {
+  border: none;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.send-button[disabled],
+.finish-button[disabled] {
+  opacity: 0.55;
+}
+
+.error-panel {
+  margin: 24rpx;
+  padding: 24rpx;
+  color: #c84b4b;
+  background: #fff1f1;
+  border-radius: 18rpx;
+  font-size: 26rpx;
+}
+
+.end-loading {
+  padding: 30rpx 24rpx calc(30rpx + env(safe-area-inset-bottom));
+  color: #66778c;
+  background: #fff;
+  text-align: center;
+  font-size: 26rpx;
 }

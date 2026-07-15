@@ -1,192 +1,202 @@
-// pages/training/training.js
+const request = require('../../static/api/request.js');
 const util = require('../../utils/util.js');
 
 Page({
   data: {
-    levelId: null,
-    levelName: '',
+    sessionId: '',
+    scenarioId: '',
+    scenarioName: 'AI 模拟患者',
     patientProfile: '',
     messages: [],
+    currentRound: 0,
+    maxRounds: 10,
+    remainingRounds: 10,
     inputValue: '',
     scrollToView: '',
-    isTrainingEnd: false,
+    loading: true,
     sending: false,
-    remainingTurns: 20
+    finishing: false,
+    isTrainingEnd: false,
+    errorMessage: ''
   },
 
-  conversationId: null,
-  currentTurn: 0,
+  pendingMessage: null,
 
   onLoad(options) {
-    const levelId = parseInt(options.levelId);
-    this.setData({ levelId });
-    this.startTraining();
+    const sessionId = options.sessionId || '';
+    const scenarioId = options.scenarioId || '';
+    this.setData({ sessionId, scenarioId });
+
+    if (sessionId) {
+      this.loadSession();
+    } else if (scenarioId) {
+      this.createSession();
+    } else {
+      this.setData({ loading: false, errorMessage: '缺少训练会话信息' });
+    }
   },
 
-  startTraining() {
-    // 根据关卡ID设置不同的场景
-    const levelConfig = this.getLevelConfig(this.data.levelId);
-    
-    this.conversationId = Date.now();
-    this.setData({
-      levelName: levelConfig.name,
-      patientProfile: levelConfig.patientProfile,
-      messages: [{
-        id: Date.now(),
-        role: 'ai',
-        content: levelConfig.initMessage,
-        timestamp: util.formatTime(new Date())
-      }],
-      remainingTurns: 20
-    });
+  sessionPath(suffix = '') {
+    return `/sessions/${encodeURIComponent(this.data.sessionId)}${suffix}`;
   },
 
-  getLevelConfig(levelId) {
-    const configs = {
-      1: {
-        name: '低价引流与羊毛党转化',
-        patientProfile: '25岁女性，预算有限，只在乎价格，对口腔健康不重视',
-        initMessage: '我就想洗个牙，别的什么都不想做，你们家9.9元的券能用吗？'
-      },
-      2: {
-        name: '种植牙价格异议攻坚',
-        patientProfile: '50岁中年女性，缺牙多年，对价格极度敏感，喜欢比价',
-        initMessage: '你们种一颗牙要8000？别家才1999，太贵了！'
-      },
-      3: {
-        name: '信任危机与安全焦虑',
-        patientProfile: '40岁男性，有牙科恐惧症，极度不信任民营诊所',
-        initMessage: '我听说种植牙会致癌，网上都这么说的，是真的吗？'
-      },
-      4: {
-        name: '术后投诉与焦虑安抚',
-        patientProfile: '35岁女性，刚做完拔牙手术，疼痛难忍，情绪崩溃',
-        initMessage: '你们什么垃圾技术！我牙疼得一晚没睡，我要去工商投诉你们！'
+  async createSession() {
+    try {
+      const data = await request.post('/sessions', {
+        scenarioId: this.data.scenarioId
+      });
+      if (!data || !data.session || !data.session.id) {
+        throw new Error('服务端未返回有效训练会话');
       }
-    };
-    return configs[levelId] || configs[1];
+      this.setData({ sessionId: data.session.id });
+      this.applySessionData(data);
+      this.loadScenarioProfile(this.data.scenarioId);
+    } catch (error) {
+      this.setData({
+        loading: false,
+        errorMessage: request.getErrorMessage(error, '创建训练失败')
+      });
+    }
+  },
+
+  async loadSession() {
+    try {
+      const data = await request.get(this.sessionPath());
+      this.applySessionData(data);
+      if (data && data.session) {
+        this.loadScenarioProfile(data.session.scenarioId);
+      }
+    } catch (error) {
+      this.setData({
+        loading: false,
+        errorMessage: request.getErrorMessage(error, '训练会话加载失败')
+      });
+    }
+  },
+
+  async loadScenarioProfile(scenarioId) {
+    try {
+      const data = await request.get('/scenarios');
+      const scenario = (data.items || []).find(item => String(item.id) === String(scenarioId));
+      if (scenario && scenario.patientProfile) {
+        this.setData({
+          scenarioName: scenario.name,
+          patientProfile: `${scenario.patientProfile.age}岁 · ${scenario.patientProfile.description}`
+        });
+      }
+    } catch (error) {
+      console.warn('加载场景公开信息失败', error);
+    }
+  },
+
+  applySessionData(data) {
+    const session = data.session || {};
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    const currentRound = session.currentRound || 0;
+    const maxRounds = session.maxRounds || 10;
+
+    this.setData({
+      loading: false,
+      scenarioId: session.scenarioId || this.data.scenarioId,
+      scenarioName: session.scenarioName || this.data.scenarioName,
+      messages,
+      currentRound,
+      maxRounds,
+      remainingRounds: Math.max(maxRounds - currentRound, 0),
+      isTrainingEnd: session.status !== 'in_progress',
+      errorMessage: ''
+    }, () => {
+      this.setData({ scrollToView: 'msg-bottom' });
+    });
   },
 
   onInputChange(e) {
     this.setData({ inputValue: e.detail.value });
   },
 
-  sendMessage() {
+  async sendMessage() {
+    if (this.data.sending || this.data.finishing || this.data.isTrainingEnd) return;
+
     const content = this.data.inputValue.trim();
-    if (!content || this.data.isTrainingEnd) return;
+    if (!content) return;
 
-    this.setData({ sending: true });
+    const pending = this.pendingMessage && this.pendingMessage.content === content
+      ? this.pendingMessage
+      : { clientMessageId: `client-${Date.now()}`, content };
 
-    // 添加用户消息
-    const userMsg = {
-      id: Date.now(),
-      role: 'user',
-      content: content,
-      timestamp: util.formatTime(new Date())
-    };
-    const messages = [...this.data.messages, userMsg];
-    this.setData({
-      messages: messages,
-      inputValue: '',
-      scrollToView: 'msg-bottom'
-    });
+    this.pendingMessage = pending;
+    this.setData({ sending: true, inputValue: '' });
 
-    this.currentTurn++;
+    try {
+      const data = await request.post(this.sessionPath('/messages'), {
+        clientMessageId: pending.clientMessageId,
+        content: pending.content
+      });
+      if (!data || !data.userMessage || !data.patientMessage) {
+        throw new Error('患者回复数据不完整');
+      }
+      const messages = [
+        ...this.data.messages,
+        data.userMessage,
+        data.patientMessage
+      ];
+      const session = data.session || {};
 
-    // 模拟AI回复（延迟）
-    setTimeout(() => {
-      const aiResponse = this.getAIResponse(content, this.data.levelId, this.currentTurn);
-      
-      const aiMsg = {
-        id: Date.now() + 1,
-        role: 'ai',
-        content: aiResponse.reply,
-        suggestedReply: aiResponse.suggestedReply,
-        timestamp: util.formatTime(new Date())
-      };
-      
-      const newMessages = [...this.data.messages, aiMsg];
+      this.pendingMessage = null;
       this.setData({
-        messages: newMessages,
-        scrollToView: 'msg-bottom',
-        remainingTurns: 20 - this.currentTurn,
-        sending: false
+        messages,
+        currentRound: session.currentRound || this.data.currentRound + 1,
+        remainingRounds: session.remainingRounds === undefined
+          ? Math.max(this.data.maxRounds - (session.currentRound || this.data.currentRound + 1), 0)
+          : session.remainingRounds,
+        sending: false,
+        scrollToView: 'msg-bottom'
       });
 
-      // 结束条件
-      if (this.currentTurn >= 10 || 
-          (content.includes('预约') || content.includes('到店') || content.includes('检查'))) {
-        this.endTraining();
+      if (session.shouldFinish || session.currentRound >= this.data.maxRounds) {
+        this.finishTraining('max_rounds');
       }
-    }, 800);
+    } catch (error) {
+      this.setData({
+        sending: false,
+        inputValue: pending.content
+      });
+      util.showToast(request.getErrorMessage(error, '患者回复失败，可重试'));
+    }
   },
 
-  getAIResponse(userMsg, levelId, turn) {
-    // 不同场景的AI回复和黄金话术
-    const responses = {
-      1: {
-        replies: [
-          '还是太贵了，我就只想洗个牙。',
-          '你说的这些我都不懂，我就看价格。',
-          '那我再考虑考虑吧。',
-          '你们这个套餐都包含什么？'
-        ],
-        suggestion: '我理解您对价格的关心。我们的洗牙套餐虽然是9.9元，但包含全面的口腔检查，可以帮您了解牙齿健康状况。'
-      },
-      2: {
-        replies: [
-          '8000太贵了，别家才1999。',
-          '你说的是进口的？有什么区别？',
-          '我还是觉得太贵了，能便宜点吗？',
-          '我先去别家看看。'
-        ],
-        suggestion: '我理解您对价格的关心。我们的种植体都是国际一线品牌，医生有10年以上经验，术后还有5年质保。算下来每天其实只要几块钱。'
-      },
-      3: {
-        replies: [
-          '网上说的那些案例是真的吗？',
-          '我还是不放心，万一失败怎么办？',
-          '你们用的材料是真的进口的吗？',
-          '我感觉你们就是想要钱。'
-        ],
-        suggestion: '您有这样的担心很正常。种植体是医用纯钛材料，生物相容性极好，国内外几十年临床研究已证实其安全性。'
-      },
-      4: {
-        replies: [
-          '疼得我一晚没睡！你们必须负责！',
-          '我要投诉你们！',
-          '你们医生在哪里？让他来解释！',
-          '退款！我要退款！'
-        ],
-        suggestion: '非常抱歉给您带来不好的体验。术后疼痛确实很难受，我马上帮您联系医生处理。您方便描述一下具体哪里疼吗？'
+  async finishTraining(reasonOrEvent) {
+    if (reasonOrEvent && reasonOrEvent.currentTarget) {
+      reasonOrEvent = reasonOrEvent.currentTarget.dataset.reason || 'manual';
+    }
+    const reason = reasonOrEvent || 'manual';
+
+    if (this.data.finishing || this.data.isTrainingEnd) return;
+    if (this.data.currentRound < 1) {
+      util.showToast('至少完成 1 轮对话后才能结束训练');
+      return;
+    }
+
+    const confirmed = reason === 'max_rounds'
+      ? true
+      : await util.showModal({
+        title: '结束训练',
+        content: '确定结束本次训练并生成评分吗？'
+      });
+    if (!confirmed) return;
+
+    this.setData({ finishing: true, isTrainingEnd: true });
+    try {
+      if (!this.data.sessionId) {
+        throw new Error('缺少训练会话 ID');
       }
-    };
-
-    const config = responses[levelId] || responses[1];
-    const replyIndex = Math.min(turn - 1, config.replies.length - 1);
-    
-    return {
-      reply: config.replies[replyIndex] || config.replies[0],
-      suggestedReply: config.suggestion
-    };
-  },
-
-  endTraining() {
-    this.setData({ isTrainingEnd: true });
-
-    // 计算模拟分数
-    const score = Math.floor(Math.random() * 30) + 65;
-    const empathyScore = Math.floor(Math.random() * 30) + 60;
-    const demandScore = Math.floor(Math.random() * 30) + 55;
-    const valueScore = Math.floor(Math.random() * 30) + 60;
-    const appointmentScore = this.data.messages.some(m => 
-      m.role === 'user' && (m.content.includes('预约') || m.content.includes('到店'))
-    ) ? 100 : 50;
-
-    setTimeout(() => {
+      await request.post(this.sessionPath('/finish'), { reason });
       wx.redirectTo({
-        url: `/pages/result/result?score=${score}&empathy=${empathyScore}&demand=${demandScore}&value=${valueScore}&appointment=${appointmentScore}&compliance=85`
+        url: `/pages/result/result?sessionId=${encodeURIComponent(this.data.sessionId)}`
       });
-    }, 1500);
+    } catch (error) {
+      this.setData({ finishing: false, isTrainingEnd: false });
+      util.showToast(request.getErrorMessage(error, '结束训练失败，请重试'));
+    }
   }
 });
