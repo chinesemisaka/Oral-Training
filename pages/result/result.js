@@ -86,8 +86,9 @@ Page({
     } catch (error) {
       this.setData({
         loading: false,
-        status: 'failed',
-        retryable: true,
+        status: 'generating',
+        timedOut: true,
+        retryable: false,
         errorMessage: request.getErrorMessage(error, '评分报告加载失败')
       });
     }

@@ -47,13 +47,13 @@ Page({
 
     if (status === 'in_progress') {
       wx.navigateTo({
-        url: `/pages/training/training?sessionId=${sessionId}`
+        url: `/pages/training/training?sessionId=${encodeURIComponent(sessionId)}`
       });
       return;
     }
 
     wx.navigateTo({
-      url: `/pages/result/result?sessionId=${sessionId}`
+      url: `/pages/result/result?sessionId=${encodeURIComponent(sessionId)}`
     });
   },
 
