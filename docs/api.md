@@ -1,404 +1,725 @@
-# AI口腔客服陪练小程序 — 后端接口文档（草稿 v1.0）
+# AI 口腔客服智能陪练系统 API 契约
 
-> 本文档根据前端小程序现有代码整理，用于明确前后端数据接口约定。
-> 前端请求封装：`static/api/request.js`，统一前缀 `app.globalData.apiBaseUrl`。
+> 版本：v2.0 MVP
+>
+> 本契约以《口腔医疗客服智能陪练系统 MVP 产品设计文档》为唯一产品依据，服务于一天内可演示的最小闭环：场景选择 → 创建/恢复会话 → 多轮对练 → 自动评分 → 查看报告 → 历史回顾 → 演示数据。
 
-## 0. 通用约定
+## 1. 设计边界
 
-**请求头**
+### 1.1 MVP 范围
+
+- 固定演示用户，不提供微信授权、手机号登录和正式权限体系。
+- 固定 4 个训练场景：种植牙基础咨询、正畸基础咨询、与其他诊所比价、术后不适咨询。
+- 只支持文字对话。
+- 训练轮数为 5—10 轮；用户完成至少 1 轮后可以主动结束，第 10 轮 AI 回复完成后自动结束。
+- 每轮消息提交后由服务端持久化；中途退出不需要额外保存接口，下一次通过会话详情恢复。
+- 评分由独立评分服务生成，结果包含五维得分、总结、优势、改进、违规说明和关键轮次点评。
+- 统计页只展示演示数据，不包含团队成员、权限、排行榜和导出。
+
+### 1.2 暂不提供的能力
+
+- 登录、刷新 token、角色权限。
+- 语音、ASR、黄金话术、快捷回复、实时评分。
+- 打卡、积分、等级、排行榜、错题本和主管后台。
+- 真实患者信息、诊疗记录和医疗建议。
+
+## 2. 服务约定
+
+### 2.1 Base URL
+
+```text
+https://<host>/api
 ```
+
+开发环境可以使用局域网地址，但生产环境必须使用 HTTPS。前端只保存 Base URL，不保存任何模型 API Key。
+
+### 2.2 演示用户
+
+MVP 不做登录。服务端默认使用固定用户：
+
+```text
+demo-user-001
+```
+
+如需在开发环境区分多个演示数据集，可增加请求头；正式 MVP 不由用户填写或修改：
+
+```http
+X-Demo-User-Id: demo-user-001
+```
+
+### 2.3 请求头
+
+```http
 Content-Type: application/json
-Authorization: Bearer <token>   // token 取自 wx.storage 'token'，未登录可空
+X-Demo-User-Id: demo-user-001
 ```
 
-**统一响应结构**（前端 `request.js` 已按此解析，成功时 `resolve(res.data.data)`）
+### 2.4 统一响应结构
+
+成功响应：
+
 ```json
 {
-  "code": 0,          // 0 成功，非 0 业务失败
-  "message": "ok",    // 失败时的提示信息
-  "data": { }         // 业务数据
+  "code": 0,
+  "message": "ok",
+  "data": {}
 }
 ```
 
-**状态码约定**
-- `200` + `code:0` → 成功
-- `401` → 未授权/登录过期（前端会清空 storage 并提示重新登录）
-- 其他 `statusCode` → 网络错误
+失败响应：
 
-**数据格式约定**
-- 日期时间字符串：`MM-DD HH:mm`（如 `06-11 14:30`），由后端格式化后返回
-- 分数：整数 0–100
-
----
-
-## 1. 用户与登录
-
-### 1.1 登录
-- **接口**：`POST /login`
-- **说明**：微信小程序登录，换取 token 与用户信息（前端目前用本地假数据，需对接）
-- **请求参数**：
-```json
-{ "code": "微信 wx.login 返回的 code" }
-```
-- **返回 data**：
 ```json
 {
-  "token": "eyJhbGci...",
-  "userInfo": {
-    "nickname": "口腔客服",
-    "avatar": "/static/images/default-avatar.png",
-    "level": 3,
-    "totalScore": 2850,
-    "title": "金牌客服"
-  }
+  "code": "SESSION_FINISHED",
+  "message": "训练已结束，不能继续发送消息",
+  "data": null
 }
 ```
-- **前端消费位置**：`mine.js loadUserInfo()`、`index.js loadUserInfo()`（目前取本地 `userInfo`，需改为调此接口）
 
-### 1.2 获取用户统计
-- **接口**：`GET /user/stats`
-- **说明**：我的页顶部统计 + 连续打卡天数
-- **返回 data**：
+前端请求封装只在 HTTP 状态码成功且 `code === 0` 时返回 `data`；其他情况统一进入错误处理。
+
+### 2.5 时间、分数和分页
+
+- 时间统一使用 ISO 8601，带时区，例如 `2026-07-15T14:30:00+08:00`。
+- 分数统一为 0—100 的整数；平均分可以保留 1 位小数。
+- 历史记录默认返回最近 50 条，MVP 不强制分页。
+- 所有 ID 使用字符串，避免前端因 JavaScript 数字精度导致会话 ID 变化。
+
+## 3. 核心数据对象
+
+### 3.1 Scenario 场景
+
 ```json
 {
-  "totalTrainings": 28,
-  "totalScore": 2850,
-  "rank": 5,
-  "continuousDays": 7
-}
-```
-- **前端消费位置**：`mine.js loadStats()`
-- ⚠️ 注意：`continuousDays` 前端已改为从打卡记录动态计算（`calcContinuousDays`），建议后端也按打卡记录返回真实值。
-
----
-
-## 2. 首页
-
-### 2.1 热门话术列表
-- **接口**：`GET /scripts/hot`
-- **说明**：首页"热门话术"卡片（前端当前为 `home.js` 写死假数据，需对接）
-- **返回 data**：
-```json
-{
-  "list": [
-    {
-      "id": 1,
-      "title": "种植牙咨询专业解答",
-      "summary": "患者来电咨询种植牙流程和注意事项...",
-      "tags": ["种植牙", "咨询", "专业解答"],
-      "score": 96,
-      "usageCount": 1280,
-      "dialogues": [
-        { "role": "patient", "text": "你好，我想了解一下种植牙大概是什么流程？" },
-        { "role": "service", "text": "您好！种植牙一般分为三个阶段..." }
-      ]
-    }
-  ]
-}
-```
-- **前端消费位置**：`home.js loadMockData()` → `hotScripts`
-
----
-
-## 3. 训练中心
-
-### 3.1 训练场景分类列表
-- **接口**：`GET /scenarios`
-- **说明**：训练页四大分类及下属场景（前端当前为 `index.js` 写死假数据）
-- **返回 data**：
-```json
-{
-  "list": [
-    {
-      "id": "consult",
-      "name": "咨询解答",
-      "icon": "💬",
-      "color": "#007aff",
-      "description": "应对患者各类咨询，专业解答口腔问题",
-      "completedCount": 1,
-      "totalCount": 4,
-      "scenarios": [
-        {
-          "id": 101,
-          "name": "种植牙咨询",
-          "difficulty": "easy",
-          "scenarioDescription": "患者来电咨询种植牙流程和注意事项...",
-          "passingScore": 70,
-          "isCompleted": true,
-          "bestScore": 82
-        }
-      ]
-    }
-  ]
-}
-```
-- **前端消费位置**：`index.js loadMockData()` → `categories`
-
-### 3.2 开始训练（创建会话）
-- **接口**：`POST /training/start`
-- **说明**：进入对话训练页，获取患者画像与开场白（前端当前为 `training.js getLevelConfig` 写死）
-- **请求参数**：
-```json
-{ "scenarioId": 101 }
-```
-- **返回 data**：
-```json
-{
-  "conversationId": "1718000000000",
-  "levelName": "种植牙咨询",
-  "patientProfile": "25岁女性，预算有限...",
-  "initMessage": "我就想洗个牙，别的什么都不想做...",
-  "remainingTurns": 20
-}
-```
-- **前端消费位置**：`training.js startTraining()`
-
-### 3.3 发送消息（AI 回复）
-- **接口**：`POST /training/message`
-- **说明**：客服发送一条回复，AI 返回患者下一句 + 黄金话术建议（前端当前为 `training.js getAIResponse` 写死）
-- **请求参数**：
-```json
-{
-  "conversationId": "1718000000000",
-  "content": "我们洗牙套餐包含全面口腔检查哦",
-  "turn": 2
-}
-```
-- **返回 data**：
-```json
-{
-  "reply": "还是太贵了，我就只想洗个牙。",
-  "suggestedReply": "我理解您对价格的关心。我们的洗牙套餐虽然是9.9元...",
-  "isEnd": false,
-  "remainingTurns": 18
-}
-```
-- **结束条件**：前端在 `content` 含"预约/到店/检查"或轮次≥10 时调用结束接口（见 3.4）
-- **前端消费位置**：`training.js sendMessage()`
-
-### 3.4 结束训练（提交评分）
-- **接口**：`POST /training/end`
-- **说明**：训练结束，提交对话记录由后端评分（前端当前为 `training.js endTraining` 用随机分，需对接）
-- **请求参数**：
-```json
-{
-  "conversationId": "1718000000000",
-  "messages": [
-    { "role": "user", "content": "..." },
-    { "role": "ai", "content": "..." }
-  ]
-}
-```
-- **返回 data**：
-```json
-{
-  "conversationId": "1718000000000",
-  "totalScore": 82,
-  "empathyScore": 88,
-  "demandScore": 75,
-  "valueScore": 82,
-  "appointmentScore": 70,
-  "complianceScore": 92
-}
-```
-- **前端跳转**：`training.js endTraining()` 目前把分数拼到 URL 跳 `result` 页，建议改为拿 `conversationId` 跳 `result?conversationId=xxx`，由结果页拉取（见 4.1）
-
----
-
-## 4. 训练结果
-
-### 4.1 获取训练结果
-- **接口**：`GET /result/{conversationId}`
-- **说明**：结果页五维评分与雷达图
-- **路径参数**：`conversationId`
-- **返回 data**：
-```json
-{
-  "totalScore": 82,
-  "empathyScore": 88,
-  "demandScore": 75,
-  "valueScore": 82,
-  "appointmentScore": 70,
-  "complianceScore": 92,
-  "levelInfo": {}
-}
-```
-- **前端消费位置**：`result.js loadResult()`（已调用，当前未接真实后端）
-- 前端根据 `totalScore >= 60` 判定通过，并自行生成文字评价（按 85/70/60 分档）
-
----
-
-## 5. 报告页
-
-### 5.1 个人汇总报告
-- **接口**：`GET /report/summary`
-- **说明**：报告页综合概览 / 历史 / 错题 / 成长轨迹四个标签页的数据源
-- **返回 data**：
-```json
-{
-  "stats": {
-    "totalTrainings": 28,
-    "avgScore": 82.5,
-    "bestScore": 96,
-    "totalHours": 14.5
+  "id": "implant-basic",
+  "name": "种植牙基础咨询",
+  "summary": "患者咨询种植牙流程、疼痛和治疗周期",
+  "difficulty": "basic",
+  "focus": ["基础信息解释", "需求挖掘", "回应担忧", "医疗边界"],
+  "patientProfile": {
+    "age": 52,
+    "gender": "unknown",
+    "description": "缺失一颗后牙，对种植牙了解较少，初始情绪平静但谨慎"
   },
-  "scores": [
-    { "name": "共情能力", "value": 88, "color": "#007aff" },
-    { "name": "需求挖掘", "value": 75, "color": "#52c41a" },
-    { "name": "价值传递", "value": 82, "color": "#fa8c16" },
-    { "name": "预约促成", "value": 70, "color": "#f5222d" },
-    { "name": "合规表达", "value": 92, "color": "#722ed1" }
-  ],
-  "recentTrainings": [
-    { "id": 1, "levelName": "种植牙咨询解答", "time": "06-11 14:30", "score": 92 }
-  ],
-  "mistakeList": [
-    {
-      "id": 1,
-      "sceneType": "价格异议",
-      "time": "06-10 16:20",
-      "userMessage": "我们这个价格已经是最便宜的了...",
-      "suggestedReply": "理解您的顾虑，价格确实是考虑因素之一...",
-      "levelId": 2
-    }
-  ],
-  "redFlagStats": [
-    { "word": "最便宜", "count": 2 },
-    { "word": "保证", "count": 3 }
-  ],
-  "levelProgress": [
-    {
-      "id": 1,
-      "name": "种植牙咨询解答",
-      "progress": 100,
-      "status": "已通关",
-      "scenarioDescription": "专业解答种植牙流程与注意事项"
-    }
-  ]
+  "maxRounds": 10,
+  "bestScore": 0,
+  "activeSession": null
 }
 ```
-- **前端消费位置**：`report.js loadReportData()`（已调用，catch 中为写死假数据）
-- **字段与前端 `setData` 的对应关系**：
-  - `stats` → 顶部四个统计卡（总训练次数 / 平均分 / 最高分 / 训练时长）
-  - `scores` → 能力雷达图五维条形
-  - `recentTrainings` → 训练历史列表 + 得分趋势图（取最后 7 条）
-  - `mistakeList` → 错题本
-  - `redFlagStats` → 薄弱项分析（违规词统计）
-  - `levelProgress` → 推荐练习 + 关卡通关进度
 
-### 5.2 单次训练详情
-- **接口**：`GET /report/detail/{conversationId}`
-- **说明**：从报告历史或结果页点击进入的单次对话详情
-- **路径参数**：`conversationId`
-- **返回 data**：建议复用 5.1 中单条 `recentTrainings` 的结构，并补充完整对话：
+`patientProfile` 只包含用户可见信息。隐藏顾虑、风险信号、情绪和信任度只保存在服务端，不得通过接口返回给小程序。
+
+### 3.2 Session 会话
+
 ```json
 {
-  "id": 1,
-  "levelName": "种植牙咨询解答",
-  "time": "06-11 14:30",
-  "score": 92,
-  "messages": [
-    { "role": "user", "content": "..." },
-    { "role": "ai", "content": "..." }
-  ]
+  "id": "sess_01JZ...",
+  "scenarioId": "implant-basic",
+  "scenarioName": "种植牙基础咨询",
+  "status": "in_progress",
+  "currentRound": 2,
+  "maxRounds": 10,
+  "startedAt": "2026-07-15T14:30:00+08:00",
+  "updatedAt": "2026-07-15T14:32:10+08:00",
+  "finishedAt": null,
+  "totalScore": null,
+  "evaluationStatus": "not_started"
 }
 ```
-- **前端消费位置**：`report.js loadReportData()`（当 `conversationId` 存在时调用，已写）
 
----
+状态：
 
-## 6. 排行榜
+| 状态 | 含义 | 允许操作 |
+|---|---|---|
+| `in_progress` | 训练进行中或中途退出 | 查看、继续、发送、结束、重新开始 |
+| `completed` | 对话结束，评分已生成或正在生成 | 查看会话、查看报告、重新训练 |
+| `abandoned` | 用户选择重新开始后，旧会话被放弃 | 只读查看 |
 
-### 6.1 排行榜列表
-- **接口**：`GET /rank/list`
-- **说明**：报告页"排行榜"标签页
-- **返回 data**：
+评分状态：
+
+| 状态 | 含义 |
+|---|---|
+| `not_started` | 尚未结束训练 |
+| `generating` | 已结束，评分生成中 |
+| `ready` | 评分已生成 |
+| `failed` | 评分失败，可重试 |
+
+### 3.3 Message 消息
+
 ```json
 {
-  "rankList": [
+  "id": "msg_01JZ...",
+  "role": "patient",
+  "content": "我主要担心手术会不会很疼。",
+  "round": 2,
+  "createdAt": "2026-07-15T14:32:08+08:00"
+}
+```
+
+`role` 只能为 `patient` 或 `user`。患者消息由服务端生成，用户消息由前端提交。
+
+### 3.4 Evaluation 评分报告
+
+```json
+{
+  "sessionId": "sess_01JZ...",
+  "status": "ready",
+  "totalScore": 82,
+  "dimensionScores": {
+    "knowledgeAccuracy": 80,
+    "medicalCompliance": 90,
+    "empathy": 88,
+    "needsDiscovery": 75,
+    "serviceEtiquette": 86
+  },
+  "summary": "能够先回应患者担忧，但对预算和疼痛的追问还不够完整。",
+  "strengths": [
     {
-      "rank": 1,
-      "nickname": "张主任",
-      "avatar": "",
-      "title": "金牌客服",
-      "totalScore": 9680,
-      "avgScore": 96.8,
-      "trainings": 42,
-      "isMe": false
+      "round": 1,
+      "evidence": "先回应了患者对疼痛的担心",
+      "content": "表达了基本的同理和安抚"
     }
   ],
-  "myRank": {
-    "rank": 5,
-    "totalScore": 8520,
-    "avgScore": 85.2
+  "improvements": [
+    {
+      "round": 2,
+      "content": "继续询问疼痛担忧、预算和时间安排，再介绍检查流程。"
+    }
+  ],
+  "violations": [
+    {
+      "round": 3,
+      "originalQuote": "我们保证种植一定成功。",
+      "type": "疗效保证",
+      "reason": "客服不能对个体治疗效果作绝对承诺。",
+      "deduction": 30,
+      "recommendedRewrite": "具体效果需要医生检查后结合您的情况评估。"
+    }
+  ],
+  "roundComments": [
+    {
+      "round": 2,
+      "userMessage": "......",
+      "comment": "回应了情绪，但没有追问患者最主要的顾虑。",
+      "recommendedRewrite": "我理解您担心疼痛，您更担心手术过程，还是术后恢复呢？"
+    }
+  ],
+  "modelVersion": "provider-model-v1",
+  "promptVersion": "score-prompt-v1",
+  "generatedAt": "2026-07-15T14:32:30+08:00"
+}
+```
+
+五维权重固定为：
+
+| 字段 | 中文名称 | 权重 |
+|---|---|---:|
+| `knowledgeAccuracy` | 口腔知识准确性 | 25% |
+| `medicalCompliance` | 医疗合规 | 25% |
+| `empathy` | 情绪识别与同理心 | 20% |
+| `needsDiscovery` | 需求挖掘 | 20% |
+| `serviceEtiquette` | 服务礼仪 | 10% |
+
+## 4. 接口清单
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/scenarios` | 获取 4 个场景及当前用户的进行中会话 |
+| `POST` | `/sessions` | 创建新训练会话 |
+| `POST` | `/sessions/{sessionId}/restart` | 放弃旧会话并重新创建同场景会话 |
+| `GET` | `/sessions/{sessionId}` | 恢复会话、消息和当前轮次 |
+| `POST` | `/sessions/{sessionId}/messages` | 提交用户消息并获取患者回复 |
+| `POST` | `/sessions/{sessionId}/finish` | 主动或自动结束训练并触发评分 |
+| `GET` | `/sessions/{sessionId}/evaluation` | 获取评分状态或完整评分报告 |
+| `POST` | `/sessions/{sessionId}/evaluation/retry` | 评分失败后重新评分 |
+| `GET` | `/sessions` | 获取历史训练记录 |
+| `GET` | `/dashboard/summary` | 获取演示数据汇总 |
+
+## 5. 场景接口
+
+### 5.1 获取场景列表
+
+```http
+GET /api/scenarios
+```
+
+响应：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "items": [
+      {
+        "id": "implant-basic",
+        "name": "种植牙基础咨询",
+        "summary": "咨询种植牙流程、疼痛和时间",
+        "difficulty": "basic",
+        "focus": ["基础信息解释", "需求挖掘", "医疗边界"],
+        "patientProfile": {
+          "age": 52,
+          "gender": "unknown",
+          "description": "缺失一颗后牙，对种植牙了解较少，初始情绪平静但谨慎"
+        },
+        "maxRounds": 10,
+        "bestScore": 0,
+        "activeSession": null
+      }
+    ]
   }
 }
 ```
-- **前端消费位置**：`report.js loadRankData()`（已调用，catch 中为写死假数据）
-- ⚠️ 注意：前端排行榜展示的是 `avgScore`（均分），`totalScore` 字段保留备用；`isMe` 用于高亮当前用户。
 
----
+`activeSession` 不为空时，场景页显示“继续训练”；为空时显示“开始训练”。
 
-## 7. 打卡（新增，需后端持久化）
+四个固定场景 ID：
 
-> 当前打卡仅存本地 `wx.setStorageSync('checkedDates')`，重新编译/清缓存即丢失。需后端接口实现持久化，前端 `mine.js` 的 `initCalendar` / `doCheckIn` 改为调接口。
+| ID | 名称 |
+|---|---|
+| `implant-basic` | 种植牙基础咨询 |
+| `orthodontic-basic` | 正畸基础咨询 |
+| `price-comparison` | 与其他诊所比价 |
+| `post-treatment-discomfort` | 术后不适咨询 |
 
-### 7.1 获取打卡记录
-- **接口**：`GET /checkin`
-- **说明**：返回当前用户已打卡日期列表
-- **返回 data**：
+## 6. 会话与对练接口
+
+### 6.1 创建会话
+
+```http
+POST /api/sessions
+Content-Type: application/json
+```
+
+请求：
+
 ```json
 {
-  "checkedDates": ["2026-06-10", "2026-06-11", "2026-06-12"]
+  "scenarioId": "implant-basic"
 }
 ```
-- **前端消费位置**：`mine.js initCalendar()` 中读取 `wx.getStorageSync('checkedDates')` → 改为调此接口
 
-### 7.2 提交打卡
-- **接口**：`POST /checkin`
-- **说明**：今日打卡
-- **请求参数**：
-```json
-{ "date": "2026-06-12" }
-```
-- **返回 data**：
+成功响应使用 `201`：
+
 ```json
 {
-  "checkedDates": ["2026-06-10", "2026-06-11", "2026-06-12"],
-  "continuousDays": 3
+  "code": 0,
+  "message": "created",
+  "data": {
+    "session": {
+      "id": "sess_01JZ...",
+      "scenarioId": "implant-basic",
+      "status": "in_progress",
+      "currentRound": 0,
+      "maxRounds": 10,
+      "evaluationStatus": "not_started"
+    },
+    "messages": [
+      {
+        "id": "msg_01JZ...",
+        "role": "patient",
+        "content": "您好，我想了解一下种植牙，大概需要多久？",
+        "round": 0,
+        "createdAt": "2026-07-15T14:30:00+08:00"
+      }
+    ]
+  }
 }
 ```
-- **前端消费位置**：`mine.js doCheckIn()` 中 `wx.setStorageSync` → 改为调此接口，并用返回的 `continuousDays` 更新 `stats.continuousDays`
 
----
+如果该场景已有 `in_progress` 会话，返回 `409 SESSION_IN_PROGRESS`，前端应提示用户选择继续或调用重新开始接口。
 
-## 8. 接口清单速览
+### 6.2 重新开始会话
 
-| 编号 | 方法 | 路径 | 状态 | 前端位置 |
-|------|------|------|------|---------|
-| 1.1 | POST | `/login` | 待对接（当前本地假数据） | mine/index loadUserInfo |
-| 1.2 | GET | `/user/stats` | ✅ 已调用，catch 兜底 | mine loadStats |
-| 2.1 | GET | `/scripts/hot` | 待对接（写死） | home loadMockData |
-| 3.1 | GET | `/scenarios` | 待对接（写死） | index loadMockData |
-| 3.2 | POST | `/training/start` | 待对接（写死） | training startTraining |
-| 3.3 | POST | `/training/message` | 待对接（写死） | training sendMessage |
-| 3.4 | POST | `/training/end` | 待对接（随机分） | training endTraining |
-| 4.1 | GET | `/result/{conversationId}` | ✅ 已调用 | result loadResult |
-| 5.1 | GET | `/report/summary` | ✅ 已调用，catch 兜底 | report loadReportData |
-| 5.2 | GET | `/report/detail/{id}` | ✅ 已调用 | report loadReportData |
-| 6.1 | GET | `/rank/list` | ✅ 已调用，catch 兜底 | report loadRankData |
-| 7.1 | GET | `/checkin` | 🆕 新增（当前本地） | mine initCalendar |
-| 7.2 | POST | `/checkin` | 🆕 新增（当前本地） | mine doCheckIn |
-| 8.1 | GET | `/admin/dashboard` | ⚠️ 前端已调用但文档未记录 | admin onLoad |
+```http
+POST /api/sessions/{sessionId}/restart
+```
 
-**图例**：✅ 前端已写好调用（后端按文档返回即可）；待对接 前端写死假数据待替换；🆕 当前仅本地存储，需新增后端接口。
+服务端执行以下原子操作：
 
----
+1. 将原 `in_progress` 会话标记为 `abandoned`。
+2. 创建同一场景的新会话。
+3. 返回新会话及患者开场消息。
 
-## 9. 给后端的备注（可删）
+响应结构与“创建会话”一致。已完成或已放弃的会话不能再次重开，应从场景页创建新会话。
 
-1. **统一返回结构**：前端 `request.js` 只在 `code===0` 时 `resolve(data)`，其余 `reject(message)`，请保证所有接口遵循第 0 节结构。
-2. **日期格式**：前端直接展示后端返回的字符串，请按 `MM-DD HH:mm` 返回，避免前端再转换。
-3. **分数范围**：所有 score 字段为 0–100 整数，前端雷达图/进度条按百分比渲染。
-4. **登录态**：`Authorization: Bearer <token>` 由前端自动携带，未登录时为空，后端对需登录接口返回 401。
-5. **打卡持久化**是当务之急：当前本地存储方案在清缓存/重编译时会丢失连续天数数据（即用户最初反馈的"昨天打卡今天看不到"问题），建议优先实现第 7 节接口。
+### 6.3 获取会话详情
+
+```http
+GET /api/sessions/{sessionId}
+```
+
+响应：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "session": {
+      "id": "sess_01JZ...",
+      "scenarioId": "implant-basic",
+      "scenarioName": "种植牙基础咨询",
+      "status": "in_progress",
+      "currentRound": 2,
+      "maxRounds": 10,
+      "startedAt": "2026-07-15T14:30:00+08:00",
+      "updatedAt": "2026-07-15T14:32:10+08:00",
+      "finishedAt": null,
+      "totalScore": null,
+      "evaluationStatus": "not_started"
+    },
+    "messages": []
+  }
+}
+```
+
+接口返回完整消息，供“继续训练”和历史详情使用。不要返回隐藏信息、Prompt、情绪内部状态或模型原始响应。
+
+### 6.4 发送用户消息
+
+```http
+POST /api/sessions/{sessionId}/messages
+Content-Type: application/json
+```
+
+请求：
+
+```json
+{
+  "clientMessageId": "client-msg-0002",
+  "content": "我理解您的担心，可以先了解一下您最在意疼痛还是恢复时间吗？"
+}
+```
+
+约束：
+
+- `content` 去除首尾空白后长度为 1—1000 个字符。
+- 会话必须为 `in_progress`。
+- 当前轮数达到 10 后拒绝发送。
+- `clientMessageId` 用于幂等，网络重试不能生成重复用户消息或重复患者回复。
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "userMessage": {
+      "id": "msg_user_0002",
+      "role": "user",
+      "content": "我理解您的担心，可以先了解一下您最在意疼痛还是恢复时间吗？",
+      "round": 1,
+      "createdAt": "2026-07-15T14:32:00+08:00"
+    },
+    "patientMessage": {
+      "id": "msg_patient_0002",
+      "role": "patient",
+      "content": "我最担心的是手术疼不疼，另外预算也有限。",
+      "round": 1,
+      "createdAt": "2026-07-15T14:32:08+08:00"
+    },
+    "session": {
+      "currentRound": 1,
+      "remainingRounds": 9,
+      "status": "in_progress",
+      "shouldFinish": false
+    }
+  }
+}
+```
+
+若模型调用超时，返回 `503 MODEL_TIMEOUT`。服务端不得删除已保存的用户消息，前端可以使用同一个 `clientMessageId` 重试。
+
+### 6.5 结束训练
+
+```http
+POST /api/sessions/{sessionId}/finish
+Content-Type: application/json
+```
+
+请求：
+
+```json
+{
+  "reason": "manual"
+}
+```
+
+`reason` 可选值：`manual`、`max_rounds`、`model_error`。
+
+规则：
+
+- `currentRound === 0` 时返回 `422 MIN_ROUNDS_NOT_REACHED`。
+- 结束操作必须幂等；已结束的会话再次调用时返回当前会话状态，不重复创建评分任务。
+- 会话立即变为 `completed`，评分状态变为 `generating` 或 `ready`。
+
+响应：
+
+```json
+{
+  "code": 0,
+  "message": "accepted",
+  "data": {
+    "sessionId": "sess_01JZ...",
+    "status": "completed",
+    "evaluationStatus": "generating"
+  }
+}
+```
+
+HTTP 状态使用 `202` 表示评分仍在生成。前端跳转结果页后轮询评分接口，不要把分数拼到 URL 中。
+
+## 7. 评分接口
+
+### 7.1 获取评分报告
+
+```http
+GET /api/sessions/{sessionId}/evaluation
+```
+
+评分生成中：
+
+```json
+{
+  "code": 0,
+  "message": "evaluation_generating",
+  "data": {
+    "sessionId": "sess_01JZ...",
+    "status": "generating",
+    "retryable": false,
+    "evaluation": null
+  }
+}
+```
+
+评分完成：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "sessionId": "sess_01JZ...",
+    "status": "ready",
+    "retryable": false,
+    "evaluation": {}
+  }
+}
+```
+
+评分失败：
+
+```json
+{
+  "code": 0,
+  "message": "evaluation_failed",
+  "data": {
+    "sessionId": "sess_01JZ...",
+    "status": "failed",
+    "retryable": true,
+    "evaluation": null
+  }
+}
+```
+
+### 7.2 重试评分
+
+```http
+POST /api/sessions/{sessionId}/evaluation/retry
+```
+
+只允许对 `evaluationStatus = failed` 的已完成会话调用。成功返回 `202`，响应结构与评分生成中一致。
+
+评分服务要求：
+
+- 一次性读取完整对话，而不是只评价最后一轮。
+- 使用固定评分 Prompt 和 JSON Schema。
+- 识别严重医疗错误、疗效保证、风险处理不当和贬低其他机构等问题。
+- JSON 解析失败最多自动重试一次；仍失败则将状态设为 `failed`。
+- 评分建议不得写成医学诊断或治疗指令。
+
+## 8. 历史记录接口
+
+### 8.1 获取训练历史
+
+```http
+GET /api/sessions?status=all&scenarioId=&limit=50
+```
+
+查询参数：
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `status` | 否 | `all`、`in_progress`、`completed`、`abandoned`，默认 `all` |
+| `scenarioId` | 否 | 按场景筛选 |
+| `limit` | 否 | 1—50，默认 50 |
+
+响应：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "items": [
+      {
+        "id": "sess_01JZ...",
+        "scenarioId": "implant-basic",
+        "scenarioName": "种植牙基础咨询",
+        "status": "completed",
+        "currentRound": 6,
+        "maxRounds": 10,
+        "totalScore": 82,
+        "evaluationStatus": "ready",
+        "startedAt": "2026-07-15T14:30:00+08:00",
+        "updatedAt": "2026-07-15T14:36:00+08:00"
+      }
+    ],
+    "total": 1
+  }
+}
+```
+
+列表只返回摘要；点击记录后调用 `GET /sessions/{sessionId}` 获取完整对话，再调用评分接口获取报告。
+
+## 9. 演示数据接口
+
+### 9.1 获取汇总数据
+
+```http
+GET /api/dashboard/summary
+```
+
+响应：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "totalSessions": 12,
+    "completedSessions": 10,
+    "averageScore": 82.5,
+    "scenarioStats": [
+      {
+        "scenarioId": "implant-basic",
+        "scenarioName": "种植牙基础咨询",
+        "trainingCount": 4
+      }
+    ],
+    "dimensionAverages": {
+      "knowledgeAccuracy": 80,
+      "medicalCompliance": 88,
+      "empathy": 84,
+      "needsDiscovery": 76,
+      "serviceEtiquette": 86
+    },
+    "recentSessions": []
+  }
+}
+```
+
+统计规则：
+
+- `totalSessions` 不统计 `abandoned` 会话。
+- `completedSessions` 只统计状态为 `completed` 且评分状态为 `ready` 的会话。
+- `averageScore` 只计算已有评分的完成会话。
+- `scenarioStats` 只返回四个固定场景，可返回 0 次。
+- `recentSessions` 返回最近 5 条训练摘要。
+
+## 10. 错误码
+
+| HTTP | code | 场景 |
+|---:|---|---|
+| 400 | `INVALID_ARGUMENT` | 参数缺失、格式错误或消息超长 |
+| 404 | `SCENARIO_NOT_FOUND` | 场景不存在 |
+| 404 | `SESSION_NOT_FOUND` | 会话不存在 |
+| 409 | `SESSION_IN_PROGRESS` | 同一场景已有进行中会话 |
+| 409 | `SESSION_FINISHED` | 已结束会话不能继续发送消息 |
+| 409 | `SESSION_ABANDONED` | 已放弃会话不能继续操作 |
+| 422 | `MIN_ROUNDS_NOT_REACHED` | 未完成至少 1 轮，不能评分 |
+| 422 | `SCENARIO_NOT_ALLOWED` | 场景不在 MVP 固定范围内 |
+| 429 | `RATE_LIMITED` | 请求过于频繁 |
+| 503 | `MODEL_TIMEOUT` | 患者模型调用超时 |
+| 503 | `MODEL_OUTPUT_INVALID` | 患者模型返回无法解析的结果 |
+| 500 | `EVALUATION_FAILED` | 评分生成失败，可调用评分重试接口 |
+
+## 11. 前端调用顺序
+
+### 11.1 正常训练
+
+```text
+GET /scenarios
+    ↓ 点击“开始训练”
+POST /sessions
+    ↓
+POST /sessions/{id}/messages  × N
+    ↓ 用户主动结束或第 10 轮
+POST /sessions/{id}/finish
+    ↓
+GET /sessions/{id}/evaluation 轮询
+    ↓ status = ready
+展示结果报告
+```
+
+### 11.2 续练
+
+```text
+GET /scenarios
+    ↓ 发现 activeSession
+GET /sessions/{id}
+    ↓
+恢复完整消息后继续 POST /messages
+```
+
+### 11.3 重新开始
+
+```text
+POST /sessions/{oldId}/restart
+    ↓ oldId = abandoned
+    ↓ 返回 newId
+使用 newId 进入新的训练会话
+```
+
+### 11.4 结果页评分失败
+
+```text
+POST /sessions/{id}/finish
+    ↓
+GET /sessions/{id}/evaluation
+    ├─ ready：展示报告
+    ├─ generating：间隔 2 秒重试，最多 30 秒
+    └─ failed：展示“重新生成评分”按钮
+        ↓
+POST /sessions/{id}/evaluation/retry
+```
+
+## 12. 与当前小程序代码的迁移映射
+
+| 当前代码 | 新接口 | 调整要求 |
+|---|---|---|
+| `index.js loadMockData` | `GET /scenarios` | 删除旧的四分类和 15 个关卡 mock |
+| `training.js startTraining` | `POST /sessions` 或 `GET /sessions/{id}` | 不再用 `getLevelConfig`，保存 `sessionId` |
+| `training.js getAIResponse` | `POST /sessions/{id}/messages` | 删除固定回复和随机延迟 |
+| `training.js endTraining` | `POST /sessions/{id}/finish` | 删除随机分数，不把分数放进 URL |
+| `result.js loadResult` | `GET /sessions/{id}/evaluation` | 按 `status` 处理生成中、完成、失败 |
+| `report.js` 历史列表 | `GET /sessions` | 只保留历史记录和完整详情入口 |
+| 报告/数据页 | `GET /dashboard/summary` | 只展示 MVP 统计，不展示排行榜和错题本 |
+| `static/api/request.js` | 保留 | 将 Base URL 改为部署地址，错误结构按本契约处理 |
+
+## 13. 服务端最小落库对象
+
+MVP 至少需要四张表或等价的数据对象：
+
+| 对象 | 必要字段 |
+|---|---|
+| `scenarios` | 场景公开信息、隐藏配置、训练重点、最大轮数 |
+| `sessions` | 用户、场景、状态、轮数、开始/更新时间、评分状态、总分 |
+| `messages` | 会话、角色、内容、轮次、时间、幂等 ID |
+| `evaluations` | 五维得分、总分、总结、优势、改进、违规、逐轮点评、模型版本 |
+
+服务端必须保存患者内部状态：`emotion`、`emotionLevel`、`trustLevel`、`revealedInformation`、`riskTriggered`、`currentRound`。这些字段仅供患者 Prompt 和续练使用，不返回给用户。
+
+— API 契约结束 —
