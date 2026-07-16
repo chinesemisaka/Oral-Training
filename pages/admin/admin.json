@@ -1,7 +1,7 @@
 {
-  "navigationBarTitleText": "管理看板",
-  "navigationBarBackgroundColor": "#007aff",
+  "navigationBarTitleText": "演示数据",
+  "navigationBarBackgroundColor": "#667eea",
   "navigationBarTextStyle": "white",
-  "enablePullDownRefresh": true,
+  "enablePullDownRefresh": false,
   "backgroundColor": "#f5f5f5"
 }

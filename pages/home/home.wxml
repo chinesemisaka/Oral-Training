@@ -1,58 +1,48 @@
-<!-- pages/home/home.wxml -->
-<view class="container">
-  <!-- 大标题 -->
-  <view class="hero-title">
-    <text class="hero-title-text">口腔客服陪练系统</text>
+<view class="page-shell home-page">
+  <view class="hero-card">
+    <view class="hero-decoration decoration-one"></view>
+    <view class="hero-decoration decoration-two"></view>
+    <text class="eyebrow">AI ORAL CARE TRAINING · MVP DEMO</text>
+    <text class="hero-title">口腔客服智能陪练</text>
+    <text class="hero-subtitle">AI模拟患者 · 多轮对练 · 自动评分</text>
+    <text class="hero-description">面向新入口腔客服的低风险练习空间，帮助你在典型场景中练习沟通和合规边界。</text>
+    <button class="primary-button hero-button" bindtap="startTraining">开始训练</button>
   </view>
 
-  <!-- 去训练按钮 -->
-  <view class="train-btn-wrap">
-    <button class="train-btn" bindtap="goTraining">去训练</button>
-  </view>
-
-  <!-- 热门话术 -->
-  <view class="section">
-    <view class="section-header">
-      <text class="section-title">🔥 热门话术</text>
-      <text class="section-more" bindtap="viewAllScripts">{{showAll ? '收起' : '查看全部'}} ›</text>
-    </view>
-    <view class="script-list">
-      <view
-        class="script-card"
-        wx:for="{{hotScripts}}"
-        wx:key="id"
-        bindtap="onScriptTap"
-        data-id="{{item.id}}"
-      >
-        <view class="script-header">
-          <text class="script-title">{{item.title}}</text>
-        </view>
-        <text class="script-summary">{{item.summary}}</text>
-        <view class="script-tags">
-          <text class="script-tag" wx:for="{{item.tags}}" wx:for-item="tag" wx:key="*this">{{tag}}</text>
-        </view>
-        <!-- 示范对话 -->
-        <view class="script-dialogue" wx:if="{{expandedIds[item.id]}}">
-          <view class="dialogue-round" wx:for="{{item.dialogues}}" wx:for-item="dialogue" wx:key="index">
-            <view class="dialogue-bubble {{dialogue.role === 'patient' ? 'patient' : 'service'}}">
-              <text class="dialogue-role">{{dialogue.role === 'patient' ? '患者' : '客服'}}</text>
-              <text class="dialogue-text">{{dialogue.text}}</text>
-            </view>
-          </view>
-        </view>
-        <view class="script-footer">
-          <view class="script-meta">
-            <text class="meta-item">⭐ {{item.score}}分</text>
-            <text class="meta-item">📖 {{item.usageCount}}人使用</text>
-          </view>
-          <text class="script-expand-hint">{{expandedIds[item.id] ? '收起对话 ▲' : '点击查看示范对话 ▼'}}</text>
-        </view>
-      </view>
+  <view class="demo-tip card">
+    <view class="tip-icon">DEMO</view>
+    <view class="tip-copy">
+      <text class="tip-title">当前使用固定演示账号</text>
+      <text class="tip-text">不进行微信授权，不录入真实患者信息。训练反馈仅用于演示和辅助练习。</text>
     </view>
   </view>
 
-  <!-- 加载状态 -->
-  <view wx:if="{{loading}}" class="loading">
-    <text>加载中...</text>
+  <view class="section-heading">
+    <view><text class="section-title">训练闭环</text><text class="section-caption">从场景选择到报告回顾</text></view>
+    <text class="mvp-badge">MVP</text>
   </view>
+  <view class="flow-card card">
+    <view class="flow-item"><text class="flow-number">01</text><text>选择场景</text></view>
+    <text class="flow-arrow">›</text>
+    <view class="flow-item"><text class="flow-number">02</text><text>多轮对话</text></view>
+    <text class="flow-arrow">›</text>
+    <view class="flow-item"><text class="flow-number">03</text><text>查看评分</text></view>
+  </view>
+
+  <view class="section-heading stats-heading">
+    <view><text class="section-title">我的演示数据</text><text class="section-caption">完成训练后自动更新</text></view>
+    <text class="section-link" bindtap="viewDashboard">查看数据 ›</text>
+  </view>
+  <view class="stats-grid">
+    <view class="stat-card card"><text class="stat-value">{{dashboard.totalCount}}</text><text class="stat-label">总训练次数</text></view>
+    <view class="stat-card card"><text class="stat-value">{{dashboard.completedCount}}</text><text class="stat-label">已完成次数</text></view>
+    <view class="stat-card card"><text class="stat-value">{{dashboard.averageScore}}</text><text class="stat-label">平均得分</text></view>
+  </view>
+
+  <view class="quick-links">
+    <view class="quick-link card" bindtap="startTraining"><text class="quick-icon">✦</text><view><text class="quick-title">开始一次新的练习</text><text class="quick-text">四个固定场景可选</text></view><text class="quick-arrow">›</text></view>
+    <view class="quick-link card" bindtap="viewHistory"><text class="quick-icon">↺</text><view><text class="quick-title">回看历史记录</text><text class="quick-text">继续未完成训练或查看报告</text></view><text class="quick-arrow">›</text></view>
+  </view>
+
+  <text class="disclaimer">AI模拟训练，不构成医疗建议；评分不替代医生、客服专家或正式培训考核。</text>
 </view>
