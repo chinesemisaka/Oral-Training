@@ -12,3 +12,12 @@ $RECYCLE.BIN/
 
 # Node.js
 node_modules/
+
+# Local backend runtime files
+backend/build/
+backend/build-msvc/
+backend/.local-postgres-data/
+backend/.local-postgres.log
+backend/.backend.stdout.log
+backend/.backend.stderr.log
+backend/.env

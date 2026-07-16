@@ -1,15 +1,19 @@
-const mvp = require('../../utils/mvp.js');
+const api = require('../../utils/api.js');
 
 Page({
   data: { scenarios: [], expandedId: '' },
 
   onShow() {
-    const sessions = mvp.getSessions();
-    const scenarios = mvp.getScenarios().map(item => {
-      const activeSession = sessions.find(session => session.scenarioId === item.id && session.status === 'in_progress');
-      return Object.assign({}, item, { activeSession: activeSession || null, actionText: activeSession ? '继续训练' : '开始训练' });
-    });
-    this.setData({ scenarios });
+    api.getScenarios().then(data => {
+      const scenarios = data.items.map(item => Object.assign({}, item, {
+        difficulty: item.difficulty === 'advanced' ? '进阶' : '基础',
+        patientAge: `${item.patientProfile.age}岁`,
+        patientConcern: item.patientProfile.description,
+        patientEmotion: '需通过对话了解',
+        actionText: item.activeSession ? '继续训练' : '开始训练'
+      }));
+      this.setData({ scenarios });
+    }).catch(error => wx.showToast({ title: error.message, icon: 'none' }));
   },
 
   toggleProfile(e) {
@@ -20,11 +24,11 @@ Page({
   openTraining(e) {
     const { id, mode } = e.currentTarget.dataset;
     if (mode === 'continue') {
-      const session = mvp.getInProgressSession(id);
-      if (session) this.goTraining(session.id);
+      const scenario = this.data.scenarios.find(item => item.id === id);
+      if (scenario && scenario.activeSession) this.goTraining(scenario.activeSession.id);
       return;
     }
-    this.goTraining(mvp.createSession(id).id);
+    api.createSession(id).then(data => this.goTraining(data.session.id)).catch(error => wx.showToast({ title: error.message, icon: 'none' }));
   },
 
   restartTraining(e) {
@@ -35,9 +39,10 @@ Page({
       confirmText: '重新开始',
       success: result => {
         if (!result.confirm) return;
-        const active = mvp.getInProgressSession(id);
-        if (active) mvp.abandonSession(active.id);
-        this.goTraining(mvp.createSession(id).id);
+        const scenario = this.data.scenarios.find(item => item.id === id);
+        if (!scenario || !scenario.activeSession) return;
+        api.restartSession(scenario.activeSession.id).then(data => this.goTraining(data.session.id))
+          .catch(error => wx.showToast({ title: error.message, icon: 'none' }));
       }
     });
   },

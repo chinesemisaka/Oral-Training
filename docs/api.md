@@ -369,12 +369,13 @@ GET /api/sessions/{sessionId}
       "totalScore": null,
       "evaluationStatus": "not_started"
     },
-    "messages": []
+    "messages": [],
+    "pendingMessage": null
   }
 }
 ```
 
-接口返回完整消息，供“继续训练”和历史详情使用。不要返回隐藏信息、Prompt、情绪内部状态或模型原始响应。
+接口返回完整消息，供“继续训练”和历史详情使用。模型超时且用户消息已经保存时，`pendingMessage` 返回 `{ clientMessageId, content, round }`，前端必须使用相同的 `clientMessageId` 和内容重试；没有待回复消息时为 `null`。不要返回隐藏信息、Prompt、情绪内部状态或模型原始响应。
 
 ### 6.4 发送用户消息
 

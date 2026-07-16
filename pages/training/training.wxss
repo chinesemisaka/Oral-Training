@@ -32,5 +32,5 @@
 .send-button[disabled] { background: #c9c9c9; }
 .training-footer { display: flex; align-items: center; justify-content: space-between; padding: 0 22rpx 22rpx; background: #fff; }
 .leave-link { padding: 20rpx 8rpx; color: #999; font-size: 23rpx; }
-.finish-button { width: 220rpx; height: 66rpx; line-height: 66rpx; padding: 0; border: 1rpx solid #dedff0; border-radius: 34rpx; color: #667eea; background: #fff; font-size: 24rpx; }
-.finish-button[disabled] { color: #bbb; border-color: #eee; }
+.finish-button { width: 220rpx; height: 66rpx; line-height: 66rpx; padding: 0; border: 1rpx solid #dedff0; border-radius: 34rpx; color: #667eea; background: #fff; font-size: 24rpx; text-align: center; }
+.finish-button.is-disabled { color: #bbb; border-color: #eee; }

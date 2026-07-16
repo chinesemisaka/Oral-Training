@@ -22,6 +22,12 @@ page {
   box-shadow: 0 4rpx 20rpx rgba(0, 0, 0, 0.05);
 }
 
+button {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
 button::after {
   border: none;
 }
@@ -57,6 +63,9 @@ button::after {
 }
 
 .primary-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: linear-gradient(135deg, #667eea, #764ba2);
   color: #fff;
   border-radius: 46rpx;
@@ -65,6 +74,9 @@ button::after {
 }
 
 .secondary-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: #eef3ff;
   color: #5268c9;
   border-radius: 40rpx;
