@@ -16,6 +16,7 @@ node_modules/
 # Local backend runtime files
 backend/build/
 backend/build-msvc/
+backend/dist/
 backend/.local-postgres-data/
 backend/.local-postgres.log
 backend/.backend.stdout.log
