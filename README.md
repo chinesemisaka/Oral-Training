@@ -13,14 +13,17 @@
 
 当前后端使用 Windows API（WinHTTP）访问模型，推荐在 Windows 10/11 上运行。
 
-新电脑需要安装：
+使用免编译包运行和测试时需要：
 
 1. [微信开发者工具](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html)
-2. Git
-3. Visual Studio 2022，并勾选“使用 C++ 的桌面开发”工作负载
-4. CMake 3.20 或更高版本
-5. PostgreSQL（当前开发环境使用 PostgreSQL 18）
-6. 一个可用的 DeepSeek API Key
+2. PostgreSQL（当前开发环境使用 PostgreSQL 18）
+3. 一个可用的 DeepSeek API Key
+
+只有需要修改和重新编译后端源码时，才需要额外安装：
+
+1. Git
+2. Visual Studio 2022，并勾选“使用 C++ 的桌面开发”工作负载
+3. CMake 3.20 或更高版本
 
 首次编译后端时，CMake 会从 GitHub 下载 Crow、Asio、nlohmann/json 和 libpqxx，因此需要能够访问 GitHub。
 
@@ -43,7 +46,122 @@ cd Oral-Training-codex-mvp
 
 以下命令均假设当前目录是项目根目录。
 
-## 3. 初始化 PostgreSQL
+## 3. 推荐：使用 Windows x64 免编译后端包
+
+如果只是运行和测试项目，不需要安装 Crow、CMake 或 Visual Studio，也不需要编译 C++ 源码。直接下载已经编译好的 Windows x64 后端包：
+
+- [下载 oral-training-backend-mvp-windows-x64.zip](https://github.com/kysan173-arch/Oral-Training/releases/download/v0.1.0-mvp/oral-training-backend-mvp-windows-x64.zip)
+- [查看 v0.1.0-mvp 发布说明](https://github.com/kysan173-arch/Oral-Training/releases/tag/v0.1.0-mvp)
+- SHA256：`24593D63404F6AF235D9CD98515EB25831C4879AC85B09E984BF66D1362D6B9F`
+
+该压缩包已经包含：
+
+- `oral_training_backend.exe`：编译后的后端程序，Crow 已编译进 EXE。
+- PostgreSQL 客户端 DLL 和 Visual C++ 运行库。
+- `migrations/001_initial.sql`：数据库结构和四个演示场景。
+- `backend.env.example`：后端环境变量模板。
+- `start-backend.cmd`：可双击运行的启动入口。
+- `README.txt`：随包提供的离线说明。
+
+目标电脑仍需安装并运行 PostgreSQL，或者能够访问另一台电脑上的 PostgreSQL 数据库。
+
+### 3.1 下载与解压
+
+将 ZIP 解压到普通目录，例如：
+
+```text
+D:\oral-training-backend\
+```
+
+不要直接在 ZIP 压缩包预览窗口中运行 EXE，也不要解压到需要管理员权限的系统目录。
+
+### 3.2 初始化数据库
+
+打开 PowerShell，进入解压后的目录。以下示例假设安装了 PostgreSQL 18：
+
+```powershell
+cd D:\oral-training-backend
+$psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
+& $psql -U postgres -c "CREATE ROLE oral_training_app LOGIN PASSWORD '请替换为数据库密码';"
+& $psql -U postgres -c "CREATE DATABASE oral_training OWNER oral_training_app;"
+& $psql -h 127.0.0.1 -p 5432 -U oral_training_app -d oral_training -f '.\migrations\001_initial.sql'
+```
+
+如果用户或数据库已经存在，跳过对应的创建命令，只执行迁移即可。执行迁移时，PowerShell 会要求输入 `oral_training_app` 的数据库密码。
+
+### 3.3 生成并填写后端配置
+
+双击 `start-backend.cmd`。首次运行会自动复制模板并生成 `backend.env`，然后提示你编辑配置并退出。
+
+使用记事本打开 `backend.env`，填写实际值：
+
+```dotenv
+DATABASE_URL=postgresql://oral_training_app:请替换为数据库密码@127.0.0.1:5432/oral_training
+DEEPSEEK_API_KEY=请替换为 DeepSeek API Key
+DEEPSEEK_MODEL=deepseek-v4-flash
+ALLOW_RUNTIME_API_KEY=false
+BIND_ADDRESS=127.0.0.1
+PORT=8080
+```
+
+注意：
+
+- `backend.env` 含数据库密码和模型密钥，不要提交到 Git、截图或发送给其他人。
+- 数据库密码包含 `@`、`:`、`/`、`?`、`#` 等 URL 特殊字符时，需要先进行 URL 编码；也可以为本地演示设置只包含字母和数字的独立密码。
+- 仅本地演示且希望从小程序首页临时填写 DeepSeek Key 时，可以设置 `ALLOW_RUNTIME_API_KEY=true` 并把 `DEEPSEEK_API_KEY` 留空。
+- 对外部署时必须使用 `ALLOW_RUNTIME_API_KEY=false`。
+
+### 3.4 启动和停止
+
+再次双击 `start-backend.cmd`。看到下面的信息表示后端已启动：
+
+```text
+Oral training API listening at http://127.0.0.1:8080/api
+```
+
+保持窗口打开。关闭该窗口或按 `Ctrl+C` 即可停止后端。
+
+如果双击后窗口立即关闭，请在 PowerShell 中运行，以便查看具体错误：
+
+```powershell
+cd D:\oral-training-backend
+.\start-backend.cmd
+```
+
+### 3.5 验证服务
+
+另开一个 PowerShell 窗口执行：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8080/api/health
+```
+
+正常情况下响应中的 `database` 和 `modelConfigured` 都应为 `true`：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "database": true,
+    "modelConfigured": true
+  },
+  "message": "ok"
+}
+```
+
+### 3.6 连接微信小程序
+
+免编译包只替代后端构建过程，小程序前端仍然从本仓库导入微信开发者工具。开发环境默认请求 `http://127.0.0.1:8080/api`，因此后端和微信开发者工具在同一台电脑时不需要修改地址。
+
+1. 保持 `start-backend.cmd` 窗口运行。
+2. 在微信开发者工具中导入本仓库根目录。
+3. 点击“编译”。
+4. 进入首页，确认没有“后端服务不可用”提示。
+5. 选择场景并完成一次对话和评分。
+
+如果后端位于局域网中的另一台电脑，请参照本文“在其他设备或体验版中使用”章节配置 `BIND_ADDRESS`、防火墙和 `utils/config.js`。
+
+## 4. 初始化 PostgreSQL（源码运行方式）
 
 先确保 PostgreSQL 服务已经启动，然后以 PostgreSQL 管理员账号执行：
 
@@ -61,7 +179,9 @@ $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
 
 命令会要求输入刚才设置的数据库密码。迁移可以重复执行，四个内置训练场景会自动新增或更新。
 
-## 4. 编译后端
+## 5. 可选：从源码编译后端
+
+只有需要修改 C++ 后端代码时才需要本节。普通测试人员建议直接使用上一节的免编译包。
 
 使用 Visual Studio 2022 生成并编译 Release 版本：
 
@@ -79,7 +199,7 @@ backend\build-msvc\Release\oral_training_backend.exe
 
 如果首次配置时依赖下载中断，可以确认网络正常后重新执行 `cmake -S ...`。构建目录属于本机生成文件，不应提交到 Git。
 
-## 5. 启动后端
+## 6. 启动源码编译的后端
 
 后端直接读取当前进程的环境变量，不会自动加载 `backend/.env`。请在准备启动程序的同一个 PowerShell 窗口中执行：
 
@@ -118,7 +238,7 @@ $env:ALLOW_RUNTIME_API_KEY='true'
 
 随后可以在小程序首页输入 DeepSeek API Key。密钥只保存在当前后端进程内存中，后端退出后失效，不会写入小程序缓存、数据库或代码仓库。非本地环境必须设置 `ALLOW_RUNTIME_API_KEY=false`，并通过服务器环境变量管理密钥。
 
-## 6. 在微信开发者工具中运行
+## 7. 在微信开发者工具中运行
 
 1. 启动微信开发者工具，选择“导入项目”。
 2. 选择本仓库根目录，不要只选择 `pages/` 或 `backend/`。
@@ -143,7 +263,7 @@ http://127.0.0.1:8080/api
 5. 在确认框中点击“结束评分”，等待生成训练报告。
 6. 在“历史”和“数据”页确认记录已经保存。
 
-## 7. 验证后端
+## 8. 验证后端
 
 后端运行时，可以执行不调用模型的基础冒烟测试：
 
@@ -165,7 +285,7 @@ ctest --test-dir backend\build-msvc -C Release --output-on-failure
 
 完整模型冒烟测试会创建并完成一条训练记录。
 
-## 8. 在其他设备或体验版中使用
+## 9. 在其他设备或体验版中使用
 
 ### 同一局域网中的另一台电脑
 
@@ -190,7 +310,7 @@ ctest --test-dir backend\build-msvc -C Release --output-on-failure
 
 前端会主动拒绝体验版或正式版中的非 HTTPS API 地址。
 
-## 9. 常见问题
+## 10. 常见问题
 
 ### 首页提示后端服务不可用
 
@@ -201,7 +321,9 @@ ctest --test-dir backend\build-msvc -C Release --output-on-failure
 
 ### 后端启动时找不到 PostgreSQL DLL
 
-把 PostgreSQL 的 `bin` 目录加入当前 PowerShell 的 `PATH`，再启动程序：
+优先确认使用的是完整解压的免编译 ZIP，而不是单独复制 `oral_training_backend.exe`。发布包已经附带所需 PostgreSQL 客户端 DLL 和 Visual C++ 运行库。
+
+源码编译版本可以把 PostgreSQL 的 `bin` 目录加入当前 PowerShell 的 `PATH`，再启动程序：
 
 ```powershell
 $env:PATH='C:\Program Files\PostgreSQL\18\bin;' + $env:PATH
@@ -230,7 +352,7 @@ cmake -S backend -B backend\build-msvc -G 'Visual Studio 17 2022' -A x64 `
 - 点击后应先出现确认框，再点击“结束评分”。
 - 修改小程序文件后，需要在微信开发者工具中重新点击“编译”。
 
-## 10. 目录结构
+## 11. 目录结构
 
 ```text
 .
@@ -247,7 +369,7 @@ cmake -S backend -B backend\build-msvc -G 'Visual Studio 17 2022' -A x64 `
 
 接口详情参见 `docs/api.md`，后端补充说明参见 `backend/README.md`。
 
-## 11. 开发注意事项
+## 12. 开发注意事项
 
 - 不要提交 `backend/.env`、真实密钥、数据库密码或本机构建目录。
 - `project.private.config.json` 只应保存开发者工具生成的个人设置。
