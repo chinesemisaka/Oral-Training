@@ -9,14 +9,6 @@
     <button class="primary-button hero-button" bindtap="startTraining">开始训练</button>
   </view>
 
-  <view class="demo-tip card">
-    <view class="tip-icon">DEMO</view>
-    <view class="tip-copy">
-      <text class="tip-title">当前使用固定演示账号</text>
-      <text class="tip-text">不进行微信授权，不录入真实患者信息。训练反馈仅用于演示和辅助练习。</text>
-    </view>
-  </view>
-
   <view class="model-key-card card">
     <text class="model-key-title">DeepSeek 模型密钥（本地演示）</text>
     <text class="model-key-text">密钥仅提交给当前后端进程，不写入小程序缓存、数据库或代码仓库。已通过环境变量配置时无需填写。</text>

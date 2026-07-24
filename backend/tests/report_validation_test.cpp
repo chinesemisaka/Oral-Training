@@ -22,6 +22,11 @@ int main() {
   } catch (const ApiError& error) {
     if (error.code != "MODEL_INVALID_RESPONSE") throw;
   }
+  const auto plain_patient = plainPatientReply("患者：我还是有点担心疼痛。");
+  if (plain_patient["reply"] != "患者：我还是有点担心疼痛。") {
+    std::cerr << "plain patient fallback did not preserve the reply\n";
+    return 1;
+  }
 
   const json patient_state = {{"emotion", "犹豫"}, {"emotionLevel", -1}, {"trustLevel", 45}, {"riskTriggered", false}};
   const auto normalized_patient = normalizePatientReply(
@@ -38,7 +43,7 @@ int main() {
 
   const auto json_request = buildCompletionRequest("deepseek-v4-flash", json::array(), 500, 0.4, true);
   const auto fallback_request = buildCompletionRequest("deepseek-v4-flash", json::array(), 1000, 0.0, false);
-  if (!json_request.contains("response_format") || fallback_request.contains("response_format") ||
+  if (json_request["response_format"]["type"] != "json_object" || fallback_request.contains("response_format") ||
       fallback_request["max_tokens"] != 1000 || fallback_request["thinking"]["type"] != "disabled") {
     std::cerr << "completion fallback request was not configured correctly\n";
     return 1;
@@ -84,12 +89,12 @@ int main() {
 
   auto unsafe_report = safe_report;
   unsafe_report["roundComments"][0]["recommendedRewrite"] = "一般需要1-2年，费用2-5万元。";
-  try {
-    (void)normalizeReport(unsafe_report, messages);
-    std::cerr << "unsafe advice was accepted\n";
+  const auto normalized_unsafe = normalizeReport(unsafe_report, messages);
+  if (normalized_unsafe["roundComments"][0]["recommendedRewrite"] ==
+      unsafe_report["roundComments"][0]["recommendedRewrite"] ||
+      normalized_unsafe["roundComments"][0]["recommendedRewrite"].get<std::string>().find("医生") == std::string::npos) {
+    std::cerr << "unsafe advice was not replaced with a compliant fallback\n";
     return 1;
-  } catch (const ApiError& error) {
-    if (error.code != "MODEL_UNSAFE_RESPONSE") throw;
   }
 
   auto fabricated_quote_report = safe_report;

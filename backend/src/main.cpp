@@ -297,6 +297,21 @@ json parseModelJsonContent(std::string content) {
   throw ApiError(503, "MODEL_INVALID_RESPONSE", "模型未返回可解析 JSON");
 }
 
+json plainPatientReply(const std::string& content) {
+  auto reply = trim(removeThinkBlocks(content));
+  if (reply.rfind("```", 0) == 0) {
+    const auto first_line = reply.find('\n');
+    const auto closing_fence = reply.rfind("```");
+    if (first_line != std::string::npos && closing_fence > first_line) {
+      reply = trim(reply.substr(first_line + 1, closing_fence - first_line - 1));
+    }
+  }
+  if (reply.empty() || reply.size() > 1000) {
+    throw ApiError(503, "MODEL_INVALID_RESPONSE", "模型未返回有效患者回复");
+  }
+  return {{"reply", reply}};
+}
+
 json normalizePatientReply(const json& result, const json& patient_state) {
   if (!result.is_object()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "患者回复不是 JSON 对象");
   const auto reply = trim(jsonString(result, "reply"));
@@ -350,6 +365,8 @@ class ModelGateway {
     return !runtime_key_.empty() || !config_.deepseek_key.empty();
   }
 
+  std::string modelVersion() const { return "deepseek:" + config_.deepseek_model; }
+
   void setRuntimeKey(const std::string& api_key) {
     if (!config_.allow_runtime_api_key) {
       throw ApiError(403, "RUNTIME_KEY_DISABLED", "生产环境不允许通过页面设置模型密钥");
@@ -376,7 +393,7 @@ class ModelGateway {
       messages.push_back({{"role", message["role"] == "patient" ? "assistant" : "user"},
                           {"content", message["content"]}});
     }
-    return normalizePatientReply(structuredCompletion(messages, 500, 0.45), patient_state);
+    return normalizePatientReply(structuredCompletion(messages, 500, 0.45, true), patient_state);
   }
 
   json evaluate(const json& scenario, const json& messages) const {
@@ -404,7 +421,8 @@ class ModelGateway {
     return key;
   }
 
-  json structuredCompletion(const json& messages, int max_tokens, double temperature) const {
+  json structuredCompletion(const json& messages, int max_tokens, double temperature,
+                            bool allow_plain_patient_reply = false) const {
     ApiError last_error(503, "MODEL_INVALID_RESPONSE", "模型未返回可解析 JSON");
     for (int attempt = 0; attempt < 2; ++attempt) {
       try {
@@ -454,7 +472,16 @@ class ModelGateway {
         if (!message.contains("content") || !message["content"].is_string()) {
           throw ApiError(503, "MODEL_INVALID_RESPONSE", "模型返回内容格式无效");
         }
-        return parseModelJsonContent(message["content"].get<std::string>());
+        const auto content = message["content"].get<std::string>();
+        try {
+          return parseModelJsonContent(content);
+        } catch (const ApiError& error) {
+          if (allow_plain_patient_reply && attempt == 1 && error.code == "MODEL_INVALID_RESPONSE") {
+            std::cerr << "model returned plain patient text after JSON retries; using safe reply fallback\n";
+            return plainPatientReply(content);
+          }
+          throw;
+        }
       } catch (const ApiError& error) {
         last_error = error;
         if (error.code != "MODEL_INVALID_RESPONSE") throw;
@@ -823,14 +850,14 @@ class Database {
     return {{"sessionId", session_id}, {"status", "ready"}, {"retryable", false}, {"evaluation", json::parse(evaluation[0]["report"].c_str())}};
   }
 
-  void saveEvaluation(const std::string& session_id, json report) const {
+  void saveEvaluation(const std::string& session_id, json report, const std::string& model_version) const {
     const auto& dimensions = report["dimensionScores"];
     const auto total = static_cast<int>(std::round(
         dimensions["knowledgeAccuracy"].get<int>() * 0.25 + dimensions["medicalCompliance"].get<int>() * 0.25 +
         dimensions["empathy"].get<int>() * 0.20 + dimensions["needsDiscovery"].get<int>() * 0.20 +
         dimensions["serviceEtiquette"].get<int>() * 0.10));
     report["totalScore"] = clampInt(total, 0, 100);
-    report["modelVersion"] = "deepseek-v4-flash";
+    report["modelVersion"] = model_version;
     report["promptVersion"] = "score-prompt-v1";
     pqxx::connection connection(database_url_);
     pqxx::work tx(connection);
@@ -955,6 +982,17 @@ void validateSafeAdvice(const std::string& value) {
   }
 }
 
+std::string safeAdviceOrFallback(const std::string& value, const std::string& fallback) {
+  try {
+    validateSafeAdvice(value);
+    return value;
+  } catch (const ApiError& error) {
+    if (error.code != "MODEL_UNSAFE_RESPONSE") throw;
+    std::cerr << "unsafe model advice replaced with a compliant fallback\n";
+    return fallback;
+  }
+}
+
 json reportArray(const json& source, const char* key, size_t max_items) {
   if (!source.contains(key)) return json::array();
   if (!source[key].is_array() || source[key].size() > max_items) {
@@ -997,8 +1035,9 @@ json normalizeReport(const json& source, const json& messages) {
   json improvements = json::array();
   for (const auto& item : reportArray(source, "improvements", 10)) {
     if (!item.is_object()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "改进项格式无效");
-    const auto content = reportText(item, "content", "", true, 600);
-    validateSafeAdvice(content);
+    const auto content = safeAdviceOrFallback(
+        reportText(item, "content", "", true, 600),
+        "可先回应患者担忧，并说明具体情况需要医生结合检查结果评估。");
     improvements.push_back({{"round", jsonInt(item, "round", 0)}, {"content", content}});
   }
 
@@ -1012,8 +1051,9 @@ json normalizeReport(const json& source, const json& messages) {
     if (user_message->second.find(quote) == std::string::npos) {
       throw ApiError(503, "MODEL_INVALID_RESPONSE", "违规原句不属于对应客服轮次");
     }
-    const auto rewrite = reportText(item, "recommendedRewrite", "", true, 600);
-    validateSafeAdvice(rewrite);
+    const auto rewrite = safeAdviceOrFallback(
+        reportText(item, "recommendedRewrite", "", true, 600),
+        "我理解您的担忧，具体情况需要医生结合检查结果评估，我们可以先安排面诊沟通。");
     violations.push_back({{"round", round}, {"originalQuote", quote},
                           {"type", reportText(item, "type", "", true, 100)},
                           {"reason", reportText(item, "reason", "", true, 600)},
@@ -1030,8 +1070,9 @@ json normalizeReport(const json& source, const json& messages) {
     if (user_message == user_messages.end() || !commented_rounds.insert(round).second) {
       throw ApiError(503, "MODEL_INVALID_RESPONSE", "逐轮点评引用了无效或重复的客服轮次");
     }
-    const auto rewrite = reportText(item, "recommendedRewrite", "", true, 600);
-    validateSafeAdvice(rewrite);
+    const auto rewrite = safeAdviceOrFallback(
+        reportText(item, "recommendedRewrite", "", true, 600),
+        "我理解您的担忧，具体情况需要医生结合检查结果评估，我们可以先安排面诊沟通。");
     round_comments.push_back({{"round", round}, {"userMessage", user_message->second},
                               {"comment", reportText(item, "comment", "", true, 600)},
                               {"recommendedRewrite", rewrite}});
@@ -1075,7 +1116,7 @@ class Service {
         const auto detail = database_.getSession(session_id);
         const auto scenario = database_.getScenarioInternal(detail["session"]["scenarioId"].get<std::string>());
         const auto history = database_.getHistory(session_id);
-        database_.saveEvaluation(session_id, normalizeReport(model_.evaluate(scenario, history), history));
+        database_.saveEvaluation(session_id, normalizeReport(model_.evaluate(scenario, history), history), model_.modelVersion());
       } catch (const ApiError& error) {
         database_.markEvaluationFailed(session_id, error.code);
       } catch (...) {

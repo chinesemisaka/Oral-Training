@@ -50,9 +50,8 @@ cd Oral-Training-codex-mvp
 
 如果只是运行和测试项目，不需要安装 Crow、CMake 或 Visual Studio，也不需要编译 C++ 源码。直接下载已经编译好的 Windows x64 后端包：
 
-- [下载 oral-training-backend-mvp-windows-x64.zip](https://github.com/kysan173-arch/Oral-Training/releases/download/v0.1.0-mvp/oral-training-backend-mvp-windows-x64.zip)
-- [查看 v0.1.0-mvp 发布说明](https://github.com/kysan173-arch/Oral-Training/releases/tag/v0.1.0-mvp)
-- SHA256：`24593D63404F6AF235D9CD98515EB25831C4879AC85B09E984BF66D1362D6B9F`
+- 使用当前仓库 `backend/dist/oral-training-backend-mvp-deepseek-v2-windows-x64.zip` 中重新生成的包。
+- 若不存在该文件，在项目根目录运行 `powershell -ExecutionPolicy Bypass -File .\backend\package-windows.ps1 -PackageName oral-training-backend-mvp-deepseek-v2-windows-x64`。
 
 该压缩包已经包含：
 

@@ -19,7 +19,7 @@ This service implements the MVP contract in `../docs/api.md`: Crow HTTP routes, 
    cmake --build build-msvc --config Release
    ```
 
-5. Run with `DEEPSEEK_API_KEY` set. The API is available at `http://127.0.0.1:8080/api` by default.
+5. Run with `DEEPSEEK_API_KEY` set. The API is available at `http://127.0.0.1:8080/api` by default. The default model is `deepseek-v4-flash`; override it with `DEEPSEEK_MODEL` when needed.
 
    ```powershell
    $env:DATABASE_URL='postgresql://<user>:<password>@127.0.0.1:5432/oral_training'
