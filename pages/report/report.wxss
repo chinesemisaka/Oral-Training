@@ -1,5 +1,8 @@
 .history-page { padding: 34rpx 24rpx 48rpx; }
 .history-header { padding: 8rpx 8rpx 26rpx; }
+.history-mode-switch { display: flex; padding: 6rpx; margin: -4rpx 0 22rpx; border-radius: 20rpx; background: #e9ebf8; }
+.history-mode { flex: 1; padding: 16rpx 12rpx; border-radius: 16rpx; color: #7780aa; font-size: 25rpx; text-align: center; }
+.history-mode.selected { color: #fff; background: linear-gradient(135deg, #667eea, #764ba2); font-weight: 600; }
 .eyebrow { display: block; color: #7c86d8; font-size: 20rpx; letter-spacing: 2rpx; }
 .page-title { display: block; margin-top: 14rpx; font-size: 46rpx; font-weight: 700; }
 .page-intro { display: block; margin-top: 14rpx; color: #999; font-size: 25rpx; }
@@ -8,6 +11,7 @@
 .history-card { padding: 26rpx; margin-bottom: 18rpx; }
 .history-card-top { display: flex; justify-content: space-between; align-items: center; }
 .history-scene { font-size: 29rpx; font-weight: 700; }
+.history-mode-label { display: block; margin-top: 5rpx; color: #8d96bc; font-size: 19rpx; }
 .status { padding: 6rpx 14rpx; border-radius: 18rpx; font-size: 21rpx; }
 .status.in_progress { color: #bd7a35; background: #fff3df; }
 .status.completed { color: #3d9d6a; background: #eaf8ef; }
@@ -25,6 +29,9 @@
 .conversation-role { color: #aaa; font-size: 19rpx; }
 .conversation-text { max-width: 88%; padding: 13rpx 16rpx; margin-top: 5rpx; border-radius: 12rpx; color: #555; background: #f6f6f8; font-size: 23rpx; line-height: 1.5; }
 .conversation-row.mine .conversation-text { color: #fff; background: #667eea; }
+.history-learning { max-width: 88%; padding: 10rpx 14rpx; margin-top: 6rpx; border-radius: 10rpx; color: #55716e; background: #eff9f7; font-size: 20rpx; line-height: 1.45; }
+.history-learning text { display: block; }
+.history-boundary { padding-top: 7rpx; margin-top: 7rpx; border-top: 1rpx solid #d7ebe7; color: #896c47; }
 .empty-history { display: flex; flex-direction: column; align-items: center; padding: 70rpx 30rpx; text-align: center; }
 .empty-icon { color: #bfc4ef; font-size: 70rpx; }
 .empty-title { margin-top: 20rpx; font-size: 30rpx; font-weight: 700; }

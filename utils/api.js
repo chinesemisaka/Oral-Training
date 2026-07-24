@@ -55,5 +55,18 @@ module.exports = {
   getEvaluation: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/evaluation`),
   retryEvaluation: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/evaluation/retry`, { method: 'POST', data: {} }),
   getSessions: params => request(`/sessions?${query(params || {})}`),
+  getRoleplayScenarios: () => request('/roleplay/scenarios'),
+  createRoleplaySession: scenarioId => request('/roleplay/sessions', { method: 'POST', data: { scenarioId } }),
+  restartRoleplaySession: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/restart`, { method: 'POST', data: {} }),
+  getRoleplaySession: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}`),
+  sendRoleplayMessage: (sessionId, clientMessageId, content) => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST', data: { clientMessageId, content }
+  }),
+  finishRoleplaySession: (sessionId, reason = 'manual') => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/finish`, {
+    method: 'POST', data: { reason }
+  }),
+  getRoleplaySummary: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/summary`),
+  retryRoleplaySummary: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/summary/retry`, { method: 'POST', data: {} }),
+  getRoleplaySessions: params => request(`/roleplay/sessions?${query(params || {})}`),
   getDashboard: () => request('/dashboard/summary')
 };

@@ -3,7 +3,9 @@
     "pages/home/home",
     "pages/index/index",
     "pages/training/training",
+    "pages/roleplay/roleplay",
     "pages/result/result",
+    "pages/roleplay-result/roleplay-result",
     "pages/report/report",
     "pages/admin/admin"
   ],

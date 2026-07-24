@@ -1,5 +1,8 @@
 .scene-page { padding: 34rpx 24rpx 48rpx; }
 .scene-header { padding: 8rpx 8rpx 26rpx; }
+.mode-switch { display: flex; padding: 6rpx; margin: -4rpx 0 22rpx; border-radius: 20rpx; background: #e9ebf8; }
+.mode-option { flex: 1; padding: 16rpx 12rpx; border-radius: 16rpx; color: #7780aa; font-size: 25rpx; text-align: center; }
+.mode-option.selected { color: #fff; background: linear-gradient(135deg, #667eea, #764ba2); font-weight: 600; box-shadow: 0 5rpx 12rpx rgba(102,126,234,.22); }
 .eyebrow { display: block; color: #7c86d8; font-size: 20rpx; letter-spacing: 2rpx; }
 .page-title { display: block; margin-top: 14rpx; font-size: 46rpx; font-weight: 700; color: #333; }
 .page-intro { display: block; margin-top: 14rpx; color: #999; font-size: 25rpx; line-height: 1.6; }
@@ -24,6 +27,10 @@
 .focus-hint { color: #7b85db; font-size: 23rpx; }
 .focus-list { display: flex; flex-wrap: wrap; gap: 12rpx; padding-top: 14rpx; }
 .focus-tag { padding: 7rpx 14rpx; border-radius: 18rpx; color: #667eea; background: #f5f6ff; font-size: 21rpx; }
+.suggestion-block { padding-top: 18rpx; }
+.suggestion-label { display: block; color: #777; font-size: 22rpx; }
+.suggestion-list { display: flex; flex-wrap: wrap; gap: 10rpx; margin-top: 12rpx; }
+.suggestion-chip { padding: 10rpx 14rpx; border-radius: 16rpx; color: #5d6dc5; background: #f0f2ff; font-size: 21rpx; line-height: 1.45; }
 .scenario-actions { display: flex; flex-direction: column; align-items: stretch; margin-top: 22rpx; }
 .scenario-button { width: 100%; height: 76rpx; line-height: 1.2; font-size: 27rpx; }
 .restart-link { align-self: center; margin-top: 16rpx; color: #9a9a9a; font-size: 23rpx; line-height: 1.5; text-align: center; }

@@ -97,6 +97,62 @@ int main() {
     return 1;
   }
 
+  const json roleplay_reply = {
+      {"reply", "我理解您担心疼痛。是否适合种植以及具体安排，需要由医生结合面诊检查评估；我可以协助您预约咨询。"},
+      {"learningPoints", json::array({"先回应患者的疼痛担忧，再说明可提供的预约协助。", "涉及是否适合治疗时，要明确由医生结合检查评估。"})},
+      {"complianceBoundary", "客服不判断是否适合治疗，具体情况需由医生结合检查评估。"},
+      {"shouldEnd", false},
+  };
+  const auto normalized_roleplay_reply = normalizeRoleplayReply(roleplay_reply);
+  if (normalized_roleplay_reply["learningPoints"].size() != 2 ||
+      normalized_roleplay_reply["complianceBoundary"].get<std::string>().find("医生") == std::string::npos) {
+    std::cerr << "roleplay reply was not normalized\n";
+    return 1;
+  }
+  auto unsafe_roleplay_reply = roleplay_reply;
+  unsafe_roleplay_reply["reply"] = "您的情况肯定没问题，完全正常。";
+  const auto normalized_unsafe_roleplay_reply = normalizeRoleplayReply(unsafe_roleplay_reply);
+  if (normalized_unsafe_roleplay_reply["reply"] == unsafe_roleplay_reply["reply"] ||
+      normalized_unsafe_roleplay_reply["reply"].get<std::string>().find("医生") == std::string::npos) {
+    std::cerr << "unsafe roleplay reply was not replaced with a compliant fallback\n";
+    return 1;
+  }
+  auto malformed_roleplay_reply = roleplay_reply;
+  malformed_roleplay_reply["learningPoints"] = "not an array";
+  try {
+    (void)normalizeRoleplayReply(malformed_roleplay_reply);
+    std::cerr << "malformed roleplay learning points were accepted\n";
+    return 1;
+  } catch (const ApiError& error) {
+    if (error.code != "MODEL_INVALID_RESPONSE") throw;
+  }
+
+  const json roleplay_history = json::array({
+      {{"role", "learner_patient"}, {"content", "种植牙一般是怎样的流程？"}, {"round", 1}},
+      {{"role", "standard_customer"}, {"content", "需要由医生结合检查评估，我可以协助预约。"}, {"round", 1}},
+  });
+  const json roleplay_summary = {
+      {"summary", "本次接待先回应了患者对流程的关心，并清楚说明了由医生评估的服务边界。"},
+      {"coveredTopics", json::array({"种植牙咨询流程", "预约与检查安排"})},
+      {"keyPrinciples", json::array({"先确认患者最关心的问题，再说明服务安排。", "涉及诊疗判断时由医生结合检查评估。"})},
+      {"nextPracticeSuggestions", json::array({"继续练习用同理回应后引导预约。"})},
+  };
+  const auto normalized_roleplay_summary = normalizeRoleplaySummary(roleplay_summary, roleplay_history);
+  if (normalized_roleplay_summary["coveredTopics"].size() != 2 ||
+      normalized_roleplay_summary["keyPrinciples"].size() != 2 ||
+      normalized_roleplay_summary["nextPracticeSuggestions"].size() != 1) {
+    std::cerr << "roleplay summary structure was not normalized\n";
+    return 1;
+  }
+  auto unsafe_roleplay_summary = roleplay_summary;
+  unsafe_roleplay_summary["summary"] = "治疗一定成功，完全不用担心。";
+  const auto normalized_unsafe_roleplay_summary = normalizeRoleplaySummary(unsafe_roleplay_summary, roleplay_history);
+  if (normalized_unsafe_roleplay_summary["summary"] == unsafe_roleplay_summary["summary"] ||
+      normalized_unsafe_roleplay_summary["summary"].get<std::string>().find("医生") == std::string::npos) {
+    std::cerr << "unsafe roleplay summary was not replaced with a compliant fallback\n";
+    return 1;
+  }
+
   auto fabricated_quote_report = safe_report;
   fabricated_quote_report["violations"] = json::array({
       {{"round", 1}, {"originalQuote", "保证一定成功"}, {"type", "疗效保证"},

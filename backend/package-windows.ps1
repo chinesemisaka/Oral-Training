@@ -63,7 +63,7 @@ foreach ($dll in $vcDlls) {
 }
 
 Copy-Item -LiteralPath (Join-Path $backendRoot '.env.example') -Destination (Join-Path $packageRoot 'backend.env.example')
-Copy-Item -LiteralPath (Join-Path $backendRoot 'migrations\001_initial.sql') -Destination (Join-Path $packageRoot 'migrations\001_initial.sql')
+Copy-Item -Path (Join-Path $backendRoot 'migrations\*.sql') -Destination (Join-Path $packageRoot 'migrations')
 Copy-Item -LiteralPath (Join-Path $backendRoot 'portable\README.txt') -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $backendRoot 'portable\start-backend.cmd') -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $backendRoot 'portable\start-backend.ps1') -Destination $packageRoot

@@ -4,8 +4,8 @@
     <view class="hero-decoration decoration-two"></view>
     <text class="eyebrow">AI ORAL CARE TRAINING · MVP DEMO</text>
     <text class="hero-title">口腔客服智能陪练</text>
-    <text class="hero-subtitle">AI模拟患者 · 多轮对练 · 自动评分</text>
-    <text class="hero-description">面向新入口腔客服的低风险练习空间，帮助你在典型场景中练习沟通和合规边界。</text>
+    <text class="hero-subtitle">客服训练 · 患者模拟 · 结构化复盘</text>
+    <text class="hero-description">面向新入口腔客服的低风险练习空间，帮助你在典型场景中练习沟通、服务表达和合规边界。</text>
     <button class="primary-button hero-button" bindtap="startTraining">开始训练</button>
   </view>
 
@@ -26,9 +26,9 @@
   <view class="flow-card card">
     <view class="flow-item"><text class="flow-number">01</text><text>选择场景</text></view>
     <text class="flow-arrow">›</text>
-    <view class="flow-item"><text class="flow-number">02</text><text>多轮对话</text></view>
+    <view class="flow-item"><text class="flow-number">02</text><text>双模式对话</text></view>
     <text class="flow-arrow">›</text>
-    <view class="flow-item"><text class="flow-number">03</text><text>查看评分</text></view>
+    <view class="flow-item"><text class="flow-number">03</text><text>查看报告/复盘</text></view>
   </view>
 
   <view class="section-heading stats-heading">

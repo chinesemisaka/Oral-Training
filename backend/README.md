@@ -1,15 +1,16 @@
 # Oral Training Backend
 
-This service implements the MVP contract in `../docs/api.md`: Crow HTTP routes, PostgreSQL persistence, and a DeepSeek patient/score gateway.
+This service implements the MVP contract in `../docs/api.md`: Crow HTTP routes, PostgreSQL persistence, a DeepSeek patient/score gateway, and an independent patient-simulation gateway that returns standard customer-service answers and learning recaps.
 
 ## Local setup
 
 1. Use `.env.example` as a reference and set the values in your shell. The executable reads environment variables directly; it does not load `.env` by itself.
 2. Start PostgreSQL and create the database named `oral_training`.
-3. Apply the migration:
+3. Apply the migrations in order:
 
    ```powershell
    & 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h 127.0.0.1 -p 5432 -U oral_training_app -d oral_training -f migrations\001_initial.sql
+   & 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h 127.0.0.1 -p 5432 -U oral_training_app -d oral_training -f migrations\002_roleplay.sql
    ```
 
 4. Configure and build:
@@ -44,7 +45,7 @@ With the backend running, verify database and public API behavior without callin
 .\tests\smoke.ps1
 ```
 
-After configuring a valid DeepSeek key, run the full patient-reply and scoring flow:
+After configuring a valid DeepSeek key, run the full patient-reply, scoring, and four-scenario patient-simulation flow:
 
 ```powershell
 .\tests\smoke.ps1 -WithModel

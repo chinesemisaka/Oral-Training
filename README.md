@@ -1,6 +1,6 @@
 # 口腔客服智能陪练 MVP
 
-这是一个用于口腔客服沟通训练的微信小程序 MVP。用户可以选择固定场景，与 DeepSeek 模拟的患者进行多轮对话，结束训练后获取自动评分报告，并在历史和数据页面查看训练记录。
+这是一个用于口腔客服沟通训练的微信小程序 MVP。它提供两条独立链路：学员作为客服与 DeepSeek 模拟患者多轮对练并获取评分，或在“患者模拟”中扮演患者、查看标准客服答复和无评分学习复盘。两类历史数据互不混合。
 
 项目由两部分组成：
 
@@ -57,7 +57,7 @@ cd Oral-Training-codex-mvp
 
 - `oral_training_backend.exe`：编译后的后端程序，Crow 已编译进 EXE。
 - PostgreSQL 客户端 DLL 和 Visual C++ 运行库。
-- `migrations/001_initial.sql`：数据库结构和四个演示场景。
+- `migrations/`：数据库结构、四个演示场景和患者模拟数据表。
 - `backend.env.example`：后端环境变量模板。
 - `start-backend.cmd`：可双击运行的启动入口。
 - `README.txt`：随包提供的离线说明。
@@ -84,6 +84,7 @@ $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
 & $psql -U postgres -c "CREATE ROLE oral_training_app LOGIN PASSWORD '请替换为数据库密码';"
 & $psql -U postgres -c "CREATE DATABASE oral_training OWNER oral_training_app;"
 & $psql -h 127.0.0.1 -p 5432 -U oral_training_app -d oral_training -f '.\migrations\001_initial.sql'
+& $psql -h 127.0.0.1 -p 5432 -U oral_training_app -d oral_training -f '.\migrations\002_roleplay.sql'
 ```
 
 如果用户或数据库已经存在，跳过对应的创建命令，只执行迁移即可。执行迁移时，PowerShell 会要求输入 `oral_training_app` 的数据库密码。
@@ -174,6 +175,7 @@ $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
 
 ```powershell
 & $psql -h 127.0.0.1 -p 5432 -U oral_training_app -d oral_training -f backend\migrations\001_initial.sql
+& $psql -h 127.0.0.1 -p 5432 -U oral_training_app -d oral_training -f backend\migrations\002_roleplay.sql
 ```
 
 命令会要求输入刚才设置的数据库密码。迁移可以重复执行，四个内置训练场景会自动新增或更新。
@@ -262,6 +264,8 @@ http://127.0.0.1:8080/api
 5. 在确认框中点击“结束评分”，等待生成训练报告。
 6. 在“历史”和“数据”页确认记录已经保存。
 
+患者模拟验证路径：在场景页切到“患者模拟”，选择任一场景后以患者身份提问；标准客服每轮会展示答复、学习要点和合规边界。完成至少一轮后可生成学习复盘，并在“历史”页的“患者模拟”筛选中继续、回看或查看复盘。
+
 ## 8. 验证后端
 
 后端运行时，可以执行不调用模型的基础冒烟测试：
@@ -282,7 +286,7 @@ http://127.0.0.1:8080/api
 ctest --test-dir backend\build-msvc -C Release --output-on-failure
 ```
 
-完整模型冒烟测试会创建并完成一条训练记录。
+完整模型冒烟测试会分别创建并完成一条客服训练记录和一条患者模拟记录。
 
 ## 9. 在其他设备或体验版中使用
 
@@ -356,7 +360,7 @@ cmake -S backend -B backend\build-msvc -G 'Visual Studio 17 2022' -A x64 `
 ```text
 .
 ├─ app.js / app.json / app.wxss    小程序全局配置和样式
-├─ pages/                           首页、场景、训练、报告、历史和数据页面
+├─ pages/                           首页、场景、客服训练、患者模拟、报告、历史和数据页面
 ├─ static/                          小程序运行时图片资源
 ├─ utils/api.js                     前端 API 请求封装
 ├─ utils/config.js                  不同小程序环境的 API 地址
@@ -373,5 +377,5 @@ cmake -S backend -B backend\build-msvc -G 'Visual Studio 17 2022' -A x64 `
 - 不要提交 `backend/.env`、真实密钥、数据库密码或本机构建目录。
 - `project.private.config.json` 只应保存开发者工具生成的个人设置。
 - 修改 `utils/config.js` 后，至少验证开发环境地址和发布环境 HTTPS 限制。
-- 修改训练流程后，手动覆盖：开始训练、发送消息、续练、结束评分、查看报告、历史记录和数据汇总。
+- 修改训练流程后，手动覆盖：两种模式的开始、发送消息、续练、结束、报告/复盘、历史筛选，以及客服训练数据汇总不受患者模拟影响。
 - 提交前运行 `git diff --check`，并在微信开发者工具中重新编译受影响页面。

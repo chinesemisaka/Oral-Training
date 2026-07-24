@@ -12,7 +12,7 @@ PostgreSQL 客户端 DLL 和 Visual C++ 运行库，不需要安装 CMake、Visu
 
 首次使用：
 1. 在 PostgreSQL 中创建用户 oral_training_app 和数据库 oral_training。
-2. 使用 psql 执行 migrations\001_initial.sql。
+2. 使用 psql 依次执行 migrations\001_initial.sql 和 migrations\002_roleplay.sql。
 3. 双击 start-backend.cmd。首次运行会生成 backend.env 并提示退出。
 4. 用记事本打开 backend.env，填写数据库密码和 DeepSeek API Key。
 5. 再次双击 start-backend.cmd。
@@ -23,6 +23,7 @@ $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
 & $psql -U postgres -c "CREATE ROLE oral_training_app LOGIN PASSWORD '替换为密码';"
 & $psql -U postgres -c "CREATE DATABASE oral_training OWNER oral_training_app;"
 & $psql -h 127.0.0.1 -U oral_training_app -d oral_training -f '.\migrations\001_initial.sql'
+& $psql -h 127.0.0.1 -U oral_training_app -d oral_training -f '.\migrations\002_roleplay.sql'
 
 安全提示：
 - backend.env 包含真实密钥和密码，不要发送给他人或提交到 Git。
