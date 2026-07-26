@@ -25,6 +25,9 @@ Page({
   },
 
   sessionId: '',
+  pendingPollTimer: null,
+
+  onUnload() { if (this.pendingPollTimer) clearTimeout(this.pendingPollTimer); },
 
   onLoad(options) {
     this.sessionId = options.sessionId || '';
@@ -46,7 +49,12 @@ Page({
         currentRound: detail.session.currentRound,
         maxRounds: detail.session.maxRounds,
         finishing: detail.session.status === 'completed'
-      }, () => this.scrollToBottom());
+      }, () => {
+        this.scrollToBottom();
+        if (pendingMessage && pendingMessage.replyStatus === 'generating') {
+          this.pollPendingReply(pendingMessage.clientMessageId, pendingMessage.content, Date.now());
+        }
+      });
     }).catch(error => {
       wx.showModal({ title: '会话加载失败', content: error.message || '请从场景列表重新开始训练。', showCancel: false, success: () => wx.navigateBack() });
     });
@@ -68,9 +76,57 @@ Page({
       }
       this.loadSession();
     }).catch(error => {
-      this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
+      this.setData({ pendingClientMessageId: clientMessageId, inputValue: content });
+      if (error.code === 'SESSION_RESPONSE_PENDING') {
+        this.pollPendingReply(clientMessageId, content, Date.now());
+        return;
+      }
+      this.setData({ sending: false });
       this.loadSession();
       wx.showToast({ title: error.message || '患者回复生成失败，可再次发送重试', icon: 'none' });
+    });
+  },
+
+  pollPendingReply(clientMessageId, content, startedAt) {
+    if (this.pendingPollTimer) clearTimeout(this.pendingPollTimer);
+    this.setData({ sending: true, pendingClientMessageId: clientMessageId, inputValue: content });
+    api.getSession(this.sessionId).then(detail => {
+      const pending = detail.pendingMessage || null;
+      this.setData({
+        session: detail.session,
+        messages: normalizeMessages(detail.messages || []),
+        currentRound: detail.session.currentRound,
+        maxRounds: detail.session.maxRounds
+      }, () => this.scrollToBottom());
+      if (detail.session.status === 'completed') {
+        this.setData({ sending: false, finishing: true, pendingClientMessageId: '', inputValue: '' });
+        wx.redirectTo({ url: `/pages/result/result?sessionId=${this.sessionId}` });
+        return;
+      }
+      if (!pending) {
+        this.setData({ sending: false, pendingClientMessageId: '', inputValue: '' });
+        return;
+      }
+      if (pending.replyStatus === 'failed') {
+        this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
+        wx.showToast({ title: '回复生成失败，可使用原消息安全重试', icon: 'none' });
+        return;
+      }
+      if (Date.now() - startedAt >= 30000) {
+        this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
+        wx.showToast({ title: '回复仍在生成，原消息已保留', icon: 'none' });
+        return;
+      }
+      this.pendingPollTimer = setTimeout(
+        () => this.pollPendingReply(clientMessageId, content, startedAt), 1000);
+    }).catch(() => {
+      if (Date.now() - startedAt >= 30000) {
+        this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
+        wx.showToast({ title: '网络异常，原消息已保留', icon: 'none' });
+        return;
+      }
+      this.pendingPollTimer = setTimeout(
+        () => this.pollPendingReply(clientMessageId, content, startedAt), 1000);
     });
   },
 
@@ -81,6 +137,10 @@ Page({
     }
     if (this.data.sending) {
       wx.showToast({ title: '患者正在回复，请稍候', icon: 'none' });
+      return;
+    }
+    if (this.data.pendingClientMessageId) {
+      wx.showToast({ title: '请先重试尚未生成回复的原消息', icon: 'none' });
       return;
     }
     if (this.data.finishing) {

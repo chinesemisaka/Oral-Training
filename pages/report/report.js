@@ -6,9 +6,13 @@ Page({
   onShow() { this.loadSessions(); },
 
   loadSessions() {
-    const isRoleplay = this.data.historyMode === 'patient_simulation';
+    this.historyRequestVersion = (this.historyRequestVersion || 0) + 1;
+    const requestVersion = this.historyRequestVersion;
+    const requestedMode = this.data.historyMode;
+    const isRoleplay = requestedMode === 'patient_simulation';
     const request = isRoleplay ? api.getRoleplaySessions({ status: 'all', limit: 50 }) : api.getSessions({ status: 'all', limit: 50 });
     request.then(data => {
+      if (requestVersion !== this.historyRequestVersion || requestedMode !== this.data.historyMode) return;
       const sessions = data.items.map(item => Object.assign({}, item, {
         statusText: item.status === 'in_progress' ? '进行中' : item.status === 'completed' ? '已完成' : '已放弃',
         statusClass: item.status,
@@ -22,7 +26,10 @@ Page({
         messages: []
       }));
       this.setData({ sessions, expandedId: '' });
-    }).catch(error => wx.showToast({ title: error.message || '历史记录加载失败', icon: 'none' }));
+    }).catch(error => {
+      if (requestVersion !== this.historyRequestVersion || requestedMode !== this.data.historyMode) return;
+      wx.showToast({ title: error.message || '历史记录加载失败', icon: 'none' });
+    });
   },
 
   switchHistoryMode(e) {
@@ -53,8 +60,12 @@ Page({
     }
     const session = this.data.sessions.find(item => item.id === id);
     if (!session) return;
+    const requestedMode = this.data.historyMode;
+    this.conversationRequestVersion = (this.conversationRequestVersion || 0) + 1;
+    const requestVersion = this.conversationRequestVersion;
     const request = session.isRoleplay ? api.getRoleplaySession(id) : api.getSession(id);
     request.then(data => {
+      if (requestVersion !== this.conversationRequestVersion || requestedMode !== this.data.historyMode) return;
       const messages = (data.messages || []).map(message => Object.assign({}, message, {
         learningPoints: message.learningPoints || []
       }));
@@ -62,6 +73,9 @@ Page({
         ? Object.assign({}, item, { messages })
         : item);
       this.setData({ sessions, expandedId: id });
-    }).catch(error => wx.showToast({ title: error.message, icon: 'none' }));
+    }).catch(error => {
+      if (requestVersion !== this.conversationRequestVersion || requestedMode !== this.data.historyMode) return;
+      wx.showToast({ title: error.message, icon: 'none' });
+    });
   }
 });

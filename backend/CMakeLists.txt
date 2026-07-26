@@ -58,6 +58,7 @@ set(ORAL_TRAINING_LIBRARIES
   PostgreSQL::PostgreSQL
   ws2_32
   winhttp
+  bcrypt
 )
 
 target_link_libraries(oral_training_backend PRIVATE ${ORAL_TRAINING_LIBRARIES})
@@ -68,6 +69,11 @@ target_compile_definitions(report_validation_test PRIVATE WIN32_LEAN_AND_MEAN NO
 
 enable_testing()
 add_test(NAME report_validation COMMAND report_validation_test)
+add_test(
+  NAME client_static_checks
+  COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+          -File ${CMAKE_CURRENT_SOURCE_DIR}/tests/static_checks.ps1
+)
 
 if(MSVC)
   target_compile_options(oral_training_backend PRIVATE /utf-8)

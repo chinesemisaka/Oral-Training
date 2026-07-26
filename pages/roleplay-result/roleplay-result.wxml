@@ -25,5 +25,5 @@
 </view>
 
 <view class="page-shell roleplay-result-page loading-result" wx:if="{{loading}}">
-  <view class="loading-card card"><text class="loading-title">{{loadingText}}</text><text class="loading-text">复盘会读取完整问答并整理学习重点，请勿关闭页面。</text><button wx:if="{{retryable}}" class="primary-button retry-button" bindtap="retrySummary">重新生成复盘</button></view>
+  <view class="loading-card card"><text class="loading-title">{{loadingText}}</text><text class="loading-text">{{timedOut ? '任务仍在后台可靠执行，离开页面后可从历史记录继续查看。' : '复盘会读取完整问答并整理学习重点，请稍候。'}}</text><button wx:if="{{retryable}}" class="primary-button retry-button" bindtap="retrySummary">重新生成复盘</button><button wx:if="{{timedOut}}" class="primary-button retry-button" bindtap="continueWaiting">继续等待</button><button wx:if="{{timedOut}}" class="secondary-button retry-button" bindtap="viewHistory">返回历史</button></view>
 </view>

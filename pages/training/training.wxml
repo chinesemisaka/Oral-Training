@@ -23,7 +23,7 @@
 
   <view class="training-note">请勿输入真实患者姓名、电话、病历或其他隐私信息。</view>
   <view class="input-area">
-    <input class="input-field" placeholder="输入你的回复…" value="{{inputValue}}" bindinput="onInputChange" bindconfirm="sendMessage" confirm-type="send" disabled="{{sending || finishing}}" />
+    <input class="input-field" maxlength="1000" placeholder="输入你的回复…" value="{{inputValue}}" bindinput="onInputChange" bindconfirm="sendMessage" confirm-type="send" disabled="{{sending || finishing || pendingClientMessageId}}" />
     <button class="send-button" bindtap="sendMessage" disabled="{{sending || finishing}}">{{sending ? '发送中' : '发送'}}</button>
   </view>
   <view class="training-footer">

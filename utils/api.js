@@ -1,6 +1,10 @@
 const { getApiBaseUrl } = require('./config.js');
 
-const request = (path, options = {}) => new Promise((resolve, reject) => {
+const TOKEN_KEY = 'oralTrainingAccessToken';
+const USER_KEY = 'oralTrainingUser';
+let loginPromise = null;
+
+const rawRequest = (path, options = {}) => new Promise((resolve, reject) => {
   let baseUrl = '';
   try {
     baseUrl = getApiBaseUrl();
@@ -12,10 +16,10 @@ const request = (path, options = {}) => new Promise((resolve, reject) => {
     url: `${baseUrl}${path}`,
     method: options.method || 'GET',
     data: options.data,
-    header: {
-      'content-type': 'application/json',
-      'X-Demo-User-Id': 'demo-user-001'
-    },
+    timeout: options.timeout || 30000,
+    header: Object.assign({ 'content-type': 'application/json' }, options.token
+      ? { Authorization: `Bearer ${options.token}` }
+      : {}),
     success: response => {
       const payload = response.data || {};
       if (response.statusCode >= 200 && response.statusCode < 300 && payload.code === 0) {
@@ -24,6 +28,7 @@ const request = (path, options = {}) => new Promise((resolve, reject) => {
       }
       const error = new Error(payload.message || '服务请求失败');
       error.code = payload.code || 'NETWORK_ERROR';
+      error.statusCode = response.statusCode;
       reject(error);
     },
     fail: error => {
@@ -34,13 +39,62 @@ const request = (path, options = {}) => new Promise((resolve, reject) => {
   });
 });
 
+const clearAuthentication = () => {
+  wx.removeStorageSync(TOKEN_KEY);
+  wx.removeStorageSync(USER_KEY);
+};
+
+const login = () => new Promise((resolve, reject) => {
+  wx.login({
+    success: result => {
+      if (!result.code) {
+        reject(Object.assign(new Error('微信登录未返回有效凭证'), { code: 'WECHAT_LOGIN_FAILED' }));
+        return;
+      }
+      rawRequest('/auth/wechat', { method: 'POST', data: { code: result.code } })
+        .then(data => {
+          wx.setStorageSync(TOKEN_KEY, data.accessToken);
+          wx.setStorageSync(USER_KEY, data.user);
+          resolve(data.accessToken);
+        }).catch(reject);
+    },
+    fail: error => reject(Object.assign(new Error(error.errMsg || '微信登录失败'), {
+      code: 'WECHAT_LOGIN_FAILED'
+    }))
+  });
+});
+
+const ensureAuthenticated = (force = false) => {
+  const existing = force ? '' : wx.getStorageSync(TOKEN_KEY);
+  if (existing) return Promise.resolve(existing);
+  if (!loginPromise) {
+    loginPromise = login().finally(() => { loginPromise = null; });
+  }
+  return loginPromise;
+};
+
+const request = (path, options = {}, retried = false) => {
+  if (options.public) return rawRequest(path, options);
+  return ensureAuthenticated().then(token => rawRequest(path, Object.assign({}, options, { token })))
+    .catch(error => {
+      if (!retried && (error.code === 'AUTH_EXPIRED' || error.code === 'AUTH_INVALID' || error.code === 'AUTH_REQUIRED')) {
+        clearAuthentication();
+        return ensureAuthenticated(true).then(() => request(path, options, true));
+      }
+      throw error;
+    });
+};
+
 const query = values => Object.keys(values)
   .filter(key => values[key] !== undefined && values[key] !== null && values[key] !== '')
   .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(values[key])}`)
   .join('&');
 
 module.exports = {
-  getHealth: () => request('/health'),
+  ensureAuthenticated,
+  clearAuthentication,
+  getCurrentUser: () => wx.getStorageSync(USER_KEY) || null,
+  getHealth: () => request('/health', { public: true }),
   setDeepSeekKey: apiKey => request('/config/deepseek-key', { method: 'POST', data: { apiKey } }),
   getScenarios: () => request('/scenarios'),
   createSession: scenarioId => request('/sessions', { method: 'POST', data: { scenarioId } }),

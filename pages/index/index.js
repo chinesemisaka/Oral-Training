@@ -10,9 +10,13 @@ Page({
   onShow() { this.loadScenarios(); },
 
   loadScenarios() {
-    const isRoleplay = this.data.trainingMode === 'patient_simulation';
+    this.scenarioRequestVersion = (this.scenarioRequestVersion || 0) + 1;
+    const requestVersion = this.scenarioRequestVersion;
+    const requestedMode = this.data.trainingMode;
+    const isRoleplay = requestedMode === 'patient_simulation';
     const request = isRoleplay ? api.getRoleplayScenarios() : api.getScenarios();
     request.then(data => {
+      if (requestVersion !== this.scenarioRequestVersion || requestedMode !== this.data.trainingMode) return;
       const scenarios = data.items.map(item => Object.assign({}, item, {
         difficulty: item.difficulty === 'advanced' ? '进阶' : '基础',
         patientAge: `${item.patientProfile.age}岁`,
@@ -24,7 +28,10 @@ Page({
         suggestedQuestions: item.suggestedQuestions || []
       }));
       this.setData({ scenarios, expandedId: '' });
-    }).catch(error => wx.showToast({ title: error.message || '场景加载失败', icon: 'none' }));
+    }).catch(error => {
+      if (requestVersion !== this.scenarioRequestVersion || requestedMode !== this.data.trainingMode) return;
+      wx.showToast({ title: error.message || '场景加载失败', icon: 'none' });
+    });
   },
 
   switchMode(e) {

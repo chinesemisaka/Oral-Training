@@ -3,19 +3,39 @@ const api = require('../../utils/api.js');
 Page({
   data: {
     dashboard: { totalCount: 0, completedCount: 0, averageScore: 0 },
-    demoUser: '固定演示账号',
+    currentUserName: '',
+    isAdmin: false,
+    dataCaption: '完成训练后自动更新',
+    showKeyConfig: false,
     apiKey: '',
     keyStatus: '',
     savingKey: false
   },
 
   onShow() {
+    const currentUser = api.getCurrentUser();
+    this.setData({
+      currentUserName: currentUser ? currentUser.displayName : '',
+      isAdmin: currentUser ? currentUser.role === 'admin' : false
+    });
+    api.ensureAuthenticated().then(() => {
+      const authenticatedUser = api.getCurrentUser();
+      this.setData({
+        currentUserName: authenticatedUser ? authenticatedUser.displayName : '',
+        isAdmin: authenticatedUser ? authenticatedUser.role === 'admin' : false
+      });
+    }).catch(() => {});
+    api.getHealth().then(data => {
+      this.setData({ showKeyConfig: data.runtimeApiKeyAllowed === true });
+    }).catch(() => this.setData({ showKeyConfig: false }));
     api.getDashboard().then(data => {
       this.setData({ dashboard: {
         totalCount: data.totalSessions,
         completedCount: data.completedSessions,
         averageScore: data.averageScore
-      } });
+      }, dataCaption: data.scope === 'institution'
+        ? '当前机构汇总，不含个人会话明细'
+        : '完成训练后自动更新' });
     }).catch(error => this.showRequestError(error));
   },
 
@@ -35,7 +55,13 @@ Page({
     wx.showToast({ title: error.message || '后端服务不可用', icon: 'none' });
   },
 
-  startTraining() { wx.switchTab({ url: '/pages/index/index' }); },
+  startTraining() {
+    if (this.data.isAdmin) {
+      this.viewDashboard();
+      return;
+    }
+    wx.switchTab({ url: '/pages/index/index' });
+  },
   viewHistory() { wx.switchTab({ url: '/pages/report/report' }); },
   viewDashboard() { wx.switchTab({ url: '/pages/admin/admin' }); }
 });

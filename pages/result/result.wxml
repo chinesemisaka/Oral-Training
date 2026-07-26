@@ -48,7 +48,9 @@
 <view class="page-shell result-page loading-result" wx:if="{{loading}}">
   <view class="loading-card card">
     <text class="loading-title">{{loadingText}}</text>
-    <text class="loading-text">评分将读取完整对话并生成五维反馈，请勿关闭页面。</text>
+    <text class="loading-text">{{timedOut ? '任务仍在后台可靠执行，离开页面后可从历史记录继续查看。' : '评分将读取完整对话并生成五维反馈，请稍候。'}}</text>
     <button wx:if="{{retryable}}" class="primary-button retry-button" bindtap="retryEvaluation">重新评分</button>
+    <button wx:if="{{timedOut}}" class="primary-button retry-button" bindtap="continueWaiting">继续等待</button>
+    <button wx:if="{{timedOut}}" class="secondary-button retry-button" bindtap="viewHistory">返回历史</button>
   </view>
 </view>

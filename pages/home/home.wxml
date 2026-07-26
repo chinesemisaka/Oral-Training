@@ -6,10 +6,10 @@
     <text class="hero-title">口腔客服智能陪练</text>
     <text class="hero-subtitle">客服训练 · 患者模拟 · 结构化复盘</text>
     <text class="hero-description">面向新入口腔客服的低风险练习空间，帮助你在典型场景中练习沟通、服务表达和合规边界。</text>
-    <button class="primary-button hero-button" bindtap="startTraining">开始训练</button>
+    <button class="primary-button hero-button" bindtap="startTraining">{{isAdmin ? '查看机构数据' : '开始训练'}}</button>
   </view>
 
-  <view class="model-key-card card">
+  <view class="model-key-card card" wx:if="{{showKeyConfig}}">
     <text class="model-key-title">DeepSeek 模型密钥（本地演示）</text>
     <text class="model-key-text">密钥仅提交给当前后端进程，不写入小程序缓存、数据库或代码仓库。已通过环境变量配置时无需填写。</text>
     <view class="key-input-row">
@@ -32,7 +32,7 @@
   </view>
 
   <view class="section-heading stats-heading">
-    <view><text class="section-title">我的演示数据</text><text class="section-caption">完成训练后自动更新</text></view>
+    <view><text class="section-title">训练数据</text><text class="section-caption">{{dataCaption}}</text></view>
     <text class="section-link" bindtap="viewDashboard">查看数据 ›</text>
   </view>
   <view class="stats-grid">
@@ -41,7 +41,7 @@
     <view class="stat-card card"><text class="stat-value">{{dashboard.averageScore}}</text><text class="stat-label">平均得分</text></view>
   </view>
 
-  <view class="quick-links">
+  <view class="quick-links" wx:if="{{!isAdmin}}">
     <view class="quick-link card" bindtap="startTraining"><text class="quick-icon">✦</text><view><text class="quick-title">开始一次新的练习</text><text class="quick-text">四个固定场景可选</text></view><text class="quick-arrow">›</text></view>
     <view class="quick-link card" bindtap="viewHistory"><text class="quick-icon">↺</text><view><text class="quick-title">回看历史记录</text><text class="quick-text">继续未完成训练或查看报告</text></view><text class="quick-arrow">›</text></view>
   </view>

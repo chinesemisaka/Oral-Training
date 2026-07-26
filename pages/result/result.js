@@ -30,44 +30,93 @@ Page({
     dimensions: [],
     loading: true,
     loadingText: '正在生成训练报告…',
-    retryable: false
+    retryable: false,
+    timedOut: false
   },
 
   sessionId: '',
   pollTimer: null,
-  pollCount: 0,
+  waitStartedAt: 0,
+  networkRetryIndex: 0,
 
   onLoad(options) {
     this.sessionId = options.sessionId || '';
-    this.loadReport();
+    this.waitStartedAt = Date.now();
+    this.loadInitialData();
   },
 
   onUnload() { if (this.pollTimer) clearTimeout(this.pollTimer); },
 
-  loadReport() {
+  loadInitialData() {
     if (!this.sessionId) return;
-    Promise.all([api.getSession(this.sessionId), api.getEvaluation(this.sessionId), api.getScenarios()]).then(([detail, report, scenarioData]) => {
-      const scenario = scenarioData.items.find(item => item.id === detail.session.scenarioId);
+    Promise.all([api.getSession(this.sessionId), api.getScenarios()]).then(([detail, scenarioData]) => {
+      const scenario = scenarioData.items.find(item => item.id === detail.session.scenarioId) || { name: detail.session.scenarioName };
+      this.setData({ session: detail.session, scenario });
+      this.networkRetryIndex = 0;
+      this.pollReport();
+    }).catch(error => this.handleNetworkError(error, () => this.loadInitialData()));
+  },
+
+  pollReport() {
+    if (!this.sessionId || !this.data.session) return;
+    api.getEvaluation(this.sessionId).then(report => {
+      this.networkRetryIndex = 0;
       if (report.status === 'ready' && report.evaluation) {
         const evaluation = normalizeEvaluation(report.evaluation);
-        this.setData({ session: detail.session, scenario, evaluation, dimensions: dimensionsFrom(evaluation.dimensionScores), loading: false });
+        this.setData({ evaluation, dimensions: dimensionsFrom(evaluation.dimensionScores), loading: false,
+          retryable: false, timedOut: false });
         return;
       }
       if (report.status === 'failed') {
-        this.setData({ loading: true, loadingText: '报告生成失败，可重新评分', retryable: true });
+        this.setData({ loading: true, loadingText: '报告生成失败，可重新评分', retryable: true, timedOut: false });
         return;
       }
-      this.setData({ loading: true, loadingText: '正在生成训练报告…', retryable: false });
-      if (this.pollCount++ < 15) this.pollTimer = setTimeout(() => this.loadReport(), 2000);
-      else wx.showToast({ title: '报告仍在生成，可稍后从历史记录查看', icon: 'none' });
-    }).catch(error => wx.showToast({ title: error.message || '报告加载失败', icon: 'none' }));
+      if (this.waitExpired()) {
+        this.showWaitActions('报告仍在生成，你可以继续等待或返回历史记录。');
+        return;
+      }
+      this.setData({ loading: true, loadingText: '正在生成训练报告…', retryable: false, timedOut: false });
+      this.schedule(() => this.pollReport(), 2000);
+    }).catch(error => this.handleNetworkError(error, () => this.pollReport()));
+  },
+
+  handleNetworkError(error, retry) {
+    if (this.waitExpired()) {
+      this.showWaitActions('网络暂时不可用，你可以继续等待或返回历史记录。');
+      return;
+    }
+    const delays = [1000, 2000, 4000];
+    const delay = delays[Math.min(this.networkRetryIndex, delays.length - 1)];
+    this.networkRetryIndex += 1;
+    this.setData({ loading: true, loadingText: error.message || '网络异常，正在重试…', retryable: false });
+    this.schedule(retry, delay);
+  },
+
+  schedule(callback, delay) {
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = setTimeout(callback, delay);
+  },
+
+  waitExpired() { return Date.now() - this.waitStartedAt >= 30000; },
+
+  showWaitActions(message) {
+    this.setData({ loading: true, loadingText: message, retryable: false, timedOut: true });
+  },
+
+  continueWaiting() {
+    this.waitStartedAt = Date.now();
+    this.networkRetryIndex = 0;
+    this.setData({ timedOut: false, loadingText: '继续等待训练报告…' });
+    if (this.data.session) this.pollReport();
+    else this.loadInitialData();
   },
 
   retryEvaluation() {
     api.retryEvaluation(this.sessionId).then(() => {
-      this.pollCount = 0;
-      this.setData({ retryable: false, loadingText: '正在重新生成报告…' });
-      this.loadReport();
+      this.waitStartedAt = Date.now();
+      this.networkRetryIndex = 0;
+      this.setData({ retryable: false, timedOut: false, loadingText: '正在重新生成报告…' });
+      this.pollReport();
     }).catch(error => wx.showToast({ title: error.message, icon: 'none' }));
   },
 

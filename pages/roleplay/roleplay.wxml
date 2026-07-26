@@ -26,7 +26,7 @@
 
   <view class="training-note">请勿输入真实患者姓名、电话、病历或其他隐私信息。</view>
   <view class="input-area">
-    <input class="input-field" placeholder="以患者身份输入问题…" value="{{inputValue}}" bindinput="onInputChange" bindconfirm="sendMessage" confirm-type="send" disabled="{{sending || finishing}}" />
+    <input class="input-field" maxlength="1000" placeholder="以患者身份输入问题…" value="{{inputValue}}" bindinput="onInputChange" bindconfirm="sendMessage" confirm-type="send" disabled="{{sending || finishing || pendingClientMessageId}}" />
     <button class="send-button" bindtap="sendMessage" disabled="{{sending || finishing}}">{{sending ? '发送中' : '提问'}}</button>
   </view>
   <view class="roleplay-footer"><text class="leave-link" bindtap="leaveRoleplay">暂存并退出</text><view class="finish-button {{sending || finishing || currentRound < 1 ? 'is-disabled' : ''}}" bindtap="finishRoleplay" aria-role="button">{{finishing ? '生成复盘中…' : '结束并复盘'}}</view></view>
