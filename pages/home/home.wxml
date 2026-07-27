@@ -45,6 +45,7 @@
     <view class="quick-link card" bindtap="startTraining"><text class="quick-icon">✦</text><view><text class="quick-title">开始一次新的练习</text><text class="quick-text">四个固定场景可选</text></view><text class="quick-arrow">›</text></view>
     <view class="quick-link card" bindtap="viewHistory"><text class="quick-icon">↺</text><view><text class="quick-title">回看历史记录</text><text class="quick-text">继续未完成训练或查看报告</text></view><text class="quick-arrow">›</text></view>
     <view class="quick-link card" bindtap="viewProfile"><text class="quick-icon">◔</text><view><text class="quick-title">查看个人成长</text><text class="quick-text">回顾五维能力与练习重点</text></view><text class="quick-arrow">›</text></view>
+    <view class="quick-link card" bindtap="viewMine"><text class="quick-icon">★</text><view><text class="quick-title">我的成长与签到</text><text class="quick-text">每日 +10 积分，收藏常用话术</text></view><text class="quick-arrow">›</text></view>
     <view class="quick-link card" bindtap="viewPhrases"><text class="quick-icon">▤</text><view><text class="quick-title">打开话术锦囊</text><text class="quick-text">收录已完成报告中的推荐表达</text></view><text class="quick-arrow">›</text></view>
     <view class="quick-link card" bindtap="viewMistakes"><text class="quick-icon">↻</text><view><text class="quick-title">进行错题复练</text><text class="quick-text">针对真实报告中的改进项练习</text></view><text class="quick-arrow">›</text></view>
   </view>

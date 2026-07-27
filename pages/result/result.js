@@ -8,6 +8,13 @@ const dimensionsFrom = score => [
   { key: 'medicalCompliance', name: '医疗合规', score: score.medicalCompliance, color: '#8b75c9' }
 ];
 
+const levelFrom = score => {
+  if (score >= 90) return { key: 'excellent', name: '表现出色', note: '沟通与合规边界掌握较好' };
+  if (score >= 80) return { key: 'good', name: '表现良好', note: '继续用具体场景巩固表达' };
+  if (score >= 60) return { key: 'qualified', name: '达到练习目标', note: '可优先复练薄弱维度' };
+  return { key: 'practice', name: '继续复练', note: '建议先查看错题与推荐表达' };
+};
+
 const normalizeEvaluation = evaluation => Object.assign({}, evaluation, {
   strengths: (evaluation.strengths || []).map(item => item.content || item.evidence || item),
   improvements: (evaluation.improvements || []).map(item => item.content || item),
@@ -33,6 +40,8 @@ Page({
     scenario: null,
     evaluation: null,
     dimensions: [],
+    level: null,
+    nextScenario: null,
     loading: true,
     loadingText: '正在生成训练报告…',
     retryable: false,
@@ -55,8 +64,12 @@ Page({
   loadInitialData() {
     if (!this.sessionId) return;
     Promise.all([api.getSession(this.sessionId), api.getScenarios()]).then(([detail, scenarioData]) => {
-      const scenario = scenarioData.items.find(item => item.id === detail.session.scenarioId) || { name: detail.session.scenarioName };
-      this.setData({ session: detail.session, scenario });
+      const scenarios = scenarioData.items || [];
+      const scenarioIndex = scenarios.findIndex(item => item.id === detail.session.scenarioId);
+      const scenario = scenarioIndex >= 0 ? scenarios[scenarioIndex] : { name: detail.session.scenarioName };
+      const nextScenario = scenarioIndex >= 0 && scenarios.length > 1
+        ? scenarios[(scenarioIndex + 1) % scenarios.length] : null;
+      this.setData({ session: detail.session, scenario, nextScenario });
       this.networkRetryIndex = 0;
       this.pollReport();
     }).catch(error => this.handleNetworkError(error, () => this.loadInitialData()));
@@ -69,7 +82,7 @@ Page({
       if (report.status === 'ready' && report.evaluation) {
         const evaluation = normalizeEvaluation(report.evaluation);
         this.setData({ evaluation, dimensions: dimensionsFrom(evaluation.dimensionScores), loading: false,
-          retryable: false, timedOut: false });
+          level: levelFrom(evaluation.totalScore), retryable: false, timedOut: false });
         return;
       }
       if (report.status === 'failed') {
@@ -130,5 +143,17 @@ Page({
   viewHistory() { wx.switchTab({ url: '/pages/report/report' }); },
   viewPhrases() { wx.navigateTo({ url: '/pages/phrases/phrases' }); },
   viewMistakes() { wx.navigateTo({ url: '/pages/mistakes/mistakes' }); },
-  viewProfile() { wx.navigateTo({ url: '/pages/profile/profile' }); }
+  viewProfile() { wx.navigateTo({ url: '/pages/profile/profile' }); },
+
+  startNextScenario() {
+    const scenario = this.data.nextScenario;
+    if (!scenario) return this.viewScenes();
+    if (scenario.activeSession) {
+      wx.redirectTo({ url: `/pages/training/training?sessionId=${scenario.activeSession.id}` });
+      return;
+    }
+    api.createSession(scenario.id).then(data => {
+      wx.redirectTo({ url: `/pages/training/training?sessionId=${data.session.id}` });
+    }).catch(error => wx.showToast({ title: error.message || '创建下一场训练失败', icon: 'none' }));
+  }
 });

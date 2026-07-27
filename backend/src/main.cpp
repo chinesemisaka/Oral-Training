@@ -1549,6 +1549,15 @@ int main() {
     });
   });
 
+  CROW_ROUTE(app, "/api/sessions/<string>/hint").methods(crow::HTTPMethod::POST)(
+      [&](const crow::request& request, const std::string& session_id) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request, true);
+      if (!request.body.empty()) parseRequest(request);
+      return ok(service.database().requestTrainingHint(user.id, session_id));
+    });
+  });
+
   CROW_ROUTE(app, "/api/sessions/<string>/finish").methods(crow::HTTPMethod::POST)(
       [&](const crow::request& request, const std::string& session_id) {
     return handle(request, [&] {
@@ -1581,11 +1590,32 @@ int main() {
       const auto user = identity.authorize(request, true);
       const auto* search = request.url_params.get("search");
       const auto* scenario_id = request.url_params.get("scenarioId");
+      const auto* favorites_only = request.url_params.get("favoritesOnly");
       const auto* limit = request.url_params.get("limit");
+      bool requested_favorites_only = false;
+      if (favorites_only != nullptr) {
+        const auto value = std::string(favorites_only);
+        if (value == "true" || value == "1") requested_favorites_only = true;
+        else if (value != "false" && value != "0") throw ApiError(400, "INVALID_ARGUMENT", "favoritesOnly 参数无效");
+      }
       int requested_limit = 50;
       if (limit != nullptr) try { requested_limit = std::stoi(limit); } catch (...) { throw ApiError(400, "INVALID_ARGUMENT", "limit 参数无效"); }
       return ok(service.database().listLearningPhrases(
-          user.id, search == nullptr ? "" : search, scenario_id == nullptr ? "" : scenario_id, requested_limit));
+          user.id, search == nullptr ? "" : search, scenario_id == nullptr ? "" : scenario_id,
+          requested_favorites_only, requested_limit));
+    });
+  });
+
+  CROW_ROUTE(app, "/api/learning/phrases/<string>/<string>/favorite").methods(crow::HTTPMethod::PUT)(
+      [&](const crow::request& request, const std::string& session_id, const std::string& phrase_key) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request, true);
+      const auto body = parseRequest(request);
+      if (!body.is_object() || !body.contains("favorite") || !body["favorite"].is_boolean()) {
+        throw ApiError(400, "INVALID_ARGUMENT", "favorite 必须为布尔值");
+      }
+      return ok(service.database().setLearningPhraseFavorite(
+          user.id, session_id, phrase_key, body["favorite"].get<bool>()));
     });
   });
 
@@ -1628,10 +1658,54 @@ int main() {
     });
   });
 
+  CROW_ROUTE(app, "/api/learning/mine").methods(crow::HTTPMethod::GET)([&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request, true);
+      return ok(service.database().learningMine(user.id));
+    });
+  });
+
+  CROW_ROUTE(app, "/api/learning/checkins").methods(crow::HTTPMethod::POST)([&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request, true);
+      if (!request.body.empty()) parseRequest(request);
+      return ok(service.database().checkIn(user.id));
+    });
+  });
+
   CROW_ROUTE(app, "/api/dashboard/summary").methods(crow::HTTPMethod::GET)([&](const crow::request& request) {
     return handle(request, [&] {
       const auto user = identity.authorize(request);
       return ok(service.database().dashboard(user.id, user.isAdmin()));
+    });
+  });
+
+  CROW_ROUTE(app, "/api/supervisor/dashboard").methods(crow::HTTPMethod::GET)([&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看团队聚合数据");
+      const auto* range = request.url_params.get("range");
+      return ok(service.database().supervisorDashboard(range == nullptr ? "month" : range));
+    });
+  });
+
+  CROW_ROUTE(app, "/api/supervisor/members").methods(crow::HTTPMethod::GET)([&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看成员详情");
+      const auto* limit = request.url_params.get("limit");
+      int requested_limit = 50;
+      if (limit != nullptr) try { requested_limit = std::stoi(limit); } catch (...) { throw ApiError(400, "INVALID_ARGUMENT", "limit 参数无效"); }
+      return ok(service.database().listSupervisorMembers(requested_limit));
+    });
+  });
+
+  CROW_ROUTE(app, "/api/supervisor/members/<string>").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request, const std::string& member_id) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看成员详情");
+      return ok(service.database().supervisorMemberDetail(member_id));
     });
   });
 

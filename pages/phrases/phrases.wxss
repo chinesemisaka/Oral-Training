@@ -4,6 +4,9 @@
 .eyebrow { color: #667eea; font-size: 20rpx; letter-spacing: 2rpx; font-weight: 700; }
 .page-title { margin-top: 12rpx; color: #303046; font-size: 42rpx; font-weight: 700; }
 .page-intro { margin-top: 12rpx; color: #888; font-size: 23rpx; line-height: 1.65; }
+.phrase-view-switch { display: flex; padding: 6rpx; margin: -4rpx 0 20rpx; border-radius: 18rpx; background: #e9ebf8; }
+.phrase-view { flex: 1; padding: 13rpx 10rpx; border-radius: 14rpx; color: #7780aa; font-size: 23rpx; text-align: center; }
+.phrase-view.selected { color: #fff; background: #667eea; font-weight: 700; }
 .search-card { display: flex; align-items: center; padding: 10rpx 16rpx; }
 .search-input { flex: 1; height: 64rpx; color: #444; font-size: 24rpx; }
 .search-action, .clear-action { margin-left: 16rpx; color: #667eea; font-size: 23rpx; }
@@ -30,5 +33,7 @@
 .reason-text { display: block; margin-top: 15rpx; color: #999; font-size: 21rpx; line-height: 1.55; }
 .phrase-actions { margin-top: 20rpx; font-size: 23rpx; }
 .copy-action { color: #667eea; }
+.favorite-action { color: #9b83c4; }
+.favorite-action.active { color: #d19040; }
 .train-action { color: #4b9b72; }
 .bottom-links { display: flex; justify-content: space-around; margin-top: 32rpx; color: #667eea; font-size: 23rpx; }

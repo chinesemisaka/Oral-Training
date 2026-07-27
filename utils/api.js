@@ -103,6 +103,9 @@ module.exports = {
   sendMessage: (sessionId, clientMessageId, content) => request(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST', data: { clientMessageId, content }
   }),
+  requestTrainingHint: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/hint`, {
+    method: 'POST', data: {}
+  }),
   finishSession: (sessionId, reason = 'manual') => request(`/sessions/${encodeURIComponent(sessionId)}/finish`, {
     method: 'POST', data: { reason }
   }),
@@ -124,10 +127,19 @@ module.exports = {
   getRoleplaySessions: params => request(`/roleplay/sessions?${query(params || {})}`),
   getDashboard: () => request('/dashboard/summary'),
   getLearningPhrases: params => request(`/learning/phrases?${query(params || {})}`),
+  setLearningPhraseFavorite: (sessionId, phraseKey, favorite) => request(
+    `/learning/phrases/${encodeURIComponent(sessionId)}/${encodeURIComponent(phraseKey)}/favorite`,
+    { method: 'PUT', data: { favorite } }
+  ),
   getLearningMistakes: params => request(`/learning/mistakes?${query(params || {})}`),
   setLearningMistakeMastery: (sessionId, mistakeKey, mastered) => request(
     `/learning/mistakes/${encodeURIComponent(sessionId)}/${encodeURIComponent(mistakeKey)}`,
     { method: 'PUT', data: { mastered } }
   ),
-  getLearningProfile: () => request('/learning/profile')
+  getLearningProfile: () => request('/learning/profile'),
+  getLearningMine: () => request('/learning/mine'),
+  checkIn: () => request('/learning/checkins', { method: 'POST', data: {} }),
+  getSupervisorDashboard: params => request(`/supervisor/dashboard?${query(params || {})}`),
+  getSupervisorMembers: params => request(`/supervisor/members?${query(params || {})}`),
+  getSupervisorMember: memberId => request(`/supervisor/members/${encodeURIComponent(memberId)}`)
 };
