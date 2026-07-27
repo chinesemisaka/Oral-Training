@@ -46,10 +46,11 @@ class ReliableDatabase {
       const auto row = tx.exec(R"(
         SELECT to_regclass('ai_jobs') IS NOT NULL AS jobs_ready,
           to_regclass('users') IS NOT NULL AS users_ready,
-          to_regclass('messages') IS NOT NULL AS messages_ready
+          to_regclass('messages') IS NOT NULL AS messages_ready,
+          to_regclass('learner_mistake_progress') IS NOT NULL AS learner_insights_ready
       )")[0];
       return row["jobs_ready"].as<bool>() && row["users_ready"].as<bool>() &&
-             row["messages_ready"].as<bool>();
+             row["messages_ready"].as<bool>() && row["learner_insights_ready"].as<bool>();
     } catch (...) {
       return false;
     }
@@ -530,8 +531,16 @@ class ReliableDatabase {
       return {{"sessionId", session_id}, {"status", "generating"}, {"retryable", false},
               {"evaluation", nullptr}};
     }
+    auto report = json::parse(evaluation[0]["report"].c_str(), nullptr, false);
+    if (!report.is_object()) throw ApiError(503, "REPORT_INVALID", "评分报告存储格式无效");
+    if (!report.contains("recommendedPhrases")) {
+      report["recommendedPhrases"] = learningPhrasesFromReport(report);
+    }
+    if (!report.contains("learningMistakes")) {
+      report["learningMistakes"] = learningMistakesFromReport(report);
+    }
     return {{"sessionId", session_id}, {"status", "ready"}, {"retryable", false},
-            {"evaluation", json::parse(evaluation[0]["report"].c_str())}};
+            {"evaluation", report}};
   }
 
   void saveEvaluation(const AiJob& job, json report, const std::string& model_version) const {
@@ -619,7 +628,273 @@ class ReliableDatabase {
             {"recentSessions", recent}};
   }
 
+  json listLearningPhrases(const std::string& user_id, const std::string& search,
+                           const std::string& scenario_id, int limit) const {
+    if (utf8Length(search) > 120 || scenario_id.size() > 120) {
+      throw ApiError(400, "INVALID_ARGUMENT", "学习筛选参数过长");
+    }
+    limit = clampInt(limit, 1, 50);
+    pqxx::connection connection(database_url_);
+    pqxx::read_transaction tx(connection);
+    std::string query = R"(
+      SELECT s.id, s.scenario_id, s.scenario_name,
+        to_char(s.finished_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS finished_date,
+        e.report
+      FROM sessions s JOIN evaluations e ON e.session_id = s.id
+      WHERE s.user_id = $1 AND s.status = 'completed' AND e.status = 'ready'
+    )";
+    if (!scenario_id.empty()) query += " AND s.scenario_id = $2";
+    query += " ORDER BY s.finished_at DESC NULLS LAST LIMIT 200";
+    const auto rows = scenario_id.empty() ? tx.exec_params(query, user_id)
+                                          : tx.exec_params(query, user_id, scenario_id);
+    json items = json::array();
+    for (const auto& row : rows) {
+      const auto report = storedReport(row);
+      for (const auto& phrase : learningPhrasesFromReport(report)) {
+        if (items.size() >= static_cast<size_t>(limit)) break;
+        if (!phrase.is_object()) continue;
+        const auto patient_says = jsonString(phrase, "patientSays");
+        const auto cs_reply = jsonString(phrase, "csReply");
+        const auto reason = jsonString(phrase, "reason");
+        const auto scenario_name = std::string(row["scenario_name"].c_str());
+        if (!search.empty() && patient_says.find(search) == std::string::npos &&
+            cs_reply.find(search) == std::string::npos && reason.find(search) == std::string::npos &&
+            scenario_name.find(search) == std::string::npos) {
+          continue;
+        }
+        items.push_back({
+            {"id", std::string(row["id"].c_str()) + ':' + jsonString(phrase, "phraseKey")},
+            {"sessionId", row["id"].c_str()}, {"scenarioId", row["scenario_id"].c_str()},
+            {"scenarioName", scenario_name}, {"finishedDate", row["finished_date"].c_str()},
+            {"round", jsonInt(phrase, "round", 0)}, {"patientSays", patient_says},
+            {"csReply", cs_reply}, {"reason", reason},
+        });
+      }
+      if (items.size() >= static_cast<size_t>(limit)) break;
+    }
+    return {{"items", items}, {"total", static_cast<int>(items.size())}};
+  }
+
+  json listLearningMistakes(const std::string& user_id, const std::string& scenario_id,
+                            bool include_mastered, int limit) const {
+    if (scenario_id.size() > 120) throw ApiError(400, "INVALID_ARGUMENT", "scenarioId 参数过长");
+    limit = clampInt(limit, 1, 50);
+    pqxx::connection connection(database_url_);
+    pqxx::read_transaction tx(connection);
+    const auto mastered_rows = tx.exec_params(R"(
+      SELECT session_id, mistake_key FROM learner_mistake_progress
+      WHERE user_id = $1 AND mastered_at IS NOT NULL
+    )", user_id);
+    std::set<std::string> mastered_keys;
+    for (const auto& row : mastered_rows) {
+      mastered_keys.insert(masteryKey(row["session_id"].c_str(), row["mistake_key"].c_str()));
+    }
+    std::string query = R"(
+      SELECT s.id, s.scenario_id, s.scenario_name,
+        to_char(s.finished_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS finished_date,
+        e.report
+      FROM sessions s JOIN evaluations e ON e.session_id = s.id
+      WHERE s.user_id = $1 AND s.status = 'completed' AND e.status = 'ready'
+    )";
+    if (!scenario_id.empty()) query += " AND s.scenario_id = $2";
+    query += " ORDER BY s.finished_at DESC NULLS LAST LIMIT 200";
+    const auto rows = scenario_id.empty() ? tx.exec_params(query, user_id)
+                                          : tx.exec_params(query, user_id, scenario_id);
+    json items = json::array();
+    for (const auto& row : rows) {
+      const auto session_id = std::string(row["id"].c_str());
+      const auto report = storedReport(row);
+      for (const auto& mistake : learningMistakesFromReport(report)) {
+        if (items.size() >= static_cast<size_t>(limit)) break;
+        if (!mistake.is_object()) continue;
+        const auto mistake_key = jsonString(mistake, "mistakeKey");
+        if (mistake_key.empty()) continue;
+        const bool mastered = mastered_keys.find(masteryKey(session_id, mistake_key)) != mastered_keys.end();
+        if (mastered && !include_mastered) continue;
+        items.push_back({
+            {"id", session_id + ':' + mistake_key}, {"sessionId", session_id},
+            {"mistakeKey", mistake_key}, {"scenarioId", row["scenario_id"].c_str()},
+            {"scenarioName", row["scenario_name"].c_str()}, {"finishedDate", row["finished_date"].c_str()},
+            {"kind", jsonString(mistake, "kind")}, {"priority", jsonString(mistake, "priority")},
+            {"round", jsonInt(mistake, "round", 0)}, {"originalQuote", jsonString(mistake, "originalQuote")},
+            {"reason", jsonString(mistake, "reason")},
+            {"recommendedRewrite", jsonString(mistake, "recommendedRewrite")}, {"mastered", mastered},
+        });
+      }
+      if (items.size() >= static_cast<size_t>(limit)) break;
+    }
+    return {{"items", items}, {"total", static_cast<int>(items.size())},
+            {"includeMastered", include_mastered}};
+  }
+
+  json setLearningMistakeMastery(const std::string& user_id, const std::string& session_id,
+                                 const std::string& mistake_key, bool mastered) const {
+    if (session_id.empty() || session_id.size() > 120 || mistake_key.empty() || mistake_key.size() > 120) {
+      throw ApiError(400, "INVALID_ARGUMENT", "错题标识参数无效");
+    }
+    pqxx::connection connection(database_url_);
+    pqxx::work tx(connection);
+    const auto rows = tx.exec_params(R"(
+      SELECT e.report FROM sessions s JOIN evaluations e ON e.session_id = s.id
+      WHERE s.id = $1 AND s.user_id = $2 AND s.status = 'completed' AND e.status = 'ready'
+      FOR UPDATE OF s
+    )", session_id, user_id);
+    if (rows.empty()) throw ApiError(404, "LEARNING_MISTAKE_NOT_FOUND", "错题不存在或无权访问");
+    bool known_mistake = false;
+    for (const auto& item : learningMistakesFromReport(storedReport(rows[0]))) {
+      if (item.is_object() && jsonString(item, "mistakeKey") == mistake_key) {
+        known_mistake = true;
+        break;
+      }
+    }
+    if (!known_mistake) throw ApiError(404, "LEARNING_MISTAKE_NOT_FOUND", "错题不存在或无权访问");
+    tx.exec_params(R"(
+      INSERT INTO learner_mistake_progress(user_id, session_id, mistake_key, mastered_at, updated_at)
+      VALUES ($1, $2, $3, CASE WHEN $4 THEN NOW() ELSE NULL END, NOW())
+      ON CONFLICT (user_id, session_id, mistake_key) DO UPDATE SET
+        mastered_at = CASE WHEN $4 THEN NOW() ELSE NULL END, updated_at = NOW()
+    )", user_id, session_id, mistake_key, mastered);
+    tx.commit();
+    return {{"sessionId", session_id}, {"mistakeKey", mistake_key}, {"mastered", mastered}};
+  }
+
+  json learningProfile(const std::string& user_id) const {
+    pqxx::connection connection(database_url_);
+    pqxx::read_transaction tx(connection);
+    const auto rows = tx.exec_params(R"(
+      SELECT s.id, s.scenario_id, s.scenario_name, s.total_score,
+        to_char(s.finished_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS finished_date,
+        e.report
+      FROM sessions s JOIN evaluations e ON e.session_id = s.id
+      WHERE s.user_id = $1 AND s.status = 'completed' AND e.status = 'ready'
+      ORDER BY s.finished_at ASC NULLS LAST LIMIT 200
+    )", user_id);
+    const std::vector<std::string> keys = {
+        "knowledgeAccuracy", "medicalCompliance", "empathy", "needsDiscovery", "serviceEtiquette"};
+    json totals = json::object();
+    for (const auto& key : keys) totals[key] = 0.0;
+    int total_score = 0;
+    std::vector<json> all_trend;
+    std::set<std::string> mistake_keys;
+    for (const auto& row : rows) {
+      const auto report = storedReport(row);
+      if (!report.is_object()) continue;
+      accumulateDimensionScores(totals, report, keys);
+      total_score += row["total_score"].as<int>();
+      all_trend.push_back({
+          {"sessionId", row["id"].c_str()}, {"scenarioId", row["scenario_id"].c_str()},
+          {"scenarioName", row["scenario_name"].c_str()}, {"date", row["finished_date"].c_str()},
+          {"totalScore", row["total_score"].as<int>()},
+          {"scores", report.value("dimensionScores", json::object())},
+      });
+      for (const auto& mistake : learningMistakesFromReport(report)) {
+        if (mistake.is_object() && !jsonString(mistake, "mistakeKey").empty()) {
+          mistake_keys.insert(masteryKey(row["id"].c_str(), jsonString(mistake, "mistakeKey")));
+        }
+      }
+    }
+    const auto count = static_cast<int>(all_trend.size());
+    json averages = json::object();
+    for (const auto& key : keys) {
+      averages[key] = count == 0 ? 0.0 : std::round(totals[key].get<double>() / count * 10.0) / 10.0;
+    }
+    const auto mastered_rows = tx.exec_params(R"(
+      SELECT session_id, mistake_key FROM learner_mistake_progress
+      WHERE user_id = $1 AND mastered_at IS NOT NULL
+    )", user_id);
+    int mastered_count = 0;
+    for (const auto& row : mastered_rows) {
+      if (mistake_keys.find(masteryKey(row["session_id"].c_str(), row["mistake_key"].c_str())) != mistake_keys.end()) {
+        ++mastered_count;
+      }
+    }
+    const std::map<std::string, std::pair<std::string, std::string>> dimension_copy = {
+        {"knowledgeAccuracy", {"知识准确性", "先确认患者关切，再说明需要由医生结合检查评估的边界。"}},
+        {"medicalCompliance", {"医疗合规", "避免确定性承诺或越权判断，明确由医生结合检查评估。"}},
+        {"empathy", {"同理心", "先回应患者的担忧和情绪，再说明可协助的下一步。"}},
+        {"needsDiscovery", {"需求挖掘", "用开放问题确认患者最在意的重点，再提供服务协助。"}},
+        {"serviceEtiquette", {"服务礼仪", "使用清晰、尊重的表达，并给出可执行的服务安排。"}},
+    };
+    std::vector<std::string> ordered_keys = keys;
+    std::sort(ordered_keys.begin(), ordered_keys.end(), [&](const auto& left, const auto& right) {
+      return averages[left].get<double>() < averages[right].get<double>();
+    });
+    json weaknesses = json::array();
+    for (size_t index = 0; index < ordered_keys.size() && index < 2; ++index) {
+      const auto& key = ordered_keys[index];
+      const auto& copy = dimension_copy.at(key);
+      weaknesses.push_back({{"key", key}, {"name", copy.first}, {"score", averages[key]}, {"suggestion", copy.second}});
+    }
+    json trend = json::array();
+    const size_t first = all_trend.size() > 12 ? all_trend.size() - 12 : 0;
+    for (size_t index = first; index < all_trend.size(); ++index) trend.push_back(all_trend[index]);
+    const int score_delta = all_trend.size() < 2 ? 0
+        : all_trend.back()["totalScore"].get<int>() - all_trend.front()["totalScore"].get<int>();
+    return {{"overall", {{"totalCompleted", count},
+                            {"averageScore", count == 0 ? 0.0 : std::round(static_cast<double>(total_score) / count * 10.0) / 10.0},
+                            {"scoreDelta", score_delta}}},
+            {"dimensionAverages", averages}, {"trend", trend}, {"weaknesses", weaknesses},
+            {"mistakes", {{"total", static_cast<int>(mistake_keys.size())}, {"mastered", mastered_count}}}};
+  }
+
  private:
+  static std::string masteryKey(const std::string& session_id, const std::string& mistake_key) {
+    return session_id + '\x1f' + mistake_key;
+  }
+
+  static json storedReport(const pqxx::row& row) {
+    if (row["report"].is_null()) return json();
+    return json::parse(row["report"].c_str(), nullptr, false);
+  }
+
+  static json learningPhrasesFromReport(const json& report) {
+    if (!report.is_object()) return json::array();
+    if (report.contains("recommendedPhrases") && report["recommendedPhrases"].is_array()) {
+      return report["recommendedPhrases"];
+    }
+    json phrases = json::array();
+    const auto append = [&](const json& item, const std::string& reason) {
+      if (!item.is_object() || phrases.size() >= 8) return;
+      const auto reply = jsonString(item, "recommendedRewrite");
+      if (reply.empty()) return;
+      phrases.push_back({{"phraseKey", "legacy-phrase-" + std::to_string(phrases.size() + 1)},
+                         {"round", jsonInt(item, "round", 0)}, {"patientSays", ""},
+                         {"csReply", reply}, {"reason", reason}});
+    };
+    if (report.contains("roundComments") && report["roundComments"].is_array()) {
+      for (const auto& item : report["roundComments"]) {
+        if (item.is_object()) append(item, jsonString(item, "comment"));
+      }
+    }
+    if (report.contains("violations") && report["violations"].is_array()) {
+      for (const auto& item : report["violations"]) {
+        if (item.is_object()) append(item, jsonString(item, "reason"));
+      }
+    }
+    return phrases;
+  }
+
+  static json learningMistakesFromReport(const json& report) {
+    if (!report.is_object()) return json::array();
+    if (report.contains("learningMistakes") && report["learningMistakes"].is_array()) {
+      return report["learningMistakes"];
+    }
+    json mistakes = json::array();
+    if (!report.contains("violations") || !report["violations"].is_array()) return mistakes;
+    for (size_t index = 0; index < report["violations"].size() && mistakes.size() < 12; ++index) {
+      const auto& item = report["violations"][index];
+      if (!item.is_object()) continue;
+      const auto round = jsonInt(item, "round", 0);
+      mistakes.push_back({
+          {"mistakeKey", "legacy-violation-" + std::to_string(round) + "-" + std::to_string(index + 1)},
+          {"kind", "violation"}, {"priority", jsonInt(item, "deduction", 0) >= 30 ? "high" : "medium"},
+          {"round", round}, {"originalQuote", jsonString(item, "originalQuote")},
+          {"reason", jsonString(item, "reason")}, {"recommendedRewrite", jsonString(item, "recommendedRewrite")},
+      });
+    }
+    return mistakes;
+  }
+
   static json messageJson(const std::string& id, const std::string& role,
                           const std::string& content, int round) {
     return {{"id", id}, {"role", role}, {"content", content}, {"round", round}};

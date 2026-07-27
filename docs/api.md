@@ -1,6 +1,6 @@
 # 口腔客服智能陪练 API 契约
 
-版本：v3.0（可靠任务与单机构多用户）
+版本：v3.1（可靠任务、单机构多用户与学员洞察）
 
 Base URL 为 `https://<host>/api`。本机开发可使用 `http://127.0.0.1:8080/api`；体验版和正式版必须使用 HTTPS。
 
@@ -146,7 +146,51 @@ Content-Type: application/json
 
 单项违规 `deduction` 归一到 0—50，仅用于解释。如果存在 `deduction >= 30` 的严重违规且 `medicalCompliance > 60`，该次结果判定为 `MODEL_SCORE_INCONSISTENT`，由可靠任务机制按策略重试。
 
-## 7. 可靠 AI Worker
+## 7. 学员洞察：报告、话术、错题与成长
+
+以下接口仅限 `learner`，且始终按服务端登录用户过滤。管理员不能读取个人话术、错题、成长趋势或会话明细。
+
+评分任务完成时，服务端在同一事务中把两个派生字段写入 `evaluations.report`：
+
+```json
+{
+  "recommendedPhrases":[{
+    "phraseKey":"phrase-1-1",
+    "round":1,
+    "patientSays":"患者在该轮前提出的关切",
+    "csReply":"基于已验证点评的推荐表达",
+    "reason":"该表达的练习原因"
+  }],
+  "learningMistakes":[{
+    "mistakeKey":"improvement-1-1",
+    "kind":"improvement",
+    "priority":"practice",
+    "round":1,
+    "originalQuote":"学员当时表达",
+    "reason":"需要调整的原因",
+    "recommendedRewrite":"建议改写"
+  }]
+}
+```
+
+`recommendedPhrases` 从逐轮点评和违规项的已验证改写派生；`learningMistakes` 从违规项和未被违规项覆盖的改进项派生。它们不接受客户端写入，也不触发额外模型调用。已有历史报告在读取时兼容地从原有点评/违规字段提取可用项。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/learning/phrases` | 本人话术锦囊；支持 `search`、`scenarioId`、`limit`（1—50） |
+| `GET` | `/learning/mistakes` | 本人错题；支持 `scenarioId`、`includeMastered=true|false`、`limit`（1—50） |
+| `PUT` | `/learning/mistakes/{sessionId}/{mistakeKey}` | 标记或取消标记掌握状态 |
+| `GET` | `/learning/profile` | 本人完成次数、平均分、首末分差、五维均值、最近 12 条趋势、练习重点和错题掌握数 |
+
+掌握状态请求：
+
+```json
+{"mastered":true}
+```
+
+服务端先验证该 `sessionId/mistakeKey` 是当前用户已完成报告的真实派生项，再写入 `learner_mistake_progress`。取消掌握不会删除报告或错题来源，只会将 `mastered_at` 置空并保留更新时间。
+
+## 8. 可靠 AI Worker
 
 API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可配置到 4；使用 `FOR UPDATE SKIP LOCKED` 领取任务，租约 180 秒。去重键为：
 
@@ -155,13 +199,13 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 
 瞬时错误最多尝试 3 次，第一次失败后等待 5 秒，第二次失败后等待 30 秒。未配置模型、鉴权失败、内容过滤或不安全输出等非瞬时错误直接进入 `dead` 并把业务状态置为 `failed`。Worker 会回收过期租约；数据库中断时在进程内退避，异常不会逃出线程。
 
-## 8. 看板
+## 9. 看板
 
 ### `GET /dashboard/summary`
 
 `scope` 为 `personal` 或 `institution`。学员收到个人统计和最近 5 条本人会话；管理员收到单机构聚合，`recentSessions` 为空，避免泄露个人会话。
 
-## 9. 错误码
+## 10. 错误码
 
 | HTTP | code | 含义 |
 |---:|---|---|
@@ -173,6 +217,7 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | 403 | `ORIGIN_FORBIDDEN` | Origin 不在精确允许列表 |
 | 404 | `SCENARIO_NOT_FOUND` | 场景不存在 |
 | 404 | `SESSION_NOT_FOUND` / `ROLEPLAY_SESSION_NOT_FOUND` | 会话不存在或不属于本人 |
+| 404 | `LEARNING_MISTAKE_NOT_FOUND` | 错题不存在、不属于本人或不再是当前报告的派生项 |
 | 409 | `IDEMPOTENCY_CONFLICT` | 同一幂等 ID 对应不同内容 |
 | 409 | `SESSION_RESPONSE_PENDING` | 模拟患者回复租约有效 |
 | 409 | `ROLEPLAY_RESPONSE_PENDING` | 标准客服回复租约有效 |
@@ -185,7 +230,8 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | 503 | `MODEL_NOT_CONFIGURED` / `MODEL_AUTH_FAILED` | 模型配置不可用 |
 | 503 | `MODEL_TIMEOUT` / `MODEL_RATE_LIMITED` / `MODEL_ERROR` | 模型瞬时错误 |
 | 503 | `MODEL_INVALID_RESPONSE` / `MODEL_SCORE_INCONSISTENT` | 模型结果无效或评分矛盾 |
+| 503 | `REPORT_INVALID` | 已存储评分报告格式无效，无法生成学习洞察 |
 
-## 10. 兼容与安全边界
+## 11. 兼容与安全边界
 
-现有成功响应数据结构和全部业务路径保持兼容。DeepSeek 请求地址、请求参数、Prompt、响应解析与模型调用内部重试逻辑未改变。生产环境必须设置 `PRODUCTION=true`、`AUTH_MODE=wechat`、精确 `ALLOWED_ORIGIN`、`REQUIRE_HTTPS=true`，并在 HTTPS 反向代理后运行；运行时密钥上传会自动关闭。
+现有成功响应数据结构和全部业务路径保持兼容。学员洞察字段在服务端对已规范化报告进行派生，DeepSeek 请求地址、请求参数、Prompt、响应解析与模型调用内部重试逻辑未改变。生产环境必须设置 `PRODUCTION=true`、`AUTH_MODE=wechat`、精确 `ALLOWED_ORIGIN`、`REQUIRE_HTTPS=true`，并在 HTTPS 反向代理后运行；运行时密钥上传会自动关闭。

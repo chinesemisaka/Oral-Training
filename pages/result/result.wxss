@@ -11,7 +11,7 @@
 .section-title-row { display: flex; align-items: baseline; justify-content: space-between; margin: 0 28rpx 14rpx; }
 .section-title { font-size: 31rpx; font-weight: 700; }
 .section-caption { color: #aaa; font-size: 21rpx; }
-.dimensions-card, .evaluation-card, .violation-card, .round-card, .empty-card { padding: 26rpx; margin: 0 24rpx 26rpx; }
+.dimensions-card, .evaluation-card, .violation-card, .round-card, .phrase-card, .empty-card { padding: 26rpx; margin: 0 24rpx 26rpx; }
 .dimension-item { margin-bottom: 22rpx; }
 .dimension-item:last-child { margin-bottom: 0; }
 .dimension-header { display: flex; justify-content: space-between; color: #555; font-size: 25rpx; }
@@ -36,6 +36,10 @@
 .round-label { color: #667eea; font-size: 22rpx; font-weight: 700; }
 .round-quote { display: block; margin-top: 12rpx; color: #555; font-size: 25rpx; line-height: 1.55; }
 .round-comment { display: block; margin-top: 12rpx; color: #888; font-size: 23rpx; line-height: 1.55; }
+.phrase-patient, .phrase-copy, .phrase-reason { display: block; }
+.phrase-patient { color: #a57738; font-size: 21rpx; line-height: 1.5; }
+.phrase-copy { margin-top: 10rpx; color: #4c609b; font-size: 25rpx; line-height: 1.6; }
+.phrase-reason { margin-top: 10rpx; color: #999; font-size: 21rpx; line-height: 1.55; }
 .result-actions { padding: 0 24rpx; }
 .result-actions button { width: 100%; height: 76rpx; line-height: 76rpx; margin-bottom: 16rpx; padding: 0; }
 .text-button { color: #667eea; background: transparent; font-size: 25rpx; }

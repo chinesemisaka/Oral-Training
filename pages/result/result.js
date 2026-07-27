@@ -19,6 +19,11 @@ const normalizeEvaluation = evaluation => Object.assign({}, evaluation, {
   roundComments: (evaluation.roundComments || []).map(item => Object.assign({}, item, {
     userQuote: item.userMessage || item.userQuote || '',
     rewrite: item.recommendedRewrite || item.rewrite || ''
+  })),
+  recommendedPhrases: (evaluation.recommendedPhrases || []).map(item => Object.assign({}, item, {
+    patientSays: item.patientSays || '',
+    csReply: item.csReply || item.recommendedRewrite || '',
+    reason: item.reason || item.comment || ''
   }))
 });
 
@@ -122,5 +127,8 @@ Page({
 
   restartTraining() { wx.switchTab({ url: '/pages/index/index' }); },
   viewScenes() { wx.switchTab({ url: '/pages/index/index' }); },
-  viewHistory() { wx.switchTab({ url: '/pages/report/report' }); }
+  viewHistory() { wx.switchTab({ url: '/pages/report/report' }); },
+  viewPhrases() { wx.navigateTo({ url: '/pages/phrases/phrases' }); },
+  viewMistakes() { wx.navigateTo({ url: '/pages/mistakes/mistakes' }); },
+  viewProfile() { wx.navigateTo({ url: '/pages/profile/profile' }); }
 });

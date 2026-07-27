@@ -7,7 +7,10 @@
     "pages/result/result",
     "pages/roleplay-result/roleplay-result",
     "pages/report/report",
-    "pages/admin/admin"
+    "pages/admin/admin",
+    "pages/phrases/phrases",
+    "pages/mistakes/mistakes",
+    "pages/profile/profile"
   ],
   "window": {
     "navigationBarBackgroundColor": "#667eea",

@@ -63,5 +63,8 @@ Page({
     wx.switchTab({ url: '/pages/index/index' });
   },
   viewHistory() { wx.switchTab({ url: '/pages/report/report' }); },
-  viewDashboard() { wx.switchTab({ url: '/pages/admin/admin' }); }
+  viewDashboard() { wx.switchTab({ url: '/pages/admin/admin' }); },
+  viewPhrases() { wx.navigateTo({ url: '/pages/phrases/phrases' }); },
+  viewMistakes() { wx.navigateTo({ url: '/pages/mistakes/mistakes' }); },
+  viewProfile() { wx.navigateTo({ url: '/pages/profile/profile' }); }
 });

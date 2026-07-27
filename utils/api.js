@@ -122,5 +122,12 @@ module.exports = {
   getRoleplaySummary: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/summary`),
   retryRoleplaySummary: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/summary/retry`, { method: 'POST', data: {} }),
   getRoleplaySessions: params => request(`/roleplay/sessions?${query(params || {})}`),
-  getDashboard: () => request('/dashboard/summary')
+  getDashboard: () => request('/dashboard/summary'),
+  getLearningPhrases: params => request(`/learning/phrases?${query(params || {})}`),
+  getLearningMistakes: params => request(`/learning/mistakes?${query(params || {})}`),
+  setLearningMistakeMastery: (sessionId, mistakeKey, mastered) => request(
+    `/learning/mistakes/${encodeURIComponent(sessionId)}/${encodeURIComponent(mistakeKey)}`,
+    { method: 'PUT', data: { mastered } }
+  ),
+  getLearningProfile: () => request('/learning/profile')
 };

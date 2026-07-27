@@ -41,10 +41,12 @@ try {
 
   Invoke-Psql $emptySchema (Join-Path $migrations '003_reliability.sql') ''
   Invoke-Psql $emptySchema (Join-Path $migrations '004_identity.sql') ''
+  Invoke-Psql $emptySchema (Join-Path $migrations '005_learner_insights.sql') ''
   Invoke-Psql $emptySchema '' @'
 DO $$ BEGIN
   IF to_regclass('message_repair_archive') IS NULL OR to_regclass('ai_jobs') IS NULL OR
-     to_regclass('users') IS NULL OR to_regclass('auth_sessions') IS NULL THEN
+     to_regclass('users') IS NULL OR to_regclass('auth_sessions') IS NULL OR
+     to_regclass('learner_mistake_progress') IS NULL THEN
     RAISE EXCEPTION 'empty database migration did not create required tables';
   END IF;
 END $$;
@@ -53,6 +55,11 @@ END $$;
   Invoke-Psql $historySchema $fixture ''
   Invoke-Psql $historySchema (Join-Path $migrations '003_reliability.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '004_identity.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '005_learner_insights.sql') ''
+  Invoke-Psql $historySchema '' @'
+INSERT INTO learner_mistake_progress(user_id, session_id, mistake_key, mastered_at)
+VALUES ('demo-user-001', 'test-max-rounds', 'fixture-mistake', NOW());
+'@
   Invoke-Psql $historySchema '' @'
 DO $$ BEGIN
   IF (SELECT COUNT(*) FROM message_repair_archive) <> 4 THEN
@@ -83,6 +90,18 @@ END $$;
 
   Invoke-Psql $historySchema (Join-Path $migrations '003_reliability.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '004_identity.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '005_learner_insights.sql') ''
+  Invoke-Psql $historySchema '' @'
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM learner_mistake_progress
+    WHERE user_id = 'demo-user-001' AND session_id = 'test-max-rounds'
+      AND mistake_key = 'fixture-mistake' AND mastered_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'learner insight progress was not preserved on migration rerun';
+  END IF;
+END $$;
+'@
   [pscustomobject]@{ Result = 'passed'; EmptySchema = $emptySchema; HistorySchema = $historySchema } |
     ConvertTo-Json -Compress
 } finally {

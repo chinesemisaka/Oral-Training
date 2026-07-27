@@ -41,7 +41,15 @@
     <view class="round-rewrite"><text class="rewrite-label">更优表达</text><text>{{item.rewrite}}</text></view>
   </view>
 
-  <view class="result-actions"><button class="primary-button" bindtap="restartTraining">重新训练</button><button class="secondary-button" bindtap="viewScenes">返回场景列表</button><button class="text-button" bindtap="viewHistory">查看历史记录</button></view>
+  <view class="section-title-row"><text class="section-title">本次可收录话术</text><text class="section-caption">来自已点评轮次</text></view>
+  <view class="empty-card card" wx:if="{{evaluation.recommendedPhrases.length === 0}}"><text>本次暂无可收录的话术，完成更多训练后可在话术锦囊中回顾。</text></view>
+  <view class="phrase-card card" wx:for="{{evaluation.recommendedPhrases}}" wx:key="phraseKey">
+    <text class="phrase-patient" wx:if="{{item.patientSays}}">患者：{{item.patientSays}}</text>
+    <text class="phrase-copy">{{item.csReply}}</text>
+    <text class="phrase-reason">{{item.reason}}</text>
+  </view>
+
+  <view class="result-actions"><button class="primary-button" bindtap="restartTraining">重新训练</button><button class="secondary-button" bindtap="viewPhrases">查看话术锦囊</button><button class="secondary-button" bindtap="viewMistakes">进行错题复练</button><button class="text-button" bindtap="viewProfile">查看个人成长</button><button class="text-button" bindtap="viewHistory">查看历史记录</button></view>
   <text class="disclaimer">AI模拟训练，不构成医疗建议。</text>
 </view>
 
