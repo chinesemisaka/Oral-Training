@@ -16,5 +16,4 @@
       <view class="inline-evaluation" wx:if="{{expandedEvaluationId === item.id}}"><text wx:if="{{item.evaluationLoading}}" class="inline-loading">正在读取报告摘要…</text><block wx:elif="{{item.evaluationDetail && !item.evaluationDetail.pending}}"><radar-chart dimensions="{{item.evaluationDetail.dimensions}}" canvas-width="260" canvas-height="230"></radar-chart><text class="inline-summary">{{item.evaluationDetail.summary}}</text><view class="inline-feedback"><view><text class="inline-label positive">做得好</text><text wx:for="{{item.evaluationDetail.strengths}}" wx:for-item="strength" wx:key="round">• {{strength.content}}</text></view><view><text class="inline-label improve">下一步</text><text wx:for="{{item.evaluationDetail.improvements}}" wx:for-item="improvement" wx:key="round">• {{improvement.content}}</text></view></view></block><text wx:else class="inline-loading">报告{{item.evaluationDetail.status === 'failed' ? '生成失败，可从结果页重新评分' : '仍在生成中，请稍后再试'}}</text></view>
     </view>
   </view>
-  <text class="disclaimer">完整对话仅保存在当前演示环境，不包含真实患者信息。</text>
 </view>

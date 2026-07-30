@@ -40,5 +40,4 @@
     <view class="recent-card card"><view class="recent-row" wx:for="{{personal.recentSessions}}" wx:key="id"><view class="recent-copy"><text class="recent-name">{{item.scenarioName}}</text><text class="recent-time">{{item.updatedAt}} · {{item.currentRound}}轮</text></view><text class="recent-score" wx:if="{{item.totalScore !== null}}">{{item.totalScore}}分</text><text class="recent-status" wx:else>{{item.statusText}}</text></view><view class="no-recent" wx:if="{{personal.recentSessions.length === 0}}">完成一次训练后，这里会展示最近记录。</view></view>
   </block>
 
-  <text class="disclaimer">训练数据仅用于学习复盘与必要的主管辅导。</text>
 </view>

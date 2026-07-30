@@ -30,8 +30,11 @@ Page({
   loadMine() {
     this.setData({ loading: true });
     api.getLearningMine().then(data => {
+      const mine = Object.assign({}, data, {
+        stats: Object.assign({}, data.stats, { averageScore: api.formatScore(data.stats.averageScore) })
+      });
       this.setData({
-        mine: data,
+        mine,
         calendarDays: buildCalendar(data.checkin),
         streakText: data.checkin.streakDays > 0 ? `连续 ${data.checkin.streakDays} 天` : '从今天开始记录',
         loading: false

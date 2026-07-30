@@ -44,4 +44,3 @@
 .scenario-actions { display: flex; flex-direction: column; align-items: stretch; margin-top: 22rpx; }
 .scenario-button { width: 100%; height: 76rpx; line-height: 1.2; font-size: 27rpx; }
 .restart-link { align-self: center; margin-top: 16rpx; color: #9a9a9a; font-size: 23rpx; line-height: 1.5; text-align: center; }
-.disclaimer { display: block; padding: 6rpx 12rpx; color: #aaa; font-size: 21rpx; line-height: 1.5; text-align: center; }

@@ -32,7 +32,6 @@
 .no-recent { padding: 18rpx 0; color: #aaa; font-size: 23rpx; text-align: center; }
 .not-included { padding: 20rpx; margin-bottom: 22rpx; border-radius: 16rpx; color: #888; background: #fff; font-size: 21rpx; line-height: 1.55; }
 .not-included-title { display: block; margin-bottom: 7rpx; color: #667eea; font-size: 23rpx; font-weight: 700; }
-.disclaimer { display: block; color: #aaa; font-size: 21rpx; text-align: center; }
 .loading-card { padding: 48rpx 28rpx; color: #8991a9; font-size: 25rpx; text-align: center; }
 .time-filter-row { display: flex; gap: 10rpx; padding: 6rpx; margin: -4rpx 0 22rpx; border-radius: 16rpx; background: #e9ebf8; }
 .time-filter { flex: 1; padding: 12rpx 5rpx; border-radius: 12rpx; color: #7780aa; font-size: 20rpx; text-align: center; }

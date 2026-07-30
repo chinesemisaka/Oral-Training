@@ -33,6 +33,7 @@ Page({
         score: Number((data.dimensionAverages || {})[item.key] || 0)
       }));
       const detail = Object.assign({}, data, {
+        averageScore: api.formatScore(data.averageScore),
         member: Object.assign({}, data.member, {
           initial: (data.member.displayName || '学').slice(0, 1)
         }),

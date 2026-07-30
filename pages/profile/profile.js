@@ -29,8 +29,11 @@ Page({
       const trend = (data.trend || []).map(item => Object.assign({}, item, {
         scoreLabel: `${item.totalScore} 分`
       }));
+      const profile = Object.assign({}, data, {
+        overall: Object.assign({}, data.overall, { averageScore: api.formatScore(data.overall.averageScore) })
+      });
       this.setData({
-        profile: data,
+        profile,
         dimensions,
         trend,
         weaknesses: data.weaknesses || [],

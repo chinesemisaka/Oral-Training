@@ -1,12 +1,32 @@
 const api = require('../../utils/api.js');
 
-const dimensionsFrom = score => [
-  { key: 'empathy', name: '情绪识别与同理心', score: score.empathy, color: '#667eea' },
-  { key: 'knowledgeAccuracy', name: '口腔知识准确性', score: score.knowledgeAccuracy, color: '#52a67a' },
-  { key: 'needsDiscovery', name: '需求挖掘', score: score.needsDiscovery, color: '#f0a34b' },
-  { key: 'serviceEtiquette', name: '服务礼仪', score: score.serviceEtiquette, color: '#6b9de8' },
-  { key: 'medicalCompliance', name: '医疗合规', score: score.medicalCompliance, color: '#8b75c9' }
+const scoreFrom = value => {
+  const score = Number(value);
+  return Number.isFinite(score) ? Math.min(100, Math.max(0, score)) : 0;
+};
+
+const dimensionsFrom = (score = {}) => [
+  { key: 'empathy', name: '情绪识别与同理心', score: scoreFrom(score.empathy), color: '#667eea' },
+  { key: 'knowledgeAccuracy', name: '口腔知识准确性', score: scoreFrom(score.knowledgeAccuracy), color: '#52a67a' },
+  { key: 'needsDiscovery', name: '需求挖掘', score: scoreFrom(score.needsDiscovery), color: '#f0a34b' },
+  { key: 'serviceEtiquette', name: '服务礼仪', score: scoreFrom(score.serviceEtiquette), color: '#6b9de8' },
+  { key: 'medicalCompliance', name: '医疗合规', score: scoreFrom(score.medicalCompliance), color: '#8b75c9' }
 ];
+
+const totalScoreFrom = (evaluation, sessionTotalScore) => {
+  if (evaluation.totalScore !== undefined && evaluation.totalScore !== null) {
+    return Math.round(scoreFrom(evaluation.totalScore));
+  }
+  if (sessionTotalScore !== undefined && sessionTotalScore !== null) {
+    return Math.round(scoreFrom(sessionTotalScore));
+  }
+  const score = evaluation.dimensionScores || {};
+  return Math.round(scoreFrom(score.knowledgeAccuracy) * 0.25
+    + scoreFrom(score.medicalCompliance) * 0.25
+    + scoreFrom(score.empathy) * 0.20
+    + scoreFrom(score.needsDiscovery) * 0.20
+    + scoreFrom(score.serviceEtiquette) * 0.10);
+};
 
 const levelFrom = score => {
   if (score >= 90) return { key: 'excellent', name: '表现出色', note: '沟通与合规边界掌握较好' };
@@ -15,7 +35,9 @@ const levelFrom = score => {
   return { key: 'practice', name: '继续复练', note: '建议先查看错题与推荐表达' };
 };
 
-const normalizeEvaluation = evaluation => Object.assign({}, evaluation, {
+const normalizeEvaluation = (evaluation, sessionTotalScore) => Object.assign({}, evaluation, {
+  totalScore: totalScoreFrom(evaluation, sessionTotalScore),
+  dimensionScores: Object.assign({}, evaluation.dimensionScores || {}),
   strengths: (evaluation.strengths || []).map(item => item.content || item.evidence || item),
   improvements: (evaluation.improvements || []).map(item => item.content || item),
   violations: (evaluation.violations || []).map((item, index) => Object.assign({}, item, {
@@ -80,7 +102,7 @@ Page({
     api.getEvaluation(this.sessionId).then(report => {
       this.networkRetryIndex = 0;
       if (report.status === 'ready' && report.evaluation) {
-        const evaluation = normalizeEvaluation(report.evaluation);
+        const evaluation = normalizeEvaluation(report.evaluation, this.data.session.totalScore);
         this.setData({ evaluation, dimensions: dimensionsFrom(evaluation.dimensionScores), loading: false,
           level: levelFrom(evaluation.totalScore), retryable: false, timedOut: false });
         return;

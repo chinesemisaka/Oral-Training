@@ -90,7 +90,13 @@ const query = values => Object.keys(values)
   .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(values[key])}`)
   .join('&');
 
+const formatScore = value => {
+  const score = Number(value);
+  return Number.isFinite(score) ? Number(score.toFixed(1)) : 0;
+};
+
 module.exports = {
+  formatScore,
   ensureAuthenticated,
   clearAuthentication,
   getCurrentUser: () => wx.getStorageSync(USER_KEY) || null,

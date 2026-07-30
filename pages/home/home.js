@@ -32,7 +32,7 @@ Page({
       this.setData({ dashboard: {
         totalCount: data.totalSessions,
         completedCount: data.completedSessions,
-        averageScore: data.averageScore
+        averageScore: api.formatScore(data.averageScore)
       }, dataCaption: data.scope === 'institution'
         ? '当前机构汇总，不含个人会话明细'
         : '完成训练后自动更新' });

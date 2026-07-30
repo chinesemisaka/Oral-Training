@@ -79,13 +79,17 @@ Page({
       }));
       const maxSceneTotal = Math.max(1, ...(supervisor.scenarioStats || []).map(item => item.total));
       const scenarioStats = (supervisor.scenarioStats || []).map(item => Object.assign({}, item, {
+        averageScore: api.formatScore(item.averageScore),
         barWidth: Math.max(0, Math.min(100, item.passRate)),
         totalWidth: Math.max(4, item.total / maxSceneTotal * 100)
       }));
-      const normalized = Object.assign({}, supervisor, { dimensionAverages, scenarioStats });
+      const normalized = Object.assign({}, supervisor, {
+        averageScore: api.formatScore(supervisor.averageScore), dimensionAverages, scenarioStats
+      });
       this.setData({
         supervisor: normalized,
         members: (memberData.members || []).map(item => Object.assign({}, item, {
+          averageScore: api.formatScore(item.averageScore),
           initial: (item.displayName || '学').slice(0, 1),
           latestText: item.lastTrainingDate ? `最近训练：${item.lastTrainingDate}` : '暂未开始训练'
         })),
@@ -104,7 +108,7 @@ Page({
       const personal = {
         totalCount: data.totalSessions,
         completedCount: data.completedSessions,
-        averageScore: data.averageScore,
+        averageScore: api.formatScore(data.averageScore),
         sceneStats: (data.scenarioStats || []).map(item => ({
           id: item.scenarioId,
           name: item.scenarioName,
