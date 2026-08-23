@@ -64,6 +64,8 @@ $env:PATH='C:\Program Files\PostgreSQL\18\bin;' + $env:PATH
 
 前端启动时调用 `wx.login`，然后通过 `/api/auth/wechat` 获取服务端令牌。`AUTH_MODE=demo` 时该路径登录保留的演示用户；生产必须使用 `AUTH_MODE=wechat`。
 
+普通 API 请求超时保持 30 秒；两类逐轮模型消息接口单独使用 120 秒超时，以覆盖后端两次模型尝试。若请求仍中断，页面会按原 `clientMessageId` 查询并保留输入，不会重复计轮。报告或复盘收到 `not_started` 时会根据会话状态恢复任务、返回未完成会话或回到历史记录；页面链接缺少 `sessionId` 时会明确提示并安全导航。
+
 ## 生产最小配置
 
 ```dotenv
@@ -76,9 +78,13 @@ ALLOWED_ORIGIN=https://your-gateway.example
 REQUIRE_HTTPS=true
 TRUSTED_PROXY_IPS=127.0.0.1,::1
 AI_WORKER_CONCURRENCY=1
+DATABASE_POOL_SIZE=12
+DATABASE_POOL_WAIT_MS=3000
 ```
 
 后端应放在 HTTPS 反向代理之后。`TRUSTED_PROXY_IPS` 必须填写实际连接后端的代理 IP；只有这些地址提供的 `X-Forwarded-For` 和 `X-Forwarded-Proto` 会被信任。代理应覆盖 `X-Forwarded-Proto`，并正确追加或覆盖 `X-Forwarded-For`。生产配置缺失、布尔值/整数拼写错误、使用 demo 登录或关闭 HTTPS 时，程序会拒绝启动。不要把数据库、模型密钥、微信密钥或 bearer token 写进前端或仓库。
+
+API、身份服务和 Worker 共享惰性数据库连接池。连接总数受 `DATABASE_POOL_SIZE` 限制；等待超过 `DATABASE_POOL_WAIT_MS` 的请求返回 HTTP 503 `DATABASE_BUSY`。连接池大小必须至少比 Worker 并发数多 2，避免后台任务占满 API 所需连接。
 
 ## 验证
 

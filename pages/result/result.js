@@ -1,4 +1,5 @@
 const api = require('../../utils/api.js');
+const { resultStateAction } = require('../../utils/result-state.js');
 
 const dimensionsFrom = score => [
   { key: 'empathy', name: '情绪识别与同理心', score: score.empathy, color: '#667eea' },
@@ -38,9 +39,15 @@ Page({
   pollTimer: null,
   waitStartedAt: 0,
   networkRetryIndex: 0,
+  stateRecoveryStarted: false,
+  stateRecoveryAttempted: false,
 
   onLoad(options) {
     this.sessionId = options.sessionId || '';
+    if (!this.sessionId) {
+      this.handleMissingSession();
+      return;
+    }
     this.waitStartedAt = Date.now();
     this.loadInitialData();
   },
@@ -48,7 +55,6 @@ Page({
   onUnload() { if (this.pollTimer) clearTimeout(this.pollTimer); },
 
   loadInitialData() {
-    if (!this.sessionId) return;
     Promise.all([api.getSession(this.sessionId), api.getScenarios()]).then(([detail, scenarioData]) => {
       const scenario = scenarioData.items.find(item => item.id === detail.session.scenarioId) || { name: detail.session.scenarioName };
       this.setData({ session: detail.session, scenario });
@@ -61,14 +67,36 @@ Page({
     if (!this.sessionId || !this.data.session) return;
     api.getEvaluation(this.sessionId).then(report => {
       this.networkRetryIndex = 0;
-      if (report.status === 'ready' && report.evaluation) {
+      const action = resultStateAction(report.status, this.data.session.status);
+      if (action === 'ready' && report.evaluation) {
         const evaluation = normalizeEvaluation(report.evaluation);
         this.setData({ evaluation, dimensions: dimensionsFrom(evaluation.dimensionScores), loading: false,
           retryable: false, timedOut: false });
         return;
       }
-      if (report.status === 'failed') {
+      if (action === 'failed') {
         this.setData({ loading: true, loadingText: '报告生成失败，可重新评分', retryable: true, timedOut: false });
+        return;
+      }
+      if (action === 'recover-generation') {
+        if (this.stateRecoveryAttempted) {
+          if (this.waitExpired()) {
+            this.showWaitActions('评分任务暂未启动，你可以继续等待或返回历史记录。');
+          } else {
+            this.setData({ loading: true, loadingText: '正在等待评分任务启动…', retryable: false });
+            this.schedule(() => this.pollReport(), 2000);
+          }
+          return;
+        }
+        this.recoverGeneration();
+        return;
+      }
+      if (action === 'return-to-session') {
+        this.returnToTraining();
+        return;
+      }
+      if (action === 'return-to-history') {
+        this.returnToHistory();
         return;
       }
       if (this.waitExpired()) {
@@ -78,6 +106,56 @@ Page({
       this.setData({ loading: true, loadingText: '正在生成训练报告…', retryable: false, timedOut: false });
       this.schedule(() => this.pollReport(), 2000);
     }).catch(error => this.handleNetworkError(error, () => this.pollReport()));
+  },
+
+  recoverGeneration() {
+    if (this.stateRecoveryStarted) return;
+    this.stateRecoveryStarted = true;
+    this.stateRecoveryAttempted = true;
+    this.setData({ loading: true, loadingText: '正在恢复评分任务…', retryable: false, timedOut: false });
+    api.finishSession(this.sessionId).then(() => {
+      this.stateRecoveryStarted = false;
+      this.waitStartedAt = Date.now();
+      this.pollReport();
+    }).catch(error => {
+      this.stateRecoveryStarted = false;
+      this.stateRecoveryAttempted = false;
+      this.handleNetworkError(error, () => this.recoverGeneration());
+    });
+  },
+
+  returnToTraining() {
+    if (this.stateRecoveryStarted) return;
+    this.stateRecoveryStarted = true;
+    this.setData({ loading: true, loadingText: '训练尚未结束，正在返回会话…', retryable: false });
+    wx.showModal({
+      title: '训练尚未结束',
+      content: '完成至少一轮对话并结束训练后，才能生成评分报告。',
+      showCancel: false,
+      success: () => wx.redirectTo({ url: `/pages/training/training?sessionId=${this.sessionId}` })
+    });
+  },
+
+  returnToHistory() {
+    if (this.stateRecoveryStarted) return;
+    this.stateRecoveryStarted = true;
+    this.setData({ loading: true, loadingText: '该训练无法生成报告', retryable: false });
+    wx.showModal({
+      title: '无法生成报告',
+      content: '该训练已被放弃，请从历史记录选择其他已完成训练。',
+      showCancel: false,
+      success: () => wx.switchTab({ url: '/pages/report/report' })
+    });
+  },
+
+  handleMissingSession() {
+    this.setData({ loading: true, loadingText: '缺少训练会话信息' });
+    wx.showModal({
+      title: '无法打开报告',
+      content: '页面链接缺少会话信息，请从历史记录重新进入。',
+      showCancel: false,
+      success: () => wx.switchTab({ url: '/pages/report/report' })
+    });
   },
 
   handleNetworkError(error, retry) {

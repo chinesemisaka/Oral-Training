@@ -34,6 +34,8 @@
 #include <utility>
 #include <vector>
 
+#include "database_pool.h"
+
 using json = nlohmann::json;
 
 namespace {
@@ -169,6 +171,8 @@ struct Config {
   bool require_https;
   std::vector<std::string> trusted_proxy_ips;
   int worker_concurrency;
+  int database_pool_size;
+  int database_pool_wait_ms;
   int rate_limit_per_minute;
 
   static Config fromEnvironment() {
@@ -188,6 +192,8 @@ struct Config {
     config.require_https = getEnvBool("REQUIRE_HTTPS", config.production);
     config.trusted_proxy_ips = getEnvIpList("TRUSTED_PROXY_IPS");
     config.worker_concurrency = clampInt(getEnvInt("AI_WORKER_CONCURRENCY", 1), 1, 4);
+    config.database_pool_size = clampInt(getEnvInt("DATABASE_POOL_SIZE", 12), 4, 64);
+    config.database_pool_wait_ms = clampInt(getEnvInt("DATABASE_POOL_WAIT_MS", 3000), 100, 30000);
     config.rate_limit_per_minute = clampInt(getEnvInt("RATE_LIMIT_PER_MINUTE", 120), 10, 5000);
     const bool loopback = config.bind_address == "127.0.0.1" || config.bind_address == "::1" ||
                           config.bind_address == "localhost";
@@ -219,6 +225,9 @@ struct Config {
     if (config.auth_mode == "wechat" &&
         (config.wechat_app_id.empty() || config.wechat_app_secret.empty())) {
       throw std::runtime_error("WECHAT_APP_ID and WECHAT_APP_SECRET are required for wechat auth");
+    }
+    if (config.database_pool_size < config.worker_concurrency + 2) {
+      throw std::runtime_error("DATABASE_POOL_SIZE must exceed AI_WORKER_CONCURRENCY by at least 2");
     }
     return config;
   }
@@ -386,6 +395,11 @@ crow::response handle(Fn&& function) {
     return function();
   } catch (const ApiError& error) {
     return fail(error);
+  } catch (const DatabasePoolExhausted& error) {
+    std::cerr << json({{"event", "database_pool_exhausted"}, {"requestId", g_request_id},
+                      {"error", error.what()}}).dump() << '\n';
+    return makeResponse(503, {{"code", "DATABASE_BUSY"},
+                              {"message", "数据库连接繁忙，请稍后重试"}, {"data", nullptr}});
   } catch (const pqxx::sql_error& error) {
     std::cerr << json({{"event", "database_sql_error"}, {"requestId", g_request_id},
                       {"error", error.what()}}).dump() << '\n';
@@ -1232,11 +1246,25 @@ class LeaseHeartbeat {
   std::thread thread_;
 };
 
+bool workerStateHealthy(bool stopping, int expected_workers, int running_workers,
+                        int workers_in_database_backoff) {
+  return !stopping && expected_workers > 0 && running_workers == expected_workers &&
+         workers_in_database_backoff == 0;
+}
+
+bool serviceReady(bool database_healthy, bool queue_available, bool worker_healthy,
+                  bool model_configured) {
+  return database_healthy && queue_available && worker_healthy && model_configured;
+}
+
+int healthStatusCode(bool ready) { return ready ? 200 : 503; }
+
 class Service {
  public:
-  explicit Service(const Config& config)
-      : database_(config.database_url), roleplay_database_(config.database_url), model_(config),
-        queue_(config.database_url), worker_concurrency_(config.worker_concurrency) {
+  Service(const Config& config, std::shared_ptr<DatabasePool> database_pool)
+      : database_pool_(std::move(database_pool)), database_(database_pool_),
+        roleplay_database_(database_pool_), model_(config), queue_(database_pool_),
+        worker_concurrency_(config.worker_concurrency) {
     startWorkers();
   }
 
@@ -1245,17 +1273,28 @@ class Service {
   ReliableDatabase& database() { return database_; }
   ReliableRoleplayDatabase& roleplayDatabase() { return roleplay_database_; }
   ModelGateway& model() { return model_; }
-  bool workerRunning() const {
-    return running_workers_.load() > 0 || (!workers_.empty() && !stopping_.load());
+  bool workerHealthy() const {
+    return workerStateHealthy(stopping_.load(), worker_concurrency_, running_workers_.load(),
+                              workers_in_database_backoff_.load());
   }
+  int runningWorkerCount() const { return running_workers_.load(); }
+  int workersInDatabaseBackoff() const { return workers_in_database_backoff_.load(); }
 
   json jobStats() const {
     try {
-      return queue_.stats();
+      auto stats = queue_.stats();
+      stats["available"] = true;
+      return stats;
     } catch (const std::exception& error) {
       std::cerr << json({{"event", "job_stats_error"}, {"error", error.what()}}).dump() << '\n';
-      return {{"pendingJobs", 0}, {"deadJobs", 0}};
+      return {{"available", false}, {"pendingJobs", 0}, {"deadJobs", 0}};
     }
+  }
+
+  json poolStats() const {
+    const auto stats = database_pool_->stats();
+    return {{"maximum", stats.maximum}, {"open", stats.open}, {"idle", stats.idle},
+            {"inUse", stats.in_use}, {"waiting", stats.waiting}};
   }
 
   json sendMessage(const std::string& user_id, const std::string& session_id,
@@ -1402,9 +1441,14 @@ class Service {
     running_workers_.fetch_add(1);
     const auto worker_id = makeId("worker") + '_' + std::to_string(index);
     int database_backoff_seconds = 1;
+    bool in_database_backoff = false;
     while (!stopping_.load()) {
       try {
         const auto job = queue_.claim(worker_id);
+        if (in_database_backoff) {
+          workers_in_database_backoff_.fetch_sub(1);
+          in_database_backoff = false;
+        }
         database_backoff_seconds = 1;
         if (!job.has_value()) {
           std::unique_lock<std::mutex> lock(worker_mutex_);
@@ -1453,6 +1497,10 @@ class Service {
           }
         }
       } catch (const std::exception& error) {
+        if (!in_database_backoff) {
+          workers_in_database_backoff_.fetch_add(1);
+          in_database_backoff = true;
+        }
         std::cerr << json({{"event", "worker_database_error"}, {"workerId", worker_id},
                           {"backoffSeconds", database_backoff_seconds},
                           {"error", error.what()}}).dump() << '\n';
@@ -1461,9 +1509,16 @@ class Service {
                                 [this] { return stopping_.load(); });
         database_backoff_seconds = std::min(database_backoff_seconds * 2, 30);
       } catch (...) {
+        if (!in_database_backoff) {
+          workers_in_database_backoff_.fetch_add(1);
+          in_database_backoff = true;
+        }
         std::cerr << json({{"event", "worker_unknown_error"}, {"workerId", worker_id}}).dump() << '\n';
+        std::unique_lock<std::mutex> lock(worker_mutex_);
+        worker_signal_.wait_for(lock, std::chrono::seconds(1), [this] { return stopping_.load(); });
       }
     }
+    if (in_database_backoff) workers_in_database_backoff_.fetch_sub(1);
     running_workers_.fetch_sub(1);
   }
 
@@ -1481,6 +1536,7 @@ class Service {
 
   void wakeWorkers() { worker_signal_.notify_all(); }
 
+  std::shared_ptr<DatabasePool> database_pool_;
   ReliableDatabase database_;
   ReliableRoleplayDatabase roleplay_database_;
   ModelGateway model_;
@@ -1488,6 +1544,7 @@ class Service {
   int worker_concurrency_;
   std::atomic<bool> stopping_{false};
   std::atomic<int> running_workers_{0};
+  std::atomic<int> workers_in_database_backoff_{0};
   std::vector<std::thread> workers_;
   std::mutex worker_mutex_;
   std::condition_variable worker_signal_;
@@ -1499,19 +1556,31 @@ class Service {
 int main() {
   const auto config = Config::fromEnvironment();
   g_allowed_origin = config.allowed_origin;
-  Service service(config);
-  IdentityService identity(config);
+  const auto database_pool = std::make_shared<DatabasePool>(
+      config.database_url, static_cast<std::size_t>(config.database_pool_size),
+      std::chrono::milliseconds(config.database_pool_wait_ms));
+  Service service(config, database_pool);
+  IdentityService identity(config, database_pool);
   crow::SimpleApp app;
 
   CROW_ROUTE(app, "/api/health").methods(crow::HTTPMethod::GET)([&](const crow::request& request) {
     return handle(request, [&] {
       const auto stats = service.jobStats();
-      return ok({{"database", service.database().healthy()},
-                 {"modelConfigured", service.model().configured()},
-                 {"workerRunning", service.workerRunning()},
+      const bool database_healthy = service.database().healthy();
+      const bool model_configured = service.model().configured();
+      const bool worker_healthy = service.workerHealthy();
+      const bool ready = serviceReady(database_healthy, stats["available"].get<bool>(),
+                                      worker_healthy, model_configured);
+      return ok({{"status", ready ? "healthy" : "unhealthy"}, {"ready", ready},
+                 {"database", database_healthy}, {"modelConfigured", model_configured},
+                 {"workerRunning", worker_healthy},
+                 {"workerThreads", service.runningWorkerCount()},
+                 {"workersInDatabaseBackoff", service.workersInDatabaseBackoff()},
                  {"pendingJobs", stats["pendingJobs"]}, {"deadJobs", stats["deadJobs"]},
+                 {"databasePool", service.poolStats()},
                  {"runtimeApiKeyAllowed", identity.runtimeKeyAllowed()},
-                 {"authMode", identity.authMode()}, {"production", identity.production()}});
+                 {"authMode", identity.authMode()}, {"production", identity.production()}},
+                ready ? "ok" : "service unavailable", healthStatusCode(ready));
     });
   });
 

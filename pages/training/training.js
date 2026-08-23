@@ -31,11 +31,23 @@ Page({
 
   onLoad(options) {
     this.sessionId = options.sessionId || '';
+    if (!this.sessionId) {
+      this.handleMissingSession();
+      return;
+    }
     this.loadSession();
   },
 
+  handleMissingSession() {
+    wx.showModal({
+      title: '无法打开训练',
+      content: '页面链接缺少会话信息，请从场景列表重新进入。',
+      showCancel: false,
+      success: () => wx.switchTab({ url: '/pages/index/index' })
+    });
+  },
+
   loadSession() {
-    if (!this.sessionId) return;
     Promise.all([api.getSession(this.sessionId), api.getScenarios()]).then(([detail, scenarioData]) => {
       const scenario = scenarioData.items.find(item => item.id === detail.session.scenarioId);
       if (!scenario) throw new Error('训练场景不存在');
