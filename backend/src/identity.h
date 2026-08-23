@@ -8,6 +8,77 @@ struct UserContext {
   bool isAdmin() const { return role == "admin"; }
 };
 
+std::vector<std::string> forwardedHeaderValues(const std::string& header, size_t max_items = 20) {
+  if (header.size() > 2048) {
+    throw ApiError(400, "FORWARDED_HEADER_INVALID", "代理转发请求头无效");
+  }
+  std::vector<std::string> values;
+  size_t start = 0;
+  while (start <= header.size()) {
+    const auto separator = header.find(',', start);
+    const auto value = trim(header.substr(start, separator == std::string::npos
+        ? std::string::npos : separator - start));
+    if (value.empty() || values.size() >= max_items) {
+      throw ApiError(400, "FORWARDED_HEADER_INVALID", "代理转发请求头无效");
+    }
+    values.push_back(value);
+    if (separator == std::string::npos) break;
+    start = separator + 1;
+  }
+  return values;
+}
+
+bool isTrustedProxy(const std::string& address, const std::vector<std::string>& trusted_proxies) {
+  try {
+    const auto normalized = normalizeIpAddress(address);
+    return std::find(trusted_proxies.begin(), trusted_proxies.end(), normalized) !=
+        trusted_proxies.end();
+  } catch (...) {
+    return false;
+  }
+}
+
+std::string resolveClientAddress(const std::string& remote_address,
+                                 const std::string& forwarded_for,
+                                 const std::vector<std::string>& trusted_proxies) {
+  std::string normalized_remote;
+  try {
+    normalized_remote = normalizeIpAddress(remote_address);
+  } catch (...) {
+    return "unknown";
+  }
+  if (!isTrustedProxy(normalized_remote, trusted_proxies) || forwarded_for.empty()) {
+    return normalized_remote;
+  }
+  const auto raw_chain = forwardedHeaderValues(forwarded_for);
+  std::vector<std::string> chain;
+  chain.reserve(raw_chain.size() + 1);
+  for (const auto& raw_address : raw_chain) {
+    try {
+      chain.push_back(normalizeIpAddress(raw_address));
+    } catch (...) {
+      throw ApiError(400, "FORWARDED_HEADER_INVALID", "X-Forwarded-For 包含无效地址");
+    }
+  }
+  chain.push_back(normalized_remote);
+  for (auto iterator = chain.rbegin(); iterator != chain.rend(); ++iterator) {
+    if (!isTrustedProxy(*iterator, trusted_proxies)) return *iterator;
+  }
+  return chain.front();
+}
+
+bool requestForwardedAsHttps(const std::string& remote_address,
+                             const std::string& forwarded_proto,
+                             const std::vector<std::string>& trusted_proxies) {
+  if (!isTrustedProxy(remote_address, trusted_proxies) || forwarded_proto.empty()) return false;
+  const auto values = forwardedHeaderValues(forwarded_proto);
+  const auto protocol = lowercaseAscii(values.back());
+  if (protocol != "http" && protocol != "https") {
+    throw ApiError(400, "FORWARDED_HEADER_INVALID", "X-Forwarded-Proto 无效");
+  }
+  return protocol == "https";
+}
+
 class SlidingWindowRateLimiter {
  public:
   explicit SlidingWindowRateLimiter(int limit) : limit_(limit) {}
@@ -46,7 +117,7 @@ class IdentityService {
 
   json login(const crow::request& request, const std::string& code) {
     enforceTransportAndOrigin(request);
-    if (!login_limiter_.allow("login|" + request.remote_ip_address)) {
+    if (!login_limiter_.allow("login|" + clientAddress(request))) {
       throw ApiError(429, "RATE_LIMITED", "登录请求过于频繁，请稍后重试");
     }
     std::string user_id;
@@ -64,7 +135,7 @@ class IdentityService {
 
   UserContext authorize(const crow::request& request, bool learner_only = false) {
     enforceTransportAndOrigin(request);
-    if (!limiter_.allow("ip|" + request.remote_ip_address)) {
+    if (!limiter_.allow("ip|" + clientAddress(request))) {
       throw ApiError(429, "RATE_LIMITED", "请求过于频繁，请稍后重试");
     }
     const auto authorization = request.get_header_value("Authorization");
@@ -102,8 +173,16 @@ class IdentityService {
   const std::string& authMode() const { return config_.auth_mode; }
 
  private:
+  std::string clientAddress(const crow::request& request) const {
+    return resolveClientAddress(request.remote_ip_address,
+                                request.get_header_value("X-Forwarded-For"),
+                                config_.trusted_proxy_ips);
+  }
+
   void enforceTransportAndOrigin(const crow::request& request) const {
-    if (config_.require_https && request.get_header_value("X-Forwarded-Proto") != "https") {
+    if (config_.require_https && !requestForwardedAsHttps(
+        request.remote_ip_address, request.get_header_value("X-Forwarded-Proto"),
+        config_.trusted_proxy_ips)) {
       throw ApiError(400, "HTTPS_REQUIRED", "生产环境仅接受 HTTPS 请求");
     }
     const auto origin = request.get_header_value("Origin");

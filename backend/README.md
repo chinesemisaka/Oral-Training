@@ -37,11 +37,14 @@ WECHAT_APP_ID=<appid>
 WECHAT_APP_SECRET=<secret>
 ALLOWED_ORIGIN=https://your-mini-program-gateway.example
 REQUIRE_HTTPS=true
+TRUSTED_PROXY_IPS=127.0.0.1,::1
 ALLOW_RUNTIME_API_KEY=false
 AI_WORKER_CONCURRENCY=1
 ```
 
-TLS 在反向代理终止，代理必须覆盖并传递 `X-Forwarded-Proto: https`。生产模式拒绝通配 CORS，且即使误配也会关闭页面上传模型密钥。Worker 并发默认 1、最大 4。
+TLS 在反向代理终止。`TRUSTED_PROXY_IPS` 是以逗号分隔的精确代理 IP 列表，必须包含实际连接后端的每一层可信代理；程序只接受这些代理提供的 `X-Forwarded-Proto`，并从 `X-Forwarded-For` 右侧逐层剥离可信代理后确定限流客户端。代理应覆盖协议头并正确追加或覆盖客户端地址头。
+
+生产模式要求微信登录、HTTPS、HTTPS Origin 和非空可信代理列表。布尔值只接受 `true/false`、`1/0`、`yes/no`、`on/off`（忽略大小写），整数必须完整合法；任何无效或降级配置都会让程序拒绝启动。Worker 并发默认 1、最大 4。
 
 ## 发布步骤
 

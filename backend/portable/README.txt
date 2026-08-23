@@ -9,8 +9,9 @@
 
 本机演示可使用 AUTH_MODE=demo；小程序仍通过 /api/auth/wechat 获取 bearer token。
 生产必须设置 PRODUCTION=true、AUTH_MODE=wechat、WECHAT_APP_ID、WECHAT_APP_SECRET、
-精确 ALLOWED_ORIGIN、REQUIRE_HTTPS=true 和 ALLOW_RUNTIME_API_KEY=false，并通过 HTTPS
-反向代理访问。代理需传递 X-Forwarded-Proto: https。
+HTTPS ALLOWED_ORIGIN、REQUIRE_HTTPS=true、非空 TRUSTED_PROXY_IPS 和
+ALLOW_RUNTIME_API_KEY=false，并通过 HTTPS 反向代理访问。只有可信代理提供的
+X-Forwarded-For 和 X-Forwarded-Proto 会被接受；无效或降级配置会导致程序拒绝启动。
 
 健康检查：GET /api/health。应确认 database=true、workerRunning=true，并监控
 pendingJobs/deadJobs。健康接口不会返回任务内容、Prompt 或密钥。

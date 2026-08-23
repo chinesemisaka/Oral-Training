@@ -3,6 +3,7 @@
 #include <pqxx/pqxx>
 
 #include <windows.h>
+#include <ws2tcpip.h>
 #include <bcrypt.h>
 #include <winhttp.h>
 
@@ -74,19 +75,78 @@ std::string trim(std::string value) {
   return value.substr(first, last - first + 1);
 }
 
+std::string lowercaseAscii(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+    return static_cast<char>(std::tolower(character));
+  });
+  return value;
+}
+
 bool getEnvBool(const char* name, bool fallback) {
-  const auto value = getEnv(name);
+  const auto value = lowercaseAscii(trim(getEnv(name)));
   if (value.empty()) return fallback;
-  return value == "1" || value == "true" || value == "TRUE" || value == "yes";
+  if (value == "1" || value == "true" || value == "yes" || value == "on") return true;
+  if (value == "0" || value == "false" || value == "no" || value == "off") return false;
+  throw std::runtime_error(std::string(name) +
+                           " must be one of: true, false, 1, 0, yes, no, on, off");
 }
 
 int getEnvInt(const char* name, int fallback) {
+  const auto value = trim(getEnv(name));
+  if (value.empty()) return fallback;
+  size_t consumed = 0;
   try {
-    const auto value = getEnv(name);
-    return value.empty() ? fallback : std::stoi(value);
+    const auto parsed = std::stoi(value, &consumed);
+    if (consumed != value.size()) throw std::invalid_argument("trailing characters");
+    return parsed;
   } catch (...) {
-    return fallback;
+    throw std::runtime_error(std::string(name) + " must be a valid integer");
   }
+}
+
+std::string normalizeIpAddress(std::string value) {
+  value = lowercaseAscii(trim(std::move(value)));
+  if (value.size() >= 2 && value.front() == '[' && value.back() == ']') {
+    value = value.substr(1, value.size() - 2);
+  }
+  if (value.rfind("::ffff:", 0) == 0 && value.find('.', 7) != std::string::npos) {
+    value.erase(0, 7);
+  }
+  IN_ADDR ipv4{};
+  if (InetPtonA(AF_INET, value.c_str(), &ipv4) == 1) {
+    char output[INET_ADDRSTRLEN] = {};
+    if (InetNtopA(AF_INET, &ipv4, output, sizeof(output)) != nullptr) return output;
+  }
+  IN6_ADDR ipv6{};
+  if (InetPtonA(AF_INET6, value.c_str(), &ipv6) == 1) {
+    char output[INET6_ADDRSTRLEN] = {};
+    if (InetNtopA(AF_INET6, &ipv6, output, sizeof(output)) != nullptr) {
+      return lowercaseAscii(output);
+    }
+  }
+  throw std::runtime_error("invalid IP address: " + value);
+}
+
+std::vector<std::string> getEnvIpList(const char* name) {
+  const auto source = trim(getEnv(name));
+  if (source.empty()) return {};
+  std::vector<std::string> addresses;
+  size_t start = 0;
+  while (start <= source.size()) {
+    const auto separator = source.find(',', start);
+    const auto item = source.substr(start, separator == std::string::npos
+        ? std::string::npos : separator - start);
+    const auto address = normalizeIpAddress(item);
+    if (std::find(addresses.begin(), addresses.end(), address) == addresses.end()) {
+      addresses.push_back(address);
+    }
+    if (addresses.size() > 32) {
+      throw std::runtime_error(std::string(name) + " cannot contain more than 32 addresses");
+    }
+    if (separator == std::string::npos) break;
+    start = separator + 1;
+  }
+  return addresses;
 }
 
 int clampInt(int value, int low, int high);
@@ -105,6 +165,7 @@ struct Config {
   int auth_token_ttl_seconds;
   std::string allowed_origin;
   bool require_https;
+  std::vector<std::string> trusted_proxy_ips;
   int worker_concurrency;
   int rate_limit_per_minute;
 
@@ -123,6 +184,7 @@ struct Config {
     config.auth_token_ttl_seconds = clampInt(getEnvInt("AUTH_TOKEN_TTL_SECONDS", 604800), 300, 2592000);
     config.allowed_origin = trim(getEnv("ALLOWED_ORIGIN", config.production ? "" : "*"));
     config.require_https = getEnvBool("REQUIRE_HTTPS", config.production);
+    config.trusted_proxy_ips = getEnvIpList("TRUSTED_PROXY_IPS");
     config.worker_concurrency = clampInt(getEnvInt("AI_WORKER_CONCURRENCY", 1), 1, 4);
     config.rate_limit_per_minute = clampInt(getEnvInt("RATE_LIMIT_PER_MINUTE", 120), 10, 5000);
     const bool loopback = config.bind_address == "127.0.0.1" || config.bind_address == "::1" ||
@@ -131,11 +193,26 @@ struct Config {
     if (config.auth_mode != "demo" && config.auth_mode != "wechat") {
       throw std::runtime_error("AUTH_MODE must be demo or wechat");
     }
+    if (config.port < 1 || config.port > 65535) {
+      throw std::runtime_error("PORT must be between 1 and 65535");
+    }
+    if (config.production && config.auth_mode != "wechat") {
+      throw std::runtime_error("AUTH_MODE must be wechat in production");
+    }
+    if (config.production && !config.require_https) {
+      throw std::runtime_error("REQUIRE_HTTPS must be true in production");
+    }
+    if (config.production && config.trusted_proxy_ips.empty()) {
+      throw std::runtime_error("TRUSTED_PROXY_IPS is required in production");
+    }
     if (config.production && config.allowed_origin.empty()) {
       throw std::runtime_error("ALLOWED_ORIGIN is required in production");
     }
     if (config.production && config.allowed_origin == "*") {
       throw std::runtime_error("ALLOWED_ORIGIN cannot be wildcard in production");
+    }
+    if (config.production && config.allowed_origin.rfind("https://", 0) != 0) {
+      throw std::runtime_error("ALLOWED_ORIGIN must use https in production");
     }
     if (config.auth_mode == "wechat" &&
         (config.wechat_app_id.empty() || config.wechat_app_secret.empty())) {

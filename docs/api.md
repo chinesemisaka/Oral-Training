@@ -171,6 +171,7 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | 401 | `WECHAT_LOGIN_FAILED` | 微信 code 无效或过期 |
 | 403 | `ROLE_FORBIDDEN` | 角色无权访问该类接口 |
 | 403 | `ORIGIN_FORBIDDEN` | Origin 不在精确允许列表 |
+| 400 | `HTTPS_REQUIRED` / `FORWARDED_HEADER_INVALID` | 请求未由可信 HTTPS 代理转发，或代理头格式无效 |
 | 404 | `SCENARIO_NOT_FOUND` | 场景不存在 |
 | 404 | `SESSION_NOT_FOUND` / `ROLEPLAY_SESSION_NOT_FOUND` | 会话不存在或不属于本人 |
 | 409 | `IDEMPOTENCY_CONFLICT` | 同一幂等 ID 对应不同内容 |
@@ -188,4 +189,4 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 
 ## 10. 兼容与安全边界
 
-现有成功响应数据结构和全部业务路径保持兼容。DeepSeek 请求地址、请求参数、Prompt、响应解析与模型调用内部重试逻辑未改变。生产环境必须设置 `PRODUCTION=true`、`AUTH_MODE=wechat`、精确 `ALLOWED_ORIGIN`、`REQUIRE_HTTPS=true`，并在 HTTPS 反向代理后运行；运行时密钥上传会自动关闭。
+现有成功响应数据结构和全部业务路径保持兼容。DeepSeek 请求地址、请求参数、Prompt、响应解析与模型调用内部重试逻辑未改变。生产环境必须设置 `PRODUCTION=true`、`AUTH_MODE=wechat`、HTTPS `ALLOWED_ORIGIN`、`REQUIRE_HTTPS=true` 和非空 `TRUSTED_PROXY_IPS`，并在 HTTPS 反向代理后运行；运行时密钥上传会自动关闭。程序只信任列表内代理提供的 `X-Forwarded-For` 和 `X-Forwarded-Proto`，配置或代理头无效时采用拒绝策略。
