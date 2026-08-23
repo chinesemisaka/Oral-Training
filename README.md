@@ -97,6 +97,7 @@ ctest --test-dir backend\build-msvc -C Release --output-on-failure
 
 ```powershell
 & '.\backend\tests\migration_reliability.ps1' -DatabaseUrl 'postgresql://.../oral_training_test'
+& '.\backend\tests\session_concurrency.ps1' -DatabaseUrl 'postgresql://.../oral_training_test'
 & '.\backend\tests\concurrency.ps1' -DatabaseUrl 'postgresql://.../oral_training_test'
 ```
 

@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -40,6 +41,7 @@ namespace {
 constexpr char kDemoUserId[] = "demo-user-001";
 constexpr int kReplyLeaseSeconds = 180;
 constexpr int kJobLeaseSeconds = 180;
+constexpr int kJobLeaseHeartbeatSeconds = kJobLeaseSeconds / 3;
 constexpr char kSessionTimes[] = R"(
   to_char(started_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD"T"HH24:MI:SS') || '+08:00' AS started_at,
   to_char(updated_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD"T"HH24:MI:SS') || '+08:00' AS updated_at,
@@ -707,6 +709,8 @@ class ModelGateway {
 
 改进建议和推荐改写只能给出沟通结构与合规边界，不得编造价格、疗程、优惠、机构服务，不得推荐具体药物、操作或治疗手段；涉及治疗判断时必须明确需要医生结合检查评估。
 
+全部顶层字段都必须存在。五维分数必须是 0—100 的整数；strengths 和 improvements 各至少 1 项；violations 没有违规时使用空数组；roundComments 必须对每个 role=user 的实际客服轮次各点评一次，不能遗漏、重复或引用不存在的轮次。所有列表中的 round 都必须对应实际客服轮次。
+
 请只输出合法 json，结构如下：
 {"dimensionScores":{"knowledgeAccuracy":0,"medicalCompliance":0,"empathy":0,"needsDiscovery":0,"serviceEtiquette":0},"summary":"","strengths":[{"round":1,"evidence":"","content":""}],"improvements":[{"round":1,"content":""}],"violations":[{"round":1,"originalQuote":"","type":"","reason":"","deduction":0,"recommendedRewrite":""}],"roundComments":[{"round":1,"userMessage":"","comment":"","recommendedRewrite":""}]}
 
@@ -1047,9 +1051,25 @@ json normalizeRoleplaySummary(const json& source, const json& messages) {
           {"nextPracticeSuggestions", roleplayAdviceList(source, "nextPracticeSuggestions", 1, 5, practice_fallbacks)}};
 }
 
-json reportArray(const json& source, const char* key, size_t max_items) {
-  if (!source.contains(key)) return json::array();
-  if (!source[key].is_array() || source[key].size() > max_items) {
+int requiredReportInteger(const json& object, const char* key, int minimum, int maximum) {
+  if (!object.contains(key)) {
+    throw ApiError(503, "MODEL_INVALID_RESPONSE", std::string("评分字段缺失：") + key);
+  }
+  if (!object[key].is_number()) {
+    throw ApiError(503, "MODEL_INVALID_RESPONSE", std::string("评分数值无效：") + key);
+  }
+  const auto value = object[key].get<double>();
+  if (!std::isfinite(value) || std::floor(value) != value || value < minimum || value > maximum) {
+    throw ApiError(503, "MODEL_INVALID_RESPONSE", std::string("评分数值超出范围：") + key);
+  }
+  return static_cast<int>(value);
+}
+
+json reportArray(const json& source, const char* key, size_t min_items, size_t max_items) {
+  if (!source.contains(key)) {
+    throw ApiError(503, "MODEL_INVALID_RESPONSE", std::string("评分字段缺失：") + key);
+  }
+  if (!source[key].is_array() || source[key].size() < min_items || source[key].size() > max_items) {
     throw ApiError(503, "MODEL_INVALID_RESPONSE", std::string("评分数组无效：") + key);
   }
   return source[key];
@@ -1065,40 +1085,46 @@ json normalizeReport(const json& source, const json& messages) {
   }
   if (user_messages.empty()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "评分报告缺少客服对话依据");
 
-  const auto input_dimensions = source.value("dimensionScores", json::object());
-  if (!input_dimensions.is_object()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "五维评分格式无效");
+  if (!source.contains("dimensionScores") || !source["dimensionScores"].is_object()) {
+    throw ApiError(503, "MODEL_INVALID_RESPONSE", "五维评分格式无效");
+  }
+  const auto& input_dimensions = source["dimensionScores"];
   json dimensions = {
-      {"knowledgeAccuracy", clampInt(jsonInt(input_dimensions, "knowledgeAccuracy", 0), 0, 100)},
-      {"medicalCompliance", clampInt(jsonInt(input_dimensions, "medicalCompliance", 0), 0, 100)},
-      {"empathy", clampInt(jsonInt(input_dimensions, "empathy", 0), 0, 100)},
-      {"needsDiscovery", clampInt(jsonInt(input_dimensions, "needsDiscovery", 0), 0, 100)},
-      {"serviceEtiquette", clampInt(jsonInt(input_dimensions, "serviceEtiquette", 0), 0, 100)},
+      {"knowledgeAccuracy", requiredReportInteger(input_dimensions, "knowledgeAccuracy", 0, 100)},
+      {"medicalCompliance", requiredReportInteger(input_dimensions, "medicalCompliance", 0, 100)},
+      {"empathy", requiredReportInteger(input_dimensions, "empathy", 0, 100)},
+      {"needsDiscovery", requiredReportInteger(input_dimensions, "needsDiscovery", 0, 100)},
+      {"serviceEtiquette", requiredReportInteger(input_dimensions, "serviceEtiquette", 0, 100)},
   };
 
   json strengths = json::array();
-  for (const auto& item : reportArray(source, "strengths", 10)) {
+  for (const auto& item : reportArray(source, "strengths", 1, 10)) {
     if (!item.is_object()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "优势项格式无效");
-    const auto round = jsonInt(item, "round", 0);
-    if (round != 0 && user_messages.find(round) == user_messages.end()) {
+    const auto round = requiredReportInteger(item, "round", 1, 10);
+    if (user_messages.find(round) == user_messages.end()) {
       throw ApiError(503, "MODEL_INVALID_RESPONSE", "优势项引用了不存在的客服轮次");
     }
-    strengths.push_back({{"round", round}, {"evidence", reportText(item, "evidence", "", false, 500)},
+    strengths.push_back({{"round", round}, {"evidence", reportText(item, "evidence", "", true, 500)},
                          {"content", reportText(item, "content", "", true, 500)}});
   }
 
   json improvements = json::array();
-  for (const auto& item : reportArray(source, "improvements", 10)) {
+  for (const auto& item : reportArray(source, "improvements", 1, 10)) {
     if (!item.is_object()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "改进项格式无效");
+    const auto round = requiredReportInteger(item, "round", 1, 10);
+    if (user_messages.find(round) == user_messages.end()) {
+      throw ApiError(503, "MODEL_INVALID_RESPONSE", "改进项引用了不存在的客服轮次");
+    }
     const auto content = safeAdviceOrFallback(
         reportText(item, "content", "", true, 600),
         "可先回应患者担忧，并说明具体情况需要医生结合检查结果评估。");
-    improvements.push_back({{"round", jsonInt(item, "round", 0)}, {"content", content}});
+    improvements.push_back({{"round", round}, {"content", content}});
   }
 
   json violations = json::array();
-  for (const auto& item : reportArray(source, "violations", 20)) {
+  for (const auto& item : reportArray(source, "violations", 0, 20)) {
     if (!item.is_object()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "违规项格式无效");
-    const auto round = jsonInt(item, "round", -1);
+    const auto round = requiredReportInteger(item, "round", 1, 10);
     const auto user_message = user_messages.find(round);
     if (user_message == user_messages.end()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "违规项引用了不存在的客服轮次");
     const auto quote = reportText(item, "originalQuote", "", true, 1000);
@@ -1111,7 +1137,7 @@ json normalizeReport(const json& source, const json& messages) {
     violations.push_back({{"round", round}, {"originalQuote", quote},
                           {"type", reportText(item, "type", "", true, 100)},
                           {"reason", reportText(item, "reason", "", true, 600)},
-                          {"deduction", clampInt(jsonInt(item, "deduction", 0), 0, 50)},
+                          {"deduction", clampInt(requiredReportInteger(item, "deduction", 0, 100), 0, 50)},
                           {"recommendedRewrite", rewrite}});
   }
 
@@ -1125,9 +1151,9 @@ json normalizeReport(const json& source, const json& messages) {
 
   json round_comments = json::array();
   std::set<int> commented_rounds;
-  for (const auto& item : reportArray(source, "roundComments", 10)) {
+  for (const auto& item : reportArray(source, "roundComments", 1, 10)) {
     if (!item.is_object()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "逐轮点评格式无效");
-    const auto round = jsonInt(item, "round", -1);
+    const auto round = requiredReportInteger(item, "round", 1, 10);
     const auto user_message = user_messages.find(round);
     if (user_message == user_messages.end() || !commented_rounds.insert(round).second) {
       throw ApiError(503, "MODEL_INVALID_RESPONSE", "逐轮点评引用了无效或重复的客服轮次");
@@ -1139,12 +1165,60 @@ json normalizeReport(const json& source, const json& messages) {
                               {"comment", reportText(item, "comment", "", true, 600)},
                               {"recommendedRewrite", rewrite}});
   }
+  if (commented_rounds.size() != user_messages.size()) {
+    throw ApiError(503, "MODEL_INVALID_RESPONSE", "逐轮点评未覆盖全部客服轮次");
+  }
 
   return {{"dimensionScores", dimensions},
-          {"summary", reportText(source, "summary", "已完成本次训练评分。", false, 1000)},
+          {"summary", reportText(source, "summary", "", true, 1000)},
           {"strengths", strengths}, {"improvements", improvements},
           {"violations", violations}, {"roundComments", round_comments}};
 }
+
+class LeaseHeartbeat {
+ public:
+  LeaseHeartbeat(std::function<bool()> renew, std::chrono::milliseconds interval)
+      : renew_(std::move(renew)), interval_(interval), thread_([this] { run(); }) {}
+
+  LeaseHeartbeat(const LeaseHeartbeat&) = delete;
+  LeaseHeartbeat& operator=(const LeaseHeartbeat&) = delete;
+
+  ~LeaseHeartbeat() { stop(); }
+
+  void stop() {
+    if (stopping_.exchange(true)) return;
+    condition_.notify_all();
+    if (thread_.joinable()) thread_.join();
+  }
+
+  bool leaseLost() const { return lease_lost_.load(); }
+
+ private:
+  void run() noexcept {
+    while (!stopping_.load()) {
+      std::unique_lock<std::mutex> lock(mutex_);
+      if (condition_.wait_for(lock, interval_, [this] { return stopping_.load(); })) return;
+      lock.unlock();
+      try {
+        if (!renew_()) {
+          lease_lost_.store(true);
+          return;
+        }
+      } catch (...) {
+        // A transient database error must not terminate the Worker thread. The
+        // next heartbeat can recover; final persistence still verifies ownership.
+      }
+    }
+  }
+
+  std::function<bool()> renew_;
+  std::chrono::milliseconds interval_;
+  std::atomic<bool> stopping_{false};
+  std::atomic<bool> lease_lost_{false};
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  std::thread thread_;
+};
 
 class Service {
  public:
@@ -1275,8 +1349,7 @@ class Service {
     return code != "MODEL_AUTH_FAILED" && code != "MODEL_NOT_CONFIGURED" &&
            code != "MODEL_CONTENT_FILTERED" && code != "MODEL_UNSAFE_RESPONSE" &&
            code != "SESSION_NOT_FOUND" && code != "ROLEPLAY_SESSION_NOT_FOUND" &&
-           code != "SCENARIO_NOT_FOUND" && code != "UNKNOWN_JOB_TYPE" &&
-           code != "JOB_LEASE_LOST";
+           code != "SCENARIO_NOT_FOUND" && code != "UNKNOWN_JOB_TYPE";
   }
 
   void processJob(const AiJob& job) {
@@ -1315,6 +1388,24 @@ class Service {
           continue;
         }
         try {
+          LeaseHeartbeat heartbeat(
+              [this, claimed_job = *job] {
+                try {
+                  const bool renewed = queue_.renewLease(claimed_job);
+                  if (!renewed) {
+                    std::cerr << json({{"event", "ai_job_lease_lost"},
+                                      {"jobId", claimed_job.id},
+                                      {"attempt", claimed_job.attempt}}).dump() << '\n';
+                  }
+                  return renewed;
+                } catch (const std::exception& error) {
+                  std::cerr << json({{"event", "ai_job_lease_renew_error"},
+                                    {"jobId", claimed_job.id},
+                                    {"error", error.what()}}).dump() << '\n';
+                  return true;
+                }
+              },
+              std::chrono::seconds(kJobLeaseHeartbeatSeconds));
           processJob(*job);
         } catch (const ApiError& error) {
           try {
