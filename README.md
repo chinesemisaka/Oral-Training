@@ -23,7 +23,7 @@ docs/api.md                      公共 API 契约
 
 ## 初始化数据库
 
-先备份历史数据库，并只读执行 `backend/migrations/preflight_reliability.sql` 记录重复轮次和异常状态。按顺序执行全部迁移；`003` 会归档重复消息并补可靠任务，迁移过程不会调用模型，`004` 会把历史记录保留在演示用户下。
+先备份历史数据库，并只读执行 `backend/migrations/preflight_reliability.sql` 记录重复轮次和异常状态。按顺序执行全部迁移；`003` 会归档重复消息并补可靠任务，`004` 会把历史记录保留在演示用户下，`005` 会按完整生成尝试重新配对历史问答并修复缺失的报告/任务状态。迁移过程不会调用模型；执行 `005` 时必须先停止后端。
 
 ```powershell
 $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
@@ -31,6 +31,7 @@ $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\002_roleplay.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\003_reliability.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\004_identity.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\005_pair_and_state_repair.sql
 ```
 
 ## 构建与启动后端

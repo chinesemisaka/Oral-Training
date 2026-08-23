@@ -105,7 +105,7 @@ Content-Type: application/json
 
 - 零轮会话返回 `422 MIN_ROUNDS_NOT_REACHED`。
 - `abandoned` 永远不能恢复为 `completed`，返回 `409 SESSION_ABANDONED`。
-- 重复结束已完成会话只返回当前状态，不新建任务，也不隐式重试失败任务。
+- 重复结束已完成会话通常只返回当前状态；若报告行或任务行缺失，则原子补建并恢复生成。明确失败的任务不会被隐式重试。
 - 失败评分只能调用 `/evaluation/retry` 重新入队。
 
 ## 5. 患者模拟（角色互换）
@@ -144,7 +144,7 @@ Content-Type: application/json
 | `needsDiscovery` | 20% |
 | `serviceEtiquette` | 10% |
 
-单项违规 `deduction` 归一到 0—50，仅用于解释。如果存在 `deduction >= 30` 的严重违规且 `medicalCompliance > 60`，该次结果判定为 `MODEL_SCORE_INCONSISTENT`，由可靠任务机制按策略重试。
+单项违规 `deduction` 归一到 0—50，仅用于解释。若存在单项扣分达到 30，或全部违规累计扣分达到 30，`medicalCompliance` 不得高于 60；累计扣分达到 60 时不得高于 50。违反该一致性规则的结果会被判定为 `MODEL_SCORE_INCONSISTENT`，由可靠任务机制按策略重试。
 
 ## 7. 可靠 AI Worker
 
@@ -154,6 +154,8 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 - `roleplay-summary:{sessionId}`
 
 瞬时错误最多尝试 3 次，第一次失败后等待 5 秒，第二次失败后等待 30 秒。未配置模型、鉴权失败、内容过滤或不安全输出等非瞬时错误直接进入 `dead` 并把业务状态置为 `failed`。Worker 会回收过期租约；数据库中断时在进程内退避，异常不会逃出线程。
+
+已完成会话的结束接口和报告轮询都会核对业务状态、报告行与任务行。缺失状态会在同一事务中补建，终态但无报告的任务会开启新 generation；达到 generation 上限时返回明确失败状态，不会永久停留在 `generating`。
 
 ## 8. 看板
 
@@ -181,6 +183,7 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | 409 | `ROLEPLAY_SESSION_ABANDONED` | 患者模拟会话已放弃 |
 | 409 | `SESSION_IN_PROGRESS` / `ROLEPLAY_SESSION_IN_PROGRESS` | 同场景已有进行中会话 |
 | 409 | `EVALUATION_NOT_RETRYABLE` / `ROLEPLAY_SUMMARY_NOT_RETRYABLE` | 当前任务不可人工重试 |
+| 409 | `AI_JOB_GENERATION_EXHAUSTED` | 任务 generation 已达到人工重试上限 |
 | 422 | `MIN_ROUNDS_NOT_REACHED` | 尚未完成一轮 |
 | 429 | `RATE_LIMITED` | 用户/IP 速率超限 |
 | 503 | `MODEL_NOT_CONFIGURED` / `MODEL_AUTH_FAILED` | 模型配置不可用 |
@@ -189,4 +192,4 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 
 ## 10. 兼容与安全边界
 
-现有成功响应数据结构和全部业务路径保持兼容。DeepSeek 请求地址、请求参数、Prompt、响应解析与模型调用内部重试逻辑未改变。生产环境必须设置 `PRODUCTION=true`、`AUTH_MODE=wechat`、HTTPS `ALLOWED_ORIGIN`、`REQUIRE_HTTPS=true` 和非空 `TRUSTED_PROXY_IPS`，并在 HTTPS 反向代理后运行；运行时密钥上传会自动关闭。程序只信任列表内代理提供的 `X-Forwarded-For` 和 `X-Forwarded-Proto`，配置或代理头无效时采用拒绝策略。
+现有成功响应数据结构和全部业务路径保持兼容。DeepSeek 请求地址、请求参数、响应解析与模型调用内部重试逻辑未改变；评分 Prompt 仅新增累计违规与医疗合规分的一致性约束，并记录为 `score-prompt-v3`。生产环境必须设置 `PRODUCTION=true`、`AUTH_MODE=wechat`、HTTPS `ALLOWED_ORIGIN`、`REQUIRE_HTTPS=true` 和非空 `TRUSTED_PROXY_IPS`，并在 HTTPS 反向代理后运行；运行时密钥上传会自动关闭。程序只信任列表内代理提供的 `X-Forwarded-For` 和 `X-Forwarded-Proto`，配置或代理头无效时采用拒绝策略。

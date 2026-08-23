@@ -13,9 +13,10 @@
    & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\002_roleplay.sql
    & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\003_reliability.sql
    & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\004_identity.sql
+   & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\005_pair_and_state_repair.sql
    ```
 
-   `003` 会完整归档历史重复轮次后建立唯一索引，回填回复状态，并为已有 `generating` 记录补任务；迁移本身不会调用模型。`004` 保留所有旧记录并归属到 `demo-user-001`。
+   `003` 会完整归档历史重复轮次后建立唯一索引，回填回复状态，并为已有 `generating` 记录补任务。`004` 保留所有旧记录并归属到 `demo-user-001`。`005` 按“最新回复 + 其之前最近一次输入”修复被拆开的历史问答，并补建完成会话缺失的报告或任务；被替换的消息、报告和任务状态都会归档。迁移本身不会调用模型，执行 `005` 时必须先停止后端。
 
 3. 构建并启动：
 
