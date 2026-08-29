@@ -7,6 +7,8 @@
     <text class="result-time">{{session.startedAt}} — {{session.finishedAt}}</text>
   </view>
 
+  <view class="notice-box"><text class="notice-icon">!</text><text>自动评分基于固定练习量表，仅用于辅助复盘，不替代专家审核、正式考核或医疗判断。</text></view>
+
   <view class="section-title-row"><text class="section-title">五维得分</text><text class="section-caption">按完整对话综合评价</text></view>
   <view class="dimensions-card card">
     <view class="dimension-item" wx:for="{{dimensions}}" wx:key="key">
@@ -50,6 +52,7 @@
   </view>
 
   <view class="result-actions"><button wx:if="{{nextScenario}}" class="primary-button" bindtap="startNextScenario">下一场：{{nextScenario.name}}</button><button wx:else class="primary-button" bindtap="restartTraining">重新训练</button><button class="secondary-button" bindtap="viewPhrases">查看话术锦囊</button><button class="secondary-button" bindtap="viewMistakes">进行错题复练</button><button class="text-button" bindtap="viewProfile">查看个人成长</button><button class="text-button" bindtap="viewHistory">查看历史记录</button></view>
+  <text class="disclaimer">AI 模拟训练，不构成医疗建议。</text>
 </view>
 
 <view class="page-shell result-page loading-result" wx:if="{{loading}}">
