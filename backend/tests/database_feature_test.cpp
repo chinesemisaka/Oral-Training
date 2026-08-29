@@ -82,7 +82,9 @@ int main() {
       tx.commit();
     }
 
-    ReliableDatabase database(database_url);
+    const auto database_pool = std::make_shared<DatabasePool>(
+        database_url, 4, std::chrono::milliseconds(3000));
+    ReliableDatabase database(database_pool);
     require(database.healthy(), "database health did not include the new feature tables");
     const auto scenarios = database.listScenarios(kLearnerId);
     require(!scenarios["items"].empty() && scenarios["items"][0].contains("category"),
