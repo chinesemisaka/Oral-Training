@@ -44,85 +44,7 @@ jobs:
       - name: Apply all migrations
         shell: pwsh
         run: |
-          Get-ChildItem -LiteralPath backend/migrations -Filter '*.sql' |
-            Where-Object { $_.Name -match '^\\d{3}_.*\\.sql
-            ForEach-Object {
-              Write-Host "Applying $($_.Name)"
-              & "$env:PGBIN\psql.exe" $env:DATABASE_URL -v ON_ERROR_STOP=1 -X -f $_.FullName
-              if ($LASTEXITCODE -ne 0) { throw "Migration failed: $($_.Name)" }
-            }
-
-      - name: Configure Visual Studio build
-        shell: pwsh
-        run: cmake -S backend -B backend/build-msvc -G 'Visual Studio 18 2026' -A x64 -T v143 -DPostgreSQL_ROOT="$env:PGROOT"
-
-      - name: Build Release
-        shell: pwsh
-        run: cmake --build backend/build-msvc --config Release --parallel 2
-
-      - name: Run CTest suite
-        shell: pwsh
-        run: ctest --test-dir backend/build-msvc -C Release --output-on-failure
-
-      - name: Validate empty, historical and repeated migrations
-        shell: pwsh
-        run: |
-          & ./backend/tests/migration_reliability.ps1 -DatabaseUrl $env:DATABASE_URL -PsqlPath "$env:PGBIN\psql.exe"
-
-      - name: Start backend
-        shell: pwsh
-        run: |
-          $process = Start-Process ./backend/build-msvc/Release/oral_training_backend.exe -RedirectStandardOutput backend-stdout.log -RedirectStandardError backend-stderr.log -PassThru
-          $process.Id | Set-Content backend.pid
-          for ($attempt = 0; $attempt -lt 60; $attempt++) {
-            try {
-              $response = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/health' -TimeoutSec 2
-              if ($response.code -eq 0 -and $response.data.database) { exit 0 }
-            } catch {}
-            Start-Sleep -Seconds 1
-          }
-          Get-Content backend-stdout.log -ErrorAction SilentlyContinue
-          Get-Content backend-stderr.log -ErrorAction SilentlyContinue
-          throw 'Backend did not become healthy.'
-
-      - name: Run API smoke without model
-        shell: pwsh
-        run: ./backend/tests/smoke.ps1
-
-      - name: Run controlled real-model smoke
-        if: env.DEEPSEEK_API_KEY != ''
-        shell: pwsh
-        run: ./backend/tests/smoke.ps1 -WithModel
-
-      - name: Run concurrency test
-        if: env.DEEPSEEK_API_KEY != ''
-        shell: pwsh
-        run: |
-          & ./backend/tests/concurrency.ps1 -DatabaseUrl $env:DATABASE_URL -PsqlPath "$env:PGBIN\psql.exe"
-
-      - name: Report unavailable model secret
-        if: env.DEEPSEEK_API_KEY == ''
-        shell: pwsh
-        run: Write-Warning 'DEEPSEEK_API_KEY is not configured; real-model and model concurrency checks were skipped.'
-
-      - name: Stop backend
-        if: always()
-        shell: pwsh
-        run: |
-          if (Test-Path backend.pid) {
-            Stop-Process -Id (Get-Content backend.pid) -Force -ErrorAction SilentlyContinue
-          }
-
-      - name: Upload backend logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-test-logs
-          path: |
-            backend-stdout.log
-            backend-stderr.log
-          if-no-files-found: ignore
- } |
+          Get-ChildItem -LiteralPath backend/migrations -Filter '0??_*.sql' |
             Sort-Object Name |
             ForEach-Object {
               Write-Host "Applying $($_.Name)"
@@ -130,9 +52,9 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "Migration failed: $($_.Name)" }
             }
 
-      - name: Configure Visual Studio build
+      - name: Configure MSVC v143 build
         shell: pwsh
-        run: cmake -S backend -B backend/build-msvc -G 'Visual Studio 17 2022' -A x64 -DPostgreSQL_ROOT="$env:PGROOT"
+        run: cmake -S backend -B backend/build-msvc -G 'Visual Studio 18 2026' -A x64 -T v143 -DPostgreSQL_ROOT="$env:PGROOT"
 
       - name: Build Release
         shell: pwsh
