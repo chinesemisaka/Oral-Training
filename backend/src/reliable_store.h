@@ -2106,4 +2106,3 @@ class AiJobQueue {
 
   std::shared_ptr<DatabasePool> database_pool_;
 };
-

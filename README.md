@@ -129,4 +129,3 @@ $env:ORAL_TRAINING_TEST_DATABASE_URL = 'postgresql://.../oral_training_test'
 最后在微信开发者工具手测：快速切换两种模式、断网恢复、回复 pending、30 秒结果页操作、续练、历史展开和数据页状态。
 
 接口、状态机和错误码见 [docs/api.md](docs/api.md)。
-

@@ -276,4 +276,3 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 ## 11. 兼容与安全边界
 
 现有成功响应数据结构和全部业务路径保持兼容。学员洞察字段在服务端对已规范化报告进行派生；DeepSeek 请求地址、请求参数、响应解析与模型调用内部重试逻辑未改变，评分 Prompt 仅新增累计违规与医疗合规分的一致性约束并记录为 `score-prompt-v3`。生产环境必须设置 `PRODUCTION=true`、`AUTH_MODE=wechat`、HTTPS `ALLOWED_ORIGIN`、`REQUIRE_HTTPS=true` 和非空 `TRUSTED_PROXY_IPS`，并在 HTTPS 反向代理后运行；运行时密钥上传会自动关闭。程序只信任列表内代理提供的 `X-Forwarded-For` 和 `X-Forwarded-Proto`，配置或代理头无效时采用拒绝策略。
-

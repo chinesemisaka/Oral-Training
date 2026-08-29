@@ -307,4 +307,3 @@ int main() {
   std::cout << "report validation tests passed\n";
   return 0;
 }
-

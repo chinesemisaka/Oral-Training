@@ -95,4 +95,3 @@ if(MSVC)
   target_compile_definitions(security_config_test PRIVATE _WIN32_WINNT=0x0A00)
   target_compile_definitions(database_feature_test PRIVATE _WIN32_WINNT=0x0A00)
 endif()
-

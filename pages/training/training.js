@@ -225,4 +225,3 @@ Page({
 
   scrollToBottom() { this.setData({ scrollToView: 'message-bottom' }); }
 });
-

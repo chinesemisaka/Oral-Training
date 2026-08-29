@@ -245,4 +245,3 @@ class IdentityService {
   SlidingWindowRateLimiter limiter_;
   SlidingWindowRateLimiter login_limiter_;
 };
-

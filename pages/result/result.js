@@ -257,4 +257,3 @@ Page({
     }).catch(error => wx.showToast({ title: error.message || '创建下一场训练失败', icon: 'none' }));
   }
 });
-

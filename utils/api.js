@@ -151,4 +151,3 @@ module.exports = {
   checkIn: () => request('/learning/checkins', { method: 'POST', data: {} }),
   getSupervisorDashboard: params => request(`/supervisor/dashboard?${query(params || {})}`)
 };
-
