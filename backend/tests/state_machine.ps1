@@ -49,7 +49,7 @@ function Assert-ApiCode {
 
 function Invoke-Sql {
   param([string]$Sql)
-  $output = & $PsqlPath $DatabaseUrl -v ON_ERROR_STOP=1 -X -Atc $Sql
+  $output = & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -Atc $Sql
   if ($LASTEXITCODE -ne 0) { throw 'SQL assertion/setup failed.' }
   ($output -join "`n").Trim()
 }
