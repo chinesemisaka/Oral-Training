@@ -132,13 +132,13 @@ try {
   } | Sort-Object -Unique)
   if ($trainingIds.Count -gt 0) {
     $quotedIds = ($trainingIds | ForEach-Object { "'$_'" }) -join ','
-    & $PsqlPath $DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "DELETE FROM sessions WHERE id IN ($quotedIds);"
+    & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "DELETE FROM sessions WHERE id IN ($quotedIds);"
   }
   $roleplayIds = @($roleplayResults | Where-Object { $_.Status -eq 201 } | ForEach-Object {
     ($_.Body | ConvertFrom-Json).data.session.id
   } | Sort-Object -Unique)
   if ($roleplayIds.Count -gt 0) {
     $quotedIds = ($roleplayIds | ForEach-Object { "'$_'" }) -join ','
-    & $PsqlPath $DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "DELETE FROM roleplay_sessions WHERE id IN ($quotedIds);"
+    & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "DELETE FROM roleplay_sessions WHERE id IN ($quotedIds);"
   }
 }
