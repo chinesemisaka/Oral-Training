@@ -49,14 +49,21 @@ function Assert-ApiCode {
 
 function Invoke-Sql {
   param([string]$Sql)
-  $output = & $PsqlPath $DatabaseUrl -v ON_ERROR_STOP=1 -X -Atc $Sql
+  $output = & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -Atc $Sql
   if ($LASTEXITCODE -ne 0) { throw 'SQL assertion/setup failed.' }
   ($output -join "`n").Trim()
 }
 
 try {
   $health = Invoke-TestApi GET '/health' $null
-  Assert-ApiCode $health 200 0
+  Assert-ApiCode $health 503 0
+  if ($health.Payload.data.ready -or $health.Payload.data.status -ne 'unhealthy' -or
+      -not $health.Payload.data.database -or -not $health.Payload.data.workerRunning -or
+      $health.Payload.data.workersInDatabaseBackoff -ne 0 -or
+      $health.Payload.data.databasePool.maximum -lt 4 -or
+      $health.Payload.data.databasePool.open -gt $health.Payload.data.databasePool.maximum) {
+    throw 'Health endpoint did not isolate the missing model from other healthy components.'
+  }
   if ($health.Payload.data.modelConfigured) {
     throw 'Refusing state-machine test while a model key is configured.'
   }

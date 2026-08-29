@@ -26,6 +26,8 @@ void setValidProductionEnvironment() {
   setEnvironment("TRUSTED_PROXY_IPS", "127.0.0.1, ::1");
   setEnvironment("RATE_LIMIT_PER_MINUTE", "120");
   setEnvironment("AI_WORKER_CONCURRENCY", "1");
+  setEnvironment("DATABASE_POOL_SIZE", "12");
+  setEnvironment("DATABASE_POOL_WAIT_MS", "3000");
 }
 
 template <typename Function>
@@ -44,8 +46,17 @@ int main() {
   setValidProductionEnvironment();
   const auto production = Config::fromEnvironment();
   if (!production.production || production.auth_mode != "wechat" ||
-      !production.require_https || production.trusted_proxy_ips.size() != 2) {
+      !production.require_https || production.trusted_proxy_ips.size() != 2 ||
+      production.database_pool_size != 12 || production.database_pool_wait_ms != 3000) {
     std::cerr << "valid production configuration was not accepted\n";
+    return 1;
+  }
+
+  setValidProductionEnvironment();
+  setEnvironment("AI_WORKER_CONCURRENCY", "4");
+  setEnvironment("DATABASE_POOL_SIZE", "5");
+  if (!throwsRuntimeError([] { (void)Config::fromEnvironment(); })) {
+    std::cerr << "undersized database pool was accepted\n";
     return 1;
   }
 
@@ -104,6 +115,23 @@ int main() {
     return 1;
   } catch (const ApiError& error) {
     if (error.code != "FORWARDED_HEADER_INVALID") throw;
+  }
+
+  if (!workerStateHealthy(false, 2, 2, 0) ||
+      workerStateHealthy(false, 2, 1, 0) ||
+      workerStateHealthy(false, 2, 2, 1) ||
+      workerStateHealthy(true, 2, 2, 0)) {
+    std::cerr << "worker health state is incorrect\n";
+    return 1;
+  }
+  if (!serviceReady(true, true, true, true) ||
+      serviceReady(false, true, true, true) ||
+      serviceReady(true, false, true, true) ||
+      serviceReady(true, true, false, true) ||
+      serviceReady(true, true, true, false) ||
+      healthStatusCode(true) != 200 || healthStatusCode(false) != 503) {
+    std::cerr << "service readiness state is incorrect\n";
+    return 1;
   }
 
   std::cout << "security configuration tests passed\n";

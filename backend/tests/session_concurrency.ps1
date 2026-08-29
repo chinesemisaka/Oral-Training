@@ -27,6 +27,20 @@ function Invoke-JsonApi {
   (Invoke-RestMethod @arguments).data
 }
 
+function Invoke-Health {
+  $client = [System.Net.Http.HttpClient]::new()
+  try {
+    $response = $client.GetAsync("$BaseUrl/health").GetAwaiter().GetResult()
+    $payload = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
+    if ([int]$response.StatusCode -notin @(200, 503) -or $payload.code -ne 0) {
+      throw "Health API failed: HTTP $([int]$response.StatusCode) / $($payload.code)"
+    }
+    return $payload.data
+  } finally {
+    $client.Dispose()
+  }
+}
+
 function Invoke-ConcurrentCreate {
   param([string]$Url, [string]$Token, [string]$ScenarioId)
   $script:jobs = 1..20 | ForEach-Object {
@@ -95,9 +109,19 @@ try {
   $roleplayResults = Invoke-ConcurrentCreate "$BaseUrl/roleplay/sessions" $token $roleplayScenario.id
   $roleplaySessionId = Assert-CreateResults $roleplayResults 'ROLEPLAY_SESSION_IN_PROGRESS'
 
+  $health = Invoke-Health
+  if (-not $health.database -or -not $health.workerRunning -or
+      $health.databasePool.maximum -lt 4 -or
+      $health.databasePool.open -gt $health.databasePool.maximum -or
+      $health.databasePool.waiting -ne 0) {
+    throw 'Connection pool was not healthy and bounded after concurrent requests.'
+  }
+
   [pscustomobject]@{
     Result = 'passed'
     RequestsPerMode = 20
+    PoolMaximum = $health.databasePool.maximum
+    PoolOpen = $health.databasePool.open
     TrainingSessionId = $trainingSessionId
     RoleplaySessionId = $roleplaySessionId
   } | ConvertTo-Json -Compress
@@ -108,13 +132,13 @@ try {
   } | Sort-Object -Unique)
   if ($trainingIds.Count -gt 0) {
     $quotedIds = ($trainingIds | ForEach-Object { "'$_'" }) -join ','
-    & $PsqlPath $DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "DELETE FROM sessions WHERE id IN ($quotedIds);"
+    & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "DELETE FROM sessions WHERE id IN ($quotedIds);"
   }
   $roleplayIds = @($roleplayResults | Where-Object { $_.Status -eq 201 } | ForEach-Object {
     ($_.Body | ConvertFrom-Json).data.session.id
   } | Sort-Object -Unique)
   if ($roleplayIds.Count -gt 0) {
     $quotedIds = ($roleplayIds | ForEach-Object { "'$_'" }) -join ','
-    & $PsqlPath $DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "DELETE FROM roleplay_sessions WHERE id IN ($quotedIds);"
+    & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "DELETE FROM roleplay_sessions WHERE id IN ($quotedIds);"
   }
 }

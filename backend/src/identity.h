@@ -111,8 +111,9 @@ class SlidingWindowRateLimiter {
 
 class IdentityService {
  public:
-  explicit IdentityService(Config config)
-      : config_(std::move(config)), limiter_(config_.rate_limit_per_minute),
+  IdentityService(Config config, std::shared_ptr<DatabasePool> database_pool)
+      : config_(std::move(config)), database_pool_(std::move(database_pool)),
+        limiter_(config_.rate_limit_per_minute),
         login_limiter_(std::max(10, config_.rate_limit_per_minute / 4)) {}
 
   json login(const crow::request& request, const std::string& code) {
@@ -145,8 +146,8 @@ class IdentityService {
     }
     const auto token = authorization.substr(sizeof(prefix) - 1);
     if (token.size() < 32 || token.size() > 256) throw ApiError(401, "AUTH_INVALID", "登录状态无效");
-    pqxx::connection connection(config_.database_url);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto rows = tx.exec_params(R"(
       SELECT users.id, users.role, users.display_name
       FROM auth_sessions JOIN users ON users.id = auth_sessions.user_id
@@ -208,8 +209,8 @@ class IdentityService {
     const auto openid = jsonString(payload, "openid");
     if (openid.empty()) throw ApiError(401, "WECHAT_LOGIN_FAILED", "微信登录未返回用户标识");
     const auto user_id = "wx_" + sha256Hex(openid).substr(0, 32);
-    pqxx::connection connection(config_.database_url);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto rows = tx.exec_params(R"(
       INSERT INTO users(id, wechat_openid, display_name, role, status)
       VALUES ($1, $2, '微信用户', 'learner', 'active')
@@ -223,8 +224,8 @@ class IdentityService {
 
   json createSession(const std::string& user_id) const {
     const auto token = randomToken();
-    pqxx::connection connection(config_.database_url);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     tx.exec("DELETE FROM auth_sessions WHERE expires_at <= NOW()");
     tx.exec_params(R"(
       INSERT INTO auth_sessions(token_hash, user_id, expires_at)
@@ -240,6 +241,7 @@ class IdentityService {
   }
 
   Config config_;
+  std::shared_ptr<DatabasePool> database_pool_;
   SlidingWindowRateLimiter limiter_;
   SlidingWindowRateLimiter login_limiter_;
 };

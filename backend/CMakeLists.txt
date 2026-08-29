@@ -73,6 +73,7 @@ target_compile_definitions(security_config_test PRIVATE WIN32_LEAN_AND_MEAN NOMI
 enable_testing()
 add_test(NAME report_validation COMMAND report_validation_test)
 add_test(NAME security_config COMMAND security_config_test)
+add_test(NAME client_recovery COMMAND node ${CMAKE_CURRENT_SOURCE_DIR}/tests/client_recovery_test.js)
 add_test(
   NAME client_static_checks
   COMMAND powershell -NoProfile -ExecutionPolicy Bypass

@@ -31,7 +31,7 @@ function Invoke-Psql {
 }
 
 try {
-  & $PsqlPath $DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "CREATE SCHEMA $emptySchema; CREATE SCHEMA $historySchema;"
+  & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "CREATE SCHEMA $emptySchema; CREATE SCHEMA $historySchema;"
   if ($LASTEXITCODE -ne 0) { throw 'Failed to create disposable schemas.' }
 
   foreach ($schema in @($emptySchema, $historySchema)) {
@@ -148,6 +148,6 @@ END $$;
 } finally {
   $env:PGOPTIONS = $previousOptions
   if (-not $KeepSchemas) {
-    & $PsqlPath $DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "DROP SCHEMA IF EXISTS $emptySchema CASCADE; DROP SCHEMA IF EXISTS $historySchema CASCADE;"
+    & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "DROP SCHEMA IF EXISTS $emptySchema CASCADE; DROP SCHEMA IF EXISTS $historySchema CASCADE;"
   }
 }

@@ -60,16 +60,29 @@ Content-Type: application/json
 
 ```json
 {
+  "status":"healthy",
+  "ready":true,
   "database":true,
   "modelConfigured":true,
   "workerRunning":true,
+  "workerThreads":1,
+  "workersInDatabaseBackoff":0,
   "pendingJobs":0,
   "deadJobs":0,
+  "databasePool":{
+    "maximum":12,
+    "open":3,
+    "idle":3,
+    "inUse":0,
+    "waiting":0
+  },
   "runtimeApiKeyAllowed":false,
   "authMode":"wechat",
   "production":true
 }
 ```
+
+数据库、任务队列、模型或 Worker 不可用时返回 HTTP 503，`ready=false` 且 `status=unhealthy`。Worker 进入数据库错误退避期间不会再被报告为健康。小程序仍会读取健康响应中的 `runtimeApiKeyAllowed`，因此本地演示可在模型未配置时打开密钥配置入口；负载均衡器则会正确识别该实例尚未就绪。连接池等待超时时，普通接口返回 HTTP 503 `DATABASE_BUSY`。
 
 ## 4. 客服训练
 
@@ -98,6 +111,7 @@ Content-Type: application/json
 - 首个请求领取 180 秒回复生成租约。租约有效时，并发请求返回 `409 SESSION_RESPONSE_PENDING`，不会发起第二次模型调用。
 - 模型失败或租约过期后，只有相同 ID 和内容可以重新领取。
 - `GET /sessions/{id}` 的 `pendingMessage` 包含 `clientMessageId`、`content`、`round`、`replyStatus`；前端应轮询会话，并在超时后保留原 ID 和输入。
+- 小程序普通请求超时为 30 秒；两类逐轮模型消息请求单独使用 120 秒，覆盖后端最多两次分阶段模型调用。请求中断后的恢复仍使用原 `clientMessageId`。
 
 最后一轮的患者回复、输入状态 `ready`、会话 `completed`、评分 `generating` 和任务入队在同一数据库事务内提交。
 
@@ -157,6 +171,8 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 
 已完成会话的结束接口和报告轮询都会核对业务状态、报告行与任务行。缺失状态会在同一事务中补建，终态但无报告的任务会开启新 generation；达到 generation 上限时返回明确失败状态，不会永久停留在 `generating`。
 
+小程序收到 `not_started` 时不会无限轮询：已完成会话会重新调用幂等结束接口恢复任务，进行中会话返回训练页，已放弃会话返回历史记录。训练、患者模拟及两个结果页缺少 `sessionId` 时都会明确提示并安全导航。
+
 ## 8. 看板
 
 ### `GET /dashboard/summary`
@@ -186,6 +202,7 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | 409 | `AI_JOB_GENERATION_EXHAUSTED` | 任务 generation 已达到人工重试上限 |
 | 422 | `MIN_ROUNDS_NOT_REACHED` | 尚未完成一轮 |
 | 429 | `RATE_LIMITED` | 用户/IP 速率超限 |
+| 503 | `DATABASE_BUSY` | 数据库连接池已满且等待超时 |
 | 503 | `MODEL_NOT_CONFIGURED` / `MODEL_AUTH_FAILED` | 模型配置不可用 |
 | 503 | `MODEL_TIMEOUT` / `MODEL_RATE_LIMITED` / `MODEL_ERROR` | 模型瞬时错误 |
 | 503 | `MODEL_INVALID_RESPONSE` / `MODEL_SCORE_INCONSISTENT` | 模型结果无效或评分矛盾 |

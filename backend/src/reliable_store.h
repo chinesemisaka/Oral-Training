@@ -70,12 +70,13 @@ inline bool ensureAiJob(pqxx::transaction_base& tx, const std::string& type,
 
 class ReliableDatabase {
  public:
-  explicit ReliableDatabase(std::string database_url) : database_url_(std::move(database_url)) {}
+  explicit ReliableDatabase(std::shared_ptr<DatabasePool> database_pool)
+      : database_pool_(std::move(database_pool)) {}
 
   bool healthy() const {
     try {
-      pqxx::connection connection(database_url_);
-      pqxx::read_transaction tx(connection);
+      auto connection = database_pool_->acquire();
+      pqxx::read_transaction tx(connection.get());
       const auto row = tx.exec(R"(
         SELECT to_regclass('ai_jobs') IS NOT NULL AS jobs_ready,
           to_regclass('users') IS NOT NULL AS users_ready,
@@ -89,8 +90,8 @@ class ReliableDatabase {
   }
 
   json listScenarios(const std::string& user_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params(R"(
       SELECT s.id, s.name, s.summary, s.difficulty, s.focus, s.patient_profile, s.max_rounds,
         COALESCE(best.best_score, 0) AS best_score,
@@ -130,8 +131,8 @@ class ReliableDatabase {
   }
 
   json createSession(const std::string& user_id, const std::string& scenario_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto scenario = tx.exec_params("SELECT * FROM scenarios WHERE id = $1", scenario_id);
     if (scenario.empty()) throw ApiError(404, "SCENARIO_NOT_FOUND", "训练场景不存在");
     const auto& row = scenario[0];
@@ -164,8 +165,8 @@ class ReliableDatabase {
   }
 
   json restartSession(const std::string& user_id, const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto previous = tx.exec_params(
         "SELECT scenario_id, status FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
         session_id, user_id);
@@ -201,8 +202,8 @@ class ReliableDatabase {
   }
 
   json getSession(const std::string& user_id, const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const auto session = getSessionRow(tx, session_id, user_id);
     const auto rows = tx.exec_params(R"(
       SELECT id, role, content, round,
@@ -229,8 +230,8 @@ class ReliableDatabase {
   }
 
   json getSessionInternal(const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     return {{"session", getSessionRow(tx, session_id, "")}};
   }
 
@@ -241,8 +242,8 @@ class ReliableDatabase {
       throw ApiError(400, "INVALID_ARGUMENT", "status 参数无效");
     }
     limit = clampInt(limit, 1, 50);
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     std::string query = "SELECT id, scenario_id, scenario_name, status, current_round, max_rounds, " +
         std::string(kSessionTimes) + ", total_score, evaluation_status FROM sessions WHERE user_id = " +
         tx.quote(user_id);
@@ -256,8 +257,8 @@ class ReliableDatabase {
   }
 
   json getScenarioInternal(const std::string& scenario_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params(
         "SELECT id, name, summary, difficulty, focus, patient_profile, hidden_config, max_rounds "
         "FROM scenarios WHERE id = $1", scenario_id);
@@ -272,8 +273,8 @@ class ReliableDatabase {
   }
 
   json getHistory(const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params(
         "SELECT role, content, round FROM messages WHERE session_id = $1 ORDER BY round, created_at",
         session_id);
@@ -286,8 +287,8 @@ class ReliableDatabase {
   }
 
   json getPatientState(const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params("SELECT patient_state FROM sessions WHERE id = $1", session_id);
     if (rows.empty()) throw ApiError(404, "SESSION_NOT_FOUND", "训练会话不存在");
     return json::parse(rows[0]["patient_state"].c_str());
@@ -303,8 +304,8 @@ class ReliableDatabase {
     if (content_length < 1 || content_length > 1000) {
       throw ApiError(400, "INVALID_ARGUMENT", "消息长度应为 1 到 1000 个字符");
     }
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto session = tx.exec_params(
         "SELECT status, current_round, max_rounds FROM sessions "
         "WHERE id = $1 AND user_id = $2 FOR UPDATE", session_id, user_id);
@@ -386,8 +387,8 @@ class ReliableDatabase {
   void markReplyFailed(const std::string& session_id, int round, const std::string& token,
                        const std::string& error_type) const noexcept {
     try {
-      pqxx::connection connection(database_url_);
-      pqxx::work tx(connection);
+      auto connection = database_pool_->acquire();
+      pqxx::work tx(connection.get());
       tx.exec_params(R"(
         UPDATE messages SET reply_status = 'failed', reply_lease_until = NULL,
           reply_attempt_token = NULL, reply_error_type = $4
@@ -407,8 +408,8 @@ class ReliableDatabase {
     if (reply_length < 1 || reply_length > 1000) {
       throw ApiError(503, "MODEL_INVALID_RESPONSE", "模型未返回有效患者回复");
     }
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto session_rows = tx.exec_params(
         "SELECT * FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE", session_id, user_id);
     if (session_rows.empty()) throw ApiError(404, "SESSION_NOT_FOUND", "训练会话不存在");
@@ -488,8 +489,8 @@ class ReliableDatabase {
   }
 
   json finish(const std::string& user_id, const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto rows = tx.exec_params(R"(
       SELECT status, current_round, evaluation_status
       FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE
@@ -527,8 +528,8 @@ class ReliableDatabase {
   }
 
   void retryEvaluation(const std::string& user_id, const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto rows = tx.exec_params(
         "SELECT status, evaluation_status FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
         session_id, user_id);
@@ -552,8 +553,8 @@ class ReliableDatabase {
   }
 
   json getEvaluation(const std::string& user_id, const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto session = tx.exec_params(
         "SELECT status, evaluation_status FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
         session_id, user_id);
@@ -589,8 +590,8 @@ class ReliableDatabase {
     report["totalScore"] = clampInt(total, 0, 100);
     report["modelVersion"] = model_version;
     report["promptVersion"] = "score-prompt-v3";
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto owned = tx.exec_params(R"(
       SELECT 1 FROM ai_jobs WHERE id = $1 AND status = 'running' AND target_id = $2
         AND generation = $3 AND attempts = $4 AND lease_until > NOW() FOR UPDATE
@@ -612,8 +613,8 @@ class ReliableDatabase {
   }
 
   json dashboard(const std::string& user_id, bool institution_aggregate) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const std::string filter = institution_aggregate ? "" : " WHERE user_id = " + tx.quote(user_id);
     const auto totals = tx.exec(R"(
       SELECT COUNT(*) FILTER (WHERE status <> 'abandoned') AS total_sessions,
@@ -764,16 +765,17 @@ class ReliableDatabase {
     )", job.id);
   }
 
-  std::string database_url_;
+  std::shared_ptr<DatabasePool> database_pool_;
 };
 
 class ReliableRoleplayDatabase {
  public:
-  explicit ReliableRoleplayDatabase(std::string database_url) : database_url_(std::move(database_url)) {}
+  explicit ReliableRoleplayDatabase(std::shared_ptr<DatabasePool> database_pool)
+      : database_pool_(std::move(database_pool)) {}
 
   json listScenarios(const std::string& user_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params(R"(
       SELECT s.id, s.name, s.summary, s.difficulty, s.focus, s.patient_profile,
         s.max_rounds, s.roleplay_config,
@@ -816,8 +818,8 @@ class ReliableRoleplayDatabase {
   }
 
   json createSession(const std::string& user_id, const std::string& scenario_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto scenario = tx.exec_params(
         "SELECT id, name, max_rounds FROM scenarios WHERE id = $1", scenario_id);
     if (scenario.empty()) throw ApiError(404, "SCENARIO_NOT_FOUND", "训练场景不存在");
@@ -839,8 +841,8 @@ class ReliableRoleplayDatabase {
   }
 
   json restartSession(const std::string& user_id, const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto previous = tx.exec_params(R"(
       SELECT scenario_id, status FROM roleplay_sessions
       WHERE id = $1 AND user_id = $2 FOR UPDATE
@@ -870,8 +872,8 @@ class ReliableRoleplayDatabase {
   }
 
   json getSession(const std::string& user_id, const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const auto session = getSessionRow(tx, session_id, user_id);
     const auto rows = tx.exec_params(R"(
       SELECT id, role, content, learning_points, compliance_boundary, round,
@@ -898,8 +900,8 @@ class ReliableRoleplayDatabase {
   }
 
   json getSessionInternal(const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     return {{"session", getSessionRow(tx, session_id, "")}};
   }
 
@@ -910,8 +912,8 @@ class ReliableRoleplayDatabase {
       throw ApiError(400, "INVALID_ARGUMENT", "status 参数无效");
     }
     limit = clampInt(limit, 1, 50);
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     std::string query =
         "SELECT r.id, r.scenario_id, r.scenario_name, r.status, r.current_round, r.max_rounds, " +
         std::string(kRoleplaySessionTimes) +
@@ -928,8 +930,8 @@ class ReliableRoleplayDatabase {
   }
 
   json getScenarioInternal(const std::string& scenario_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params(R"(
       SELECT id, name, summary, difficulty, focus, patient_profile, max_rounds, roleplay_config
       FROM scenarios WHERE id = $1
@@ -948,8 +950,8 @@ class ReliableRoleplayDatabase {
   }
 
   json getHistory(const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params(R"(
       SELECT role, content, round FROM roleplay_messages
       WHERE session_id = $1 ORDER BY round, created_at
@@ -972,8 +974,8 @@ class ReliableRoleplayDatabase {
     if (content_length < 1 || content_length > 1000) {
       throw ApiError(400, "INVALID_ARGUMENT", "消息长度应为 1 到 1000 个字符");
     }
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto session = tx.exec_params(R"(
       SELECT status, current_round, max_rounds FROM roleplay_sessions
       WHERE id = $1 AND user_id = $2 FOR UPDATE
@@ -1073,8 +1075,8 @@ class ReliableRoleplayDatabase {
   void markReplyFailed(const std::string& session_id, int round, const std::string& token,
                        const std::string& error_type) const noexcept {
     try {
-      pqxx::connection connection(database_url_);
-      pqxx::work tx(connection);
+      auto connection = database_pool_->acquire();
+      pqxx::work tx(connection.get());
       tx.exec_params(R"(
         UPDATE roleplay_messages SET reply_status = 'failed', reply_lease_until = NULL,
           reply_attempt_token = NULL, reply_error_type = $4
@@ -1098,8 +1100,8 @@ class ReliableRoleplayDatabase {
         utf8Length(boundary) > 300) {
       throw ApiError(503, "MODEL_INVALID_RESPONSE", "模型未返回有效标准客服回复");
     }
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto session_rows = tx.exec_params(R"(
       SELECT * FROM roleplay_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE
     )", session_id, user_id);
@@ -1169,8 +1171,8 @@ class ReliableRoleplayDatabase {
   }
 
   json finish(const std::string& user_id, const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto rows = tx.exec_params(R"(
       SELECT r.status, r.current_round, summary.status AS summary_status
       FROM roleplay_sessions r
@@ -1214,8 +1216,8 @@ class ReliableRoleplayDatabase {
   }
 
   void retrySummary(const std::string& user_id, const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto rows = tx.exec_params(R"(
       SELECT r.status, summary.status AS summary_status
       FROM roleplay_sessions r LEFT JOIN roleplay_summaries summary ON summary.session_id = r.id
@@ -1239,8 +1241,8 @@ class ReliableRoleplayDatabase {
   }
 
   json getSummary(const std::string& user_id, const std::string& session_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto session = tx.exec_params(
         "SELECT status FROM roleplay_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
         session_id, user_id);
@@ -1268,8 +1270,8 @@ class ReliableRoleplayDatabase {
   void saveSummary(const AiJob& job, json summary, const std::string& model_version) const {
     summary["modelVersion"] = model_version;
     summary["promptVersion"] = "roleplay-summary-prompt-v1";
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto owned = tx.exec_params(R"(
       SELECT 1 FROM ai_jobs WHERE id = $1 AND status = 'running' AND target_id = $2
         AND generation = $3 AND attempts = $4 AND lease_until > NOW() FOR UPDATE
@@ -1369,16 +1371,17 @@ class ReliableRoleplayDatabase {
     return roleplaySessionJson(rows[0]);
   }
 
-  std::string database_url_;
+  std::shared_ptr<DatabasePool> database_pool_;
 };
 
 class AiJobQueue {
  public:
-  explicit AiJobQueue(std::string database_url) : database_url_(std::move(database_url)) {}
+  explicit AiJobQueue(std::shared_ptr<DatabasePool> database_pool)
+      : database_pool_(std::move(database_pool)) {}
 
   std::optional<AiJob> claim(const std::string& worker_id) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     markExhaustedLeases(tx);
     const auto rows = tx.exec_params(R"(
       WITH candidate AS (
@@ -1418,8 +1421,8 @@ class AiJobQueue {
   }
 
   bool renewLease(const AiJob& job) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto renewed = tx.exec_params(R"(
       UPDATE ai_jobs SET lease_until = NOW() + ($5 * INTERVAL '1 second'), updated_at = NOW()
       WHERE id = $1 AND status = 'running' AND target_id = $2
@@ -1432,8 +1435,8 @@ class AiJobQueue {
 
   void fail(const AiJob& job, const std::string& error_type,
             const std::string& error_message, bool retryable) const {
-    pqxx::connection connection(database_url_);
-    pqxx::work tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::work tx(connection.get());
     const auto rows = tx.exec_params(
         "SELECT attempts, max_attempts, job_type, target_id FROM ai_jobs "
         "WHERE id = $1 AND status = 'running' AND generation = $2 AND attempts = $3 FOR UPDATE",
@@ -1473,8 +1476,8 @@ class AiJobQueue {
   }
 
   json stats() const {
-    pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
     const auto row = tx.exec(R"(
       SELECT COUNT(*) FILTER (WHERE status IN ('pending', 'running', 'retry_wait')) AS pending_jobs,
         COUNT(*) FILTER (WHERE status = 'dead') AS dead_jobs FROM ai_jobs
@@ -1530,5 +1533,5 @@ class AiJobQueue {
     }
   }
 
-  std::string database_url_;
+  std::shared_ptr<DatabasePool> database_pool_;
 };
