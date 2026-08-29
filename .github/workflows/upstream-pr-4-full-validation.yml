@@ -16,7 +16,7 @@ concurrency:
 jobs:
   windows-full:
     name: Windows MSVC, PostgreSQL and API
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 60
     env:
       PGPASSWORD: root
@@ -54,7 +54,7 @@ jobs:
 
       - name: Configure Visual Studio build
         shell: pwsh
-        run: cmake -S backend -B backend/build-msvc -G 'Visual Studio 17 2022' -A x64 -DPostgreSQL_ROOT="$env:PGROOT"
+        run: cmake -S backend -B backend/build-msvc -G 'Visual Studio 18 2026' -A x64 -T v143 -DPostgreSQL_ROOT="$env:PGROOT"
 
       - name: Build Release
         shell: pwsh
