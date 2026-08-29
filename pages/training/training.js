@@ -1,202 +1,186 @@
-const request = require('../../static/api/request.js');
-const util = require('../../utils/util.js');
+const api = require('../../utils/api.js');
+
+const normalizeScenario = item => Object.assign({}, item, {
+  patientAge: `${item.patientProfile.age}岁`,
+  patientConcern: item.patientProfile.description,
+  patientEmotion: '需通过对话了解'
+});
+
+const normalizeMessages = messages => messages.map(message => Object.assign({}, message, {
+  time: message.createdAt || ''
+}));
 
 Page({
   data: {
-    sessionId: '',
-    scenarioId: '',
-    scenarioName: 'AI 模拟患者',
-    patientProfile: '',
+    session: null,
+    scenario: null,
     messages: [],
+    inputValue: '',
     currentRound: 0,
     maxRounds: 10,
-    remainingRounds: 10,
-    inputValue: '',
     scrollToView: '',
-    loading: true,
     sending: false,
     finishing: false,
-    isTrainingEnd: false,
-    errorMessage: ''
+    pendingClientMessageId: ''
   },
 
-  pendingMessage: null,
+  sessionId: '',
+  pendingPollTimer: null,
+
+  onUnload() { if (this.pendingPollTimer) clearTimeout(this.pendingPollTimer); },
 
   onLoad(options) {
-    const sessionId = options.sessionId || '';
-    const scenarioId = options.scenarioId || '';
-    this.setData({ sessionId, scenarioId });
-
-    if (sessionId) {
-      this.loadSession();
-    } else if (scenarioId) {
-      this.createSession();
-    } else {
-      this.setData({ loading: false, errorMessage: '缺少训练会话信息' });
+    this.sessionId = options.sessionId || '';
+    if (!this.sessionId) {
+      this.handleMissingSession();
+      return;
     }
+    this.loadSession();
   },
 
-  sessionPath(suffix = '') {
-    return `/sessions/${encodeURIComponent(this.data.sessionId)}${suffix}`;
-  },
-
-  async createSession() {
-    try {
-      const data = await request.post('/sessions', {
-        scenarioId: this.data.scenarioId
-      });
-      if (!data || !data.session || !data.session.id) {
-        throw new Error('服务端未返回有效训练会话');
-      }
-      this.setData({ sessionId: data.session.id });
-      this.applySessionData(data);
-      this.loadScenarioProfile(this.data.scenarioId);
-    } catch (error) {
-      this.setData({
-        loading: false,
-        errorMessage: request.getErrorMessage(error, '创建训练失败')
-      });
-    }
-  },
-
-  async loadSession() {
-    try {
-      const data = await request.get(this.sessionPath());
-      this.applySessionData(data);
-      if (data && data.session) {
-        this.loadScenarioProfile(data.session.scenarioId);
-      }
-    } catch (error) {
-      this.setData({
-        loading: false,
-        errorMessage: request.getErrorMessage(error, '训练会话加载失败')
-      });
-    }
-  },
-
-  async loadScenarioProfile(scenarioId) {
-    try {
-      const data = await request.get('/scenarios');
-      const scenario = (data.items || []).find(item => String(item.id) === String(scenarioId));
-      if (scenario && scenario.patientProfile) {
-        this.setData({
-          scenarioName: scenario.name,
-          patientProfile: `${scenario.patientProfile.age}岁 · ${scenario.patientProfile.description}`
-        });
-      }
-    } catch (error) {
-      console.warn('加载场景公开信息失败', error);
-    }
-  },
-
-  applySessionData(data) {
-    const session = data.session || {};
-    const messages = Array.isArray(data.messages) ? data.messages : [];
-    const currentRound = session.currentRound || 0;
-    const maxRounds = session.maxRounds || 10;
-
-    this.setData({
-      loading: false,
-      scenarioId: session.scenarioId || this.data.scenarioId,
-      scenarioName: session.scenarioName || this.data.scenarioName,
-      messages,
-      currentRound,
-      maxRounds,
-      remainingRounds: Math.max(maxRounds - currentRound, 0),
-      isTrainingEnd: session.status !== 'in_progress',
-      errorMessage: ''
-    }, () => {
-      this.setData({ scrollToView: 'msg-bottom' });
+  handleMissingSession() {
+    wx.showModal({
+      title: '无法打开训练',
+      content: '页面链接缺少会话信息，请从场景列表重新进入。',
+      showCancel: false,
+      success: () => wx.switchTab({ url: '/pages/index/index' })
     });
   },
 
-  onInputChange(e) {
-    this.setData({ inputValue: e.detail.value });
+  loadSession() {
+    Promise.all([api.getSession(this.sessionId), api.getScenarios()]).then(([detail, scenarioData]) => {
+      const scenario = scenarioData.items.find(item => item.id === detail.session.scenarioId);
+      if (!scenario) throw new Error('训练场景不存在');
+      const pendingMessage = detail.pendingMessage || null;
+      this.setData({
+        session: detail.session,
+        scenario: normalizeScenario(scenario),
+        messages: normalizeMessages(detail.messages),
+        pendingClientMessageId: pendingMessage ? pendingMessage.clientMessageId : '',
+        inputValue: pendingMessage ? pendingMessage.content : this.data.inputValue,
+        currentRound: detail.session.currentRound,
+        maxRounds: detail.session.maxRounds,
+        finishing: detail.session.status === 'completed'
+      }, () => {
+        this.scrollToBottom();
+        if (pendingMessage && pendingMessage.replyStatus === 'generating') {
+          this.pollPendingReply(pendingMessage.clientMessageId, pendingMessage.content, Date.now());
+        }
+      });
+    }).catch(error => {
+      wx.showModal({ title: '会话加载失败', content: error.message || '请从场景列表重新开始训练。', showCancel: false, success: () => wx.navigateBack() });
+    });
   },
 
-  async sendMessage() {
-    if (this.data.sending || this.data.finishing || this.data.isTrainingEnd) return;
+  onInputChange(e) { this.setData({ inputValue: e.detail.value }); },
 
+  sendMessage() {
     const content = this.data.inputValue.trim();
-    if (!content) return;
-
-    const pending = this.pendingMessage && this.pendingMessage.content === content
-      ? this.pendingMessage
-      : { clientMessageId: `client-${Date.now()}`, content };
-
-    this.pendingMessage = pending;
-    this.setData({ sending: true, inputValue: '' });
-
-    try {
-      const data = await request.post(this.sessionPath('/messages'), {
-        clientMessageId: pending.clientMessageId,
-        content: pending.content
-      });
-      if (!data || !data.userMessage || !data.patientMessage) {
-        throw new Error('患者回复数据不完整');
+    if (!content || this.data.sending || this.data.finishing || this.data.currentRound >= this.data.maxRounds) return;
+    const clientMessageId = this.data.pendingClientMessageId || `client-msg-${Date.now()}`;
+    this.setData({ sending: true });
+    api.sendMessage(this.sessionId, clientMessageId, content).then(data => {
+      this.setData({ pendingClientMessageId: '', inputValue: '', sending: false });
+      if (data.session.shouldFinish) {
+        this.setData({ finishing: true });
+        wx.redirectTo({ url: `/pages/result/result?sessionId=${this.sessionId}` });
+        return;
       }
-      const messages = [
-        ...this.data.messages,
-        data.userMessage,
-        data.patientMessage
-      ];
-      const session = data.session || {};
-
-      this.pendingMessage = null;
-      this.setData({
-        messages,
-        currentRound: session.currentRound || this.data.currentRound + 1,
-        remainingRounds: session.remainingRounds === undefined
-          ? Math.max(this.data.maxRounds - (session.currentRound || this.data.currentRound + 1), 0)
-          : session.remainingRounds,
-        sending: false,
-        scrollToView: 'msg-bottom'
-      });
-
-      if (session.shouldFinish || session.currentRound >= this.data.maxRounds) {
-        this.finishTraining('max_rounds');
+      this.loadSession();
+    }).catch(error => {
+      this.setData({ pendingClientMessageId: clientMessageId, inputValue: content });
+      if (error.code === 'SESSION_RESPONSE_PENDING') {
+        this.pollPendingReply(clientMessageId, content, Date.now());
+        return;
       }
-    } catch (error) {
-      this.setData({
-        sending: false,
-        inputValue: pending.content
-      });
-      util.showToast(request.getErrorMessage(error, '患者回复失败，可重试'));
-    }
+      this.setData({ sending: false });
+      this.loadSession();
+      wx.showToast({ title: error.message || '患者回复生成失败，可再次发送重试', icon: 'none' });
+    });
   },
 
-  async finishTraining(reasonOrEvent) {
-    if (reasonOrEvent && reasonOrEvent.currentTarget) {
-      reasonOrEvent = reasonOrEvent.currentTarget.dataset.reason || 'manual';
-    }
-    const reason = reasonOrEvent || 'manual';
+  pollPendingReply(clientMessageId, content, startedAt) {
+    if (this.pendingPollTimer) clearTimeout(this.pendingPollTimer);
+    this.setData({ sending: true, pendingClientMessageId: clientMessageId, inputValue: content });
+    api.getSession(this.sessionId).then(detail => {
+      const pending = detail.pendingMessage || null;
+      this.setData({
+        session: detail.session,
+        messages: normalizeMessages(detail.messages || []),
+        currentRound: detail.session.currentRound,
+        maxRounds: detail.session.maxRounds
+      }, () => this.scrollToBottom());
+      if (detail.session.status === 'completed') {
+        this.setData({ sending: false, finishing: true, pendingClientMessageId: '', inputValue: '' });
+        wx.redirectTo({ url: `/pages/result/result?sessionId=${this.sessionId}` });
+        return;
+      }
+      if (!pending) {
+        this.setData({ sending: false, pendingClientMessageId: '', inputValue: '' });
+        return;
+      }
+      if (pending.replyStatus === 'failed') {
+        this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
+        wx.showToast({ title: '回复生成失败，可使用原消息安全重试', icon: 'none' });
+        return;
+      }
+      if (Date.now() - startedAt >= 30000) {
+        this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
+        wx.showToast({ title: '回复仍在生成，原消息已保留', icon: 'none' });
+        return;
+      }
+      this.pendingPollTimer = setTimeout(
+        () => this.pollPendingReply(clientMessageId, content, startedAt), 1000);
+    }).catch(() => {
+      if (Date.now() - startedAt >= 30000) {
+        this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
+        wx.showToast({ title: '网络异常，原消息已保留', icon: 'none' });
+        return;
+      }
+      this.pendingPollTimer = setTimeout(
+        () => this.pollPendingReply(clientMessageId, content, startedAt), 1000);
+    });
+  },
 
-    if (this.data.finishing || this.data.isTrainingEnd) return;
+  finishTraining() {
     if (this.data.currentRound < 1) {
-      util.showToast('至少完成 1 轮对话后才能结束训练');
+      wx.showToast({ title: '至少完成1轮对话后才能评分', icon: 'none' });
       return;
     }
-
-    const confirmed = reason === 'max_rounds'
-      ? true
-      : await util.showModal({
-        title: '结束训练',
-        content: '确定结束本次训练并生成评分吗？'
-      });
-    if (!confirmed) return;
-
-    this.setData({ finishing: true, isTrainingEnd: true });
-    try {
-      if (!this.data.sessionId) {
-        throw new Error('缺少训练会话 ID');
-      }
-      await request.post(this.sessionPath('/finish'), { reason });
-      wx.redirectTo({
-        url: `/pages/result/result?sessionId=${encodeURIComponent(this.data.sessionId)}`
-      });
-    } catch (error) {
-      this.setData({ finishing: false, isTrainingEnd: false });
-      util.showToast(request.getErrorMessage(error, '结束训练失败，请重试'));
+    if (this.data.sending) {
+      wx.showToast({ title: '患者正在回复，请稍候', icon: 'none' });
+      return;
     }
-  }
+    if (this.data.pendingClientMessageId) {
+      wx.showToast({ title: '请先重试尚未生成回复的原消息', icon: 'none' });
+      return;
+    }
+    if (this.data.finishing) {
+      wx.showToast({ title: '正在生成报告，请稍候', icon: 'none' });
+      return;
+    }
+    wx.showModal({
+      title: '结束本次训练？',
+      content: '结束后将根据完整对话生成训练报告，结束后不能继续发送消息。',
+      confirmText: '结束评分',
+      success: result => { if (result.confirm) this.completeTraining(); },
+      fail: () => wx.showToast({ title: '确认框打开失败，请重试', icon: 'none' })
+    });
+  },
+
+  completeTraining() {
+    this.setData({ finishing: true });
+    api.finishSession(this.sessionId).then(() => {
+      wx.redirectTo({ url: `/pages/result/result?sessionId=${this.sessionId}` });
+    }).catch(error => {
+      this.setData({ finishing: false });
+      wx.showToast({ title: error.message || '结束训练失败', icon: 'none' });
+    });
+  },
+
+  leaveTraining() {
+    if (!this.data.sending && !this.data.finishing) wx.navigateBack();
+  },
+
+  scrollToBottom() { this.setData({ scrollToView: 'message-bottom' }); }
 });

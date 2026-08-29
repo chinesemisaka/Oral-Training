@@ -1,37 +1,50 @@
-<view class="home-page">
+<view class="page-shell home-page">
   <view class="hero-card">
-    <text class="eyebrow">MVP 演示版</text>
-    <text class="hero-title">AI 口腔客服陪练</text>
-    <text class="hero-desc">和 AI 模拟患者进行多轮文字对练，训练沟通、需求挖掘和医疗合规表达。</text>
-    <button class="primary-button" bindtap="goTraining">开始训练</button>
+    <view class="hero-decoration decoration-one"></view>
+    <view class="hero-decoration decoration-two"></view>
+    <text class="eyebrow">AI ORAL CARE TRAINING · MVP DEMO</text>
+    <text class="hero-title">口腔客服智能陪练</text>
+    <text class="hero-subtitle">客服训练 · 患者模拟 · 结构化复盘</text>
+    <text class="hero-description">面向新入口腔客服的低风险练习空间，帮助你在典型场景中练习沟通、服务表达和合规边界。</text>
+    <button class="primary-button hero-button" bindtap="startTraining">{{isAdmin ? '查看机构数据' : '开始训练'}}</button>
   </view>
 
-  <view class="demo-notice">
-    <text class="notice-title">固定演示用户</text>
-    <text class="notice-desc">当前使用演示数据，不需要微信授权登录，也不会处理真实患者信息。</text>
-  </view>
-
-  <view class="entry-list">
-    <view class="entry-card" bindtap="goHistory">
-      <view class="entry-icon">↺</view>
-      <view class="entry-copy">
-        <text class="entry-title">历史记录</text>
-        <text class="entry-desc">查看训练状态、完整对话和评分报告</text>
-      </view>
-      <text class="entry-arrow">›</text>
+  <view class="model-key-card card" wx:if="{{showKeyConfig}}">
+    <text class="model-key-title">DeepSeek 模型密钥（本地演示）</text>
+    <text class="model-key-text">密钥仅提交给当前后端进程，不写入小程序缓存、数据库或代码仓库。已通过环境变量配置时无需填写。</text>
+    <view class="key-input-row">
+      <input class="key-input" password placeholder="输入 DeepSeek API Key" value="{{apiKey}}" bindinput="onKeyInput" disabled="{{savingKey}}" />
+      <button class="key-save-button" bindtap="saveApiKey" disabled="{{savingKey || !apiKey}}">{{savingKey ? '配置中' : '配置'}}</button>
     </view>
-    <view class="entry-card" bindtap="goDashboard">
-      <view class="entry-icon">▥</view>
-      <view class="entry-copy">
-        <text class="entry-title">演示数据</text>
-        <text class="entry-desc">查看训练次数、场景统计和五维平均分</text>
-      </view>
-      <text class="entry-arrow">›</text>
-    </view>
+    <text class="key-status" wx:if="{{keyStatus}}">{{keyStatus}}</text>
   </view>
 
-  <view class="boundary-card">
-    <text class="boundary-title">使用边界</text>
-    <text class="boundary-text">AI 只扮演模拟患者，评分仅用于演示和训练反馈，不构成医疗建议或正式考核。</text>
+  <view class="section-heading">
+    <view><text class="section-title">训练闭环</text><text class="section-caption">从场景选择到报告回顾</text></view>
+    <text class="mvp-badge">MVP</text>
   </view>
+  <view class="flow-card card">
+    <view class="flow-item"><text class="flow-number">01</text><text>选择场景</text></view>
+    <text class="flow-arrow">›</text>
+    <view class="flow-item"><text class="flow-number">02</text><text>双模式对话</text></view>
+    <text class="flow-arrow">›</text>
+    <view class="flow-item"><text class="flow-number">03</text><text>查看报告/复盘</text></view>
+  </view>
+
+  <view class="section-heading stats-heading">
+    <view><text class="section-title">训练数据</text><text class="section-caption">{{dataCaption}}</text></view>
+    <text class="section-link" bindtap="viewDashboard">查看数据 ›</text>
+  </view>
+  <view class="stats-grid">
+    <view class="stat-card card"><text class="stat-value">{{dashboard.totalCount}}</text><text class="stat-label">总训练次数</text></view>
+    <view class="stat-card card"><text class="stat-value">{{dashboard.completedCount}}</text><text class="stat-label">已完成次数</text></view>
+    <view class="stat-card card"><text class="stat-value">{{dashboard.averageScore}}</text><text class="stat-label">平均得分</text></view>
+  </view>
+
+  <view class="quick-links" wx:if="{{!isAdmin}}">
+    <view class="quick-link card" bindtap="startTraining"><text class="quick-icon">✦</text><view><text class="quick-title">开始一次新的练习</text><text class="quick-text">四个固定场景可选</text></view><text class="quick-arrow">›</text></view>
+    <view class="quick-link card" bindtap="viewHistory"><text class="quick-icon">↺</text><view><text class="quick-title">回看历史记录</text><text class="quick-text">继续未完成训练或查看报告</text></view><text class="quick-arrow">›</text></view>
+  </view>
+
+  <text class="disclaimer">AI模拟训练，不构成医疗建议；评分不替代医生、客服专家或正式培训考核。</text>
 </view>

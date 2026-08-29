@@ -1,0 +1,119 @@
+# 口腔客服智能陪练
+
+微信小程序 + Windows C++ 后端，提供两条独立训练链路：
+
+- 学员扮演客服，与 DeepSeek 模拟患者多轮对话，完成后生成五维报告。
+- 学员扮演患者，查看标准客服示范、学习要点和无分数复盘。
+
+当前版本已具备可靠消息幂等、可恢复 AI Worker、微信登录、单机构 `learner/admin` 权限、用户数据隔离和生产配置边界。多机构租户、排行榜和团队运营不在本轮范围内。
+
+> 仅用于模拟训练，不构成医疗建议。请勿输入真实患者姓名、电话、病历或其他隐私信息。
+
+## 目录
+
+```text
+app.* / pages/ / utils/          微信小程序
+backend/src/main.cpp             API、模型网关、Worker 入口
+backend/src/reliable_store.h     消息租约、任务队列、事务状态机
+backend/src/identity.h           登录、角色、限流
+backend/migrations/              PostgreSQL 有序迁移
+backend/tests/                   静态、迁移、并发和烟测
+docs/api.md                      公共 API 契约
+```
+
+## 初始化数据库
+
+先备份历史数据库，并只读执行 `backend/migrations/preflight_reliability.sql` 记录重复轮次和异常状态。按顺序执行全部迁移；`003` 会归档重复消息并补可靠任务，`004` 会把历史记录保留在演示用户下，`005` 会按完整生成尝试重新配对历史问答并修复缺失的报告/任务状态。迁移过程不会调用模型；执行 `005` 时必须先停止后端。
+
+```powershell
+$psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\001_initial.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\002_roleplay.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\003_reliability.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\004_identity.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\005_pair_and_state_repair.sql
+```
+
+## 构建与启动后端
+
+需要 Windows 10/11、Visual Studio 2022 C++ 工作负载、CMake 3.20+ 和 PostgreSQL 客户端库。
+
+```powershell
+cmake -S backend -B backend\build-msvc -G 'Visual Studio 17 2022' -A x64 `
+  -DPostgreSQL_ROOT='C:/Program Files/PostgreSQL/18'
+cmake --build backend\build-msvc --config Release
+
+$env:DATABASE_URL='postgresql://oral_training_app:<password>@127.0.0.1:5432/oral_training'
+$env:DEEPSEEK_API_KEY='<DeepSeek API Key>'
+$env:AUTH_MODE='demo'
+$env:ALLOW_RUNTIME_API_KEY='false'
+$env:PATH='C:\Program Files\PostgreSQL\18\bin;' + $env:PATH
+& '.\backend\build-msvc\Release\oral_training_backend.exe'
+```
+
+本机默认监听 `http://127.0.0.1:8080/api`。单个程序同时运行 API 和可靠 Worker，默认 Worker 并发 1。
+
+完整环境变量见 [backend/.env.example](backend/.env.example)，后端说明见 [backend/README.md](backend/README.md)。旧的预发布二进制不包含本轮迁移、身份和 Worker 修复，部署当前代码时必须重新构建或重新打包。
+
+## 微信小程序
+
+1. 在微信开发者工具中导入仓库根目录。
+2. 保持后端运行并点击“编译”。
+3. 开发环境默认访问 `http://127.0.0.1:8080/api`。
+4. 体验版/正式版通过扩展配置或 `utils/config.js` 设置 HTTPS `apiBaseUrl`，并加入微信请求域名白名单。
+
+前端启动时调用 `wx.login`，然后通过 `/api/auth/wechat` 获取服务端令牌。`AUTH_MODE=demo` 时该路径登录保留的演示用户；生产必须使用 `AUTH_MODE=wechat`。
+
+普通 API 请求超时保持 30 秒；两类逐轮模型消息接口单独使用 120 秒超时，以覆盖后端两次模型尝试。若请求仍中断，页面会按原 `clientMessageId` 查询并保留输入，不会重复计轮。报告或复盘收到 `not_started` 时会根据会话状态恢复任务、返回未完成会话或回到历史记录；页面链接缺少 `sessionId` 时会明确提示并安全导航。
+
+## 生产最小配置
+
+```dotenv
+PRODUCTION=true
+AUTH_MODE=wechat
+WECHAT_APP_ID=<appid>
+WECHAT_APP_SECRET=<secret>
+ALLOW_RUNTIME_API_KEY=false
+ALLOWED_ORIGIN=https://your-gateway.example
+REQUIRE_HTTPS=true
+TRUSTED_PROXY_IPS=127.0.0.1,::1
+AI_WORKER_CONCURRENCY=1
+DATABASE_POOL_SIZE=12
+DATABASE_POOL_WAIT_MS=3000
+```
+
+后端应放在 HTTPS 反向代理之后。`TRUSTED_PROXY_IPS` 必须填写实际连接后端的代理 IP；只有这些地址提供的 `X-Forwarded-For` 和 `X-Forwarded-Proto` 会被信任。代理应覆盖 `X-Forwarded-Proto`，并正确追加或覆盖 `X-Forwarded-For`。生产配置缺失、布尔值/整数拼写错误、使用 demo 登录或关闭 HTTPS 时，程序会拒绝启动。不要把数据库、模型密钥、微信密钥或 bearer token 写进前端或仓库。
+
+API、身份服务和 Worker 共享惰性数据库连接池。连接总数受 `DATABASE_POOL_SIZE` 限制；等待超过 `DATABASE_POOL_WAIT_MS` 的请求返回 HTTP 503 `DATABASE_BUSY`。连接池大小必须至少比 Worker 并发数多 2，避免后台任务占满 API 所需连接。
+
+## 验证
+
+```powershell
+cmake --build backend\build-msvc --config Release
+ctest --test-dir backend\build-msvc -C Release --output-on-failure
+& '.\backend\tests\static_checks.ps1'
+```
+
+后端和已迁移数据库运行时执行无模型 API 烟测：
+
+```powershell
+& '.\backend\tests\smoke.ps1'
+```
+
+迁移和并发测试只允许一次性数据库（数据库名必须包含 `test` 或 `ci`）：
+
+```powershell
+& '.\backend\tests\migration_reliability.ps1' -DatabaseUrl 'postgresql://.../oral_training_test'
+& '.\backend\tests\session_concurrency.ps1' -DatabaseUrl 'postgresql://.../oral_training_test'
+& '.\backend\tests\concurrency.ps1' -DatabaseUrl 'postgresql://.../oral_training_test'
+```
+
+所有离线和无模型检查通过后，只运行一次受控真实模型烟测：
+
+```powershell
+& '.\backend\tests\smoke.ps1' -WithModel
+```
+
+最后在微信开发者工具手测：快速切换两种模式、断网恢复、回复 pending、30 秒结果页操作、续练、历史展开和数据页状态。
+
+接口、状态机和错误码见 [docs/api.md](docs/api.md)。

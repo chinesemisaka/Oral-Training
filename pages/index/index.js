@@ -1,110 +1,109 @@
-const request = require('../../static/api/request.js');
-const util = require('../../utils/util.js');
+const api = require('../../utils/api.js');
 
 Page({
   data: {
     scenarios: [],
-    loading: true,
-    errorMessage: ''
+    expandedId: '',
+    trainingMode: 'customer_service'
   },
 
-  onLoad() {
-    this.loadScenarios();
-  },
+  onShow() { this.loadScenarios(); },
 
-  onShow() {
-    if (this.data.scenarios.length > 0) {
-      this.loadScenarios();
-    }
-  },
-
-  async loadScenarios() {
-    this.setData({ loading: true, errorMessage: '' });
-    try {
-      const data = await request.get('/scenarios');
-      this.setData({
-        scenarios: data.items || [],
-        loading: false
-      });
-    } catch (error) {
-      console.error('加载场景失败', error);
-      this.setData({
-        loading: false,
-        errorMessage: request.getErrorMessage(error, '场景加载失败，请检查网络后重试')
-      });
-    }
-  },
-
-  findScenario(id) {
-    return this.data.scenarios.find(item => String(item.id) === String(id));
-  },
-
-  goToTraining(sessionId) {
-    if (!sessionId) return;
-    wx.navigateTo({
-      url: `/pages/training/training?sessionId=${encodeURIComponent(sessionId)}`
+  loadScenarios() {
+    this.scenarioRequestVersion = (this.scenarioRequestVersion || 0) + 1;
+    const requestVersion = this.scenarioRequestVersion;
+    const requestedMode = this.data.trainingMode;
+    const isRoleplay = requestedMode === 'patient_simulation';
+    const request = isRoleplay ? api.getRoleplayScenarios() : api.getScenarios();
+    request.then(data => {
+      if (requestVersion !== this.scenarioRequestVersion || requestedMode !== this.data.trainingMode) return;
+      const scenarios = data.items.map(item => Object.assign({}, item, {
+        difficulty: item.difficulty === 'advanced' ? '进阶' : '基础',
+        patientAge: `${item.patientProfile.age}岁`,
+        patientConcern: item.patientProfile.description,
+        patientEmotion: isRoleplay ? '由你自由提问' : '需通过对话了解',
+        actionText: item.activeSession
+          ? (isRoleplay ? '继续模拟' : '继续训练')
+          : (isRoleplay ? '开始模拟' : '开始训练'),
+        suggestedQuestions: item.suggestedQuestions || []
+      }));
+      this.setData({ scenarios, expandedId: '' });
+    }).catch(error => {
+      if (requestVersion !== this.scenarioRequestVersion || requestedMode !== this.data.trainingMode) return;
+      wx.showToast({ title: error.message || '场景加载失败', icon: 'none' });
     });
   },
 
-  async startTraining(e) {
-    const scenarioId = e.currentTarget.dataset.id;
-    const scenario = this.findScenario(scenarioId);
-    if (!scenario) return;
-
-    if (scenario.activeSession) {
-      this.goToTraining(scenario.activeSession.id);
-      return;
-    }
-
-    util.showLoading('创建训练中...');
-    try {
-      const data = await request.post('/sessions', { scenarioId });
-      util.hideLoading();
-      if (!data || !data.session || !data.session.id) {
-        throw new Error('服务端未返回有效训练会话');
-      }
-      this.goToTraining(data.session.id);
-    } catch (error) {
-      util.hideLoading();
-      const existingSessionId = error.data && (error.data.sessionId || error.data.id);
-      if (error.code === 'SESSION_IN_PROGRESS' && existingSessionId) {
-        this.goToTraining(existingSessionId);
-        return;
-      }
-      util.showToast(request.getErrorMessage(error, '创建训练失败'));
-    }
+  switchMode(e) {
+    const mode = e.currentTarget.dataset.mode;
+    if (!mode || mode === this.data.trainingMode) return;
+    this.setData({ trainingMode: mode, scenarios: [], expandedId: '' }, () => this.loadScenarios());
   },
 
-  continueTraining(e) {
-    const sessionId = e.currentTarget.dataset.sessionId;
-    if (sessionId) this.goToTraining(sessionId);
+  toggleProfile(e) {
+    const id = e.currentTarget.dataset.id;
+    this.setData({ expandedId: this.data.expandedId === id ? '' : id });
+  },
+
+  openTraining(e) {
+    const { id, mode } = e.currentTarget.dataset;
+    const scenario = this.data.scenarios.find(item => item.id === id);
+    if (!scenario) return;
+    if (this.data.trainingMode === 'patient_simulation') {
+      this.openRoleplay(scenario, mode, '');
+      return;
+    }
+    if (mode === 'continue' && scenario.activeSession) {
+      this.goTraining(scenario.activeSession.id);
+      return;
+    }
+    api.createSession(id).then(data => this.goTraining(data.session.id))
+      .catch(error => wx.showToast({ title: error.message, icon: 'none' }));
+  },
+
+  openSuggestion(e) {
+    const scenario = this.data.scenarios.find(item => item.id === e.currentTarget.dataset.id);
+    if (!scenario) return;
+    this.openRoleplay(scenario, scenario.activeSession ? 'continue' : 'new', e.currentTarget.dataset.prompt || '');
+  },
+
+  openRoleplay(scenario, mode, prompt) {
+    if (mode === 'continue' && scenario.activeSession) {
+      this.goRoleplay(scenario.activeSession.id, prompt);
+      return;
+    }
+    api.createRoleplaySession(scenario.id).then(data => this.goRoleplay(data.session.id, prompt))
+      .catch(error => wx.showToast({ title: error.message, icon: 'none' }));
   },
 
   restartTraining(e) {
-    const sessionId = e.currentTarget.dataset.sessionId;
-    if (!sessionId) return;
-
-    util.showModal({
-      title: '重新开始训练',
-      content: '当前进行中的会话将标记为已放弃，确定重新开始吗？'
-    }).then(async (confirmed) => {
-      if (!confirmed) return;
-      util.showLoading('重新创建中...');
-      try {
-        const data = await request.post(`/sessions/${encodeURIComponent(sessionId)}/restart`);
-        util.hideLoading();
-        if (!data || !data.session || !data.session.id) {
-          throw new Error('服务端未返回有效训练会话');
-        }
-        this.goToTraining(data.session.id);
-      } catch (error) {
-        util.hideLoading();
-        util.showToast(request.getErrorMessage(error, '重新开始失败'));
+    const id = e.currentTarget.dataset.id;
+    const isRoleplay = this.data.trainingMode === 'patient_simulation';
+    wx.showModal({
+      title: isRoleplay ? '重新开始患者模拟？' : '重新开始训练？',
+      content: '当前未完成会话会标记为已放弃，历史记录仍会保留。',
+      confirmText: '重新开始',
+      success: result => {
+        if (!result.confirm) return;
+        const scenario = this.data.scenarios.find(item => item.id === id);
+        if (!scenario || !scenario.activeSession) return;
+        const request = isRoleplay
+          ? api.restartRoleplaySession(scenario.activeSession.id)
+          : api.restartSession(scenario.activeSession.id);
+        request.then(data => {
+          if (isRoleplay) this.goRoleplay(data.session.id, '');
+          else this.goTraining(data.session.id);
+        }).catch(error => wx.showToast({ title: error.message, icon: 'none' }));
       }
     });
   },
 
-  onPullDownRefresh() {
-    this.loadScenarios().finally(() => wx.stopPullDownRefresh());
+  goTraining(sessionId) {
+    wx.navigateTo({ url: `/pages/training/training?sessionId=${sessionId}` });
+  },
+
+  goRoleplay(sessionId, prompt) {
+    const suffix = prompt ? `&prompt=${encodeURIComponent(prompt)}` : '';
+    wx.navigateTo({ url: `/pages/roleplay/roleplay?sessionId=${sessionId}${suffix}` });
   }
 });

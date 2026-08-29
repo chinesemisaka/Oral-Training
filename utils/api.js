@@ -1,0 +1,130 @@
+const { getApiBaseUrl } = require('./config.js');
+const { DEFAULT_REQUEST_TIMEOUT, MODEL_REQUEST_TIMEOUT } = require('./request-policy.js');
+
+const TOKEN_KEY = 'oralTrainingAccessToken';
+const USER_KEY = 'oralTrainingUser';
+let loginPromise = null;
+
+const rawRequest = (path, options = {}) => new Promise((resolve, reject) => {
+  let baseUrl = '';
+  try {
+    baseUrl = getApiBaseUrl();
+  } catch (error) {
+    reject(error);
+    return;
+  }
+  wx.request({
+    url: `${baseUrl}${path}`,
+    method: options.method || 'GET',
+    data: options.data,
+    timeout: options.timeout === undefined ? DEFAULT_REQUEST_TIMEOUT : options.timeout,
+    header: Object.assign({ 'content-type': 'application/json' }, options.token
+      ? { Authorization: `Bearer ${options.token}` }
+      : {}),
+    success: response => {
+      const payload = response.data || {};
+      const acceptedStatus = response.statusCode >= 200 && response.statusCode < 300;
+      const acceptedUnreadyHealth = options.acceptUnreadyHealth === true &&
+        response.statusCode === 503;
+      if ((acceptedStatus || acceptedUnreadyHealth) && payload.code === 0) {
+        resolve(payload.data);
+        return;
+      }
+      const error = new Error(payload.message || '服务请求失败');
+      error.code = payload.code || 'NETWORK_ERROR';
+      error.statusCode = response.statusCode;
+      reject(error);
+    },
+    fail: error => {
+      const requestError = new Error(error.errMsg || '无法连接后端服务');
+      requestError.code = 'NETWORK_ERROR';
+      reject(requestError);
+    }
+  });
+});
+
+const clearAuthentication = () => {
+  wx.removeStorageSync(TOKEN_KEY);
+  wx.removeStorageSync(USER_KEY);
+};
+
+const login = () => new Promise((resolve, reject) => {
+  wx.login({
+    success: result => {
+      if (!result.code) {
+        reject(Object.assign(new Error('微信登录未返回有效凭证'), { code: 'WECHAT_LOGIN_FAILED' }));
+        return;
+      }
+      rawRequest('/auth/wechat', { method: 'POST', data: { code: result.code } })
+        .then(data => {
+          wx.setStorageSync(TOKEN_KEY, data.accessToken);
+          wx.setStorageSync(USER_KEY, data.user);
+          resolve(data.accessToken);
+        }).catch(reject);
+    },
+    fail: error => reject(Object.assign(new Error(error.errMsg || '微信登录失败'), {
+      code: 'WECHAT_LOGIN_FAILED'
+    }))
+  });
+});
+
+const ensureAuthenticated = (force = false) => {
+  const existing = force ? '' : wx.getStorageSync(TOKEN_KEY);
+  if (existing) return Promise.resolve(existing);
+  if (!loginPromise) {
+    loginPromise = login().finally(() => { loginPromise = null; });
+  }
+  return loginPromise;
+};
+
+const request = (path, options = {}, retried = false) => {
+  if (options.public) return rawRequest(path, options);
+  return ensureAuthenticated().then(token => rawRequest(path, Object.assign({}, options, { token })))
+    .catch(error => {
+      if (!retried && (error.code === 'AUTH_EXPIRED' || error.code === 'AUTH_INVALID' || error.code === 'AUTH_REQUIRED')) {
+        clearAuthentication();
+        return ensureAuthenticated(true).then(() => request(path, options, true));
+      }
+      throw error;
+    });
+};
+
+const query = values => Object.keys(values)
+  .filter(key => values[key] !== undefined && values[key] !== null && values[key] !== '')
+  .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(values[key])}`)
+  .join('&');
+
+module.exports = {
+  ensureAuthenticated,
+  clearAuthentication,
+  getCurrentUser: () => wx.getStorageSync(USER_KEY) || null,
+  getHealth: () => request('/health', { public: true, acceptUnreadyHealth: true }),
+  setDeepSeekKey: apiKey => request('/config/deepseek-key', { method: 'POST', data: { apiKey } }),
+  getScenarios: () => request('/scenarios'),
+  createSession: scenarioId => request('/sessions', { method: 'POST', data: { scenarioId } }),
+  restartSession: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/restart`, { method: 'POST', data: {} }),
+  getSession: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}`),
+  sendMessage: (sessionId, clientMessageId, content) => request(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST', data: { clientMessageId, content }, timeout: MODEL_REQUEST_TIMEOUT
+  }),
+  finishSession: (sessionId, reason = 'manual') => request(`/sessions/${encodeURIComponent(sessionId)}/finish`, {
+    method: 'POST', data: { reason }
+  }),
+  getEvaluation: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/evaluation`),
+  retryEvaluation: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/evaluation/retry`, { method: 'POST', data: {} }),
+  getSessions: params => request(`/sessions?${query(params || {})}`),
+  getRoleplayScenarios: () => request('/roleplay/scenarios'),
+  createRoleplaySession: scenarioId => request('/roleplay/sessions', { method: 'POST', data: { scenarioId } }),
+  restartRoleplaySession: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/restart`, { method: 'POST', data: {} }),
+  getRoleplaySession: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}`),
+  sendRoleplayMessage: (sessionId, clientMessageId, content) => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST', data: { clientMessageId, content }, timeout: MODEL_REQUEST_TIMEOUT
+  }),
+  finishRoleplaySession: (sessionId, reason = 'manual') => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/finish`, {
+    method: 'POST', data: { reason }
+  }),
+  getRoleplaySummary: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/summary`),
+  retryRoleplaySummary: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/summary/retry`, { method: 'POST', data: {} }),
+  getRoleplaySessions: params => request(`/roleplay/sessions?${query(params || {})}`),
+  getDashboard: () => request('/dashboard/summary')
+};
