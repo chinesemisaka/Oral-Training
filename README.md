@@ -73,10 +73,11 @@ WECHAT_APP_SECRET=<secret>
 ALLOW_RUNTIME_API_KEY=false
 ALLOWED_ORIGIN=https://your-gateway.example
 REQUIRE_HTTPS=true
+TRUSTED_PROXY_IPS=127.0.0.1,::1
 AI_WORKER_CONCURRENCY=1
 ```
 
-后端应放在 HTTPS 反向代理之后，代理传递 `X-Forwarded-Proto: https`。生产模式拒绝通配 CORS并自动禁用首页运行时密钥上传。不要把数据库、模型密钥、微信密钥或 bearer token 写进前端或仓库。
+后端应放在 HTTPS 反向代理之后。`TRUSTED_PROXY_IPS` 必须填写实际连接后端的代理 IP；只有这些地址提供的 `X-Forwarded-For` 和 `X-Forwarded-Proto` 会被信任。代理应覆盖 `X-Forwarded-Proto`，并正确追加或覆盖 `X-Forwarded-For`。生产配置缺失、布尔值/整数拼写错误、使用 demo 登录或关闭 HTTPS 时，程序会拒绝启动。不要把数据库、模型密钥、微信密钥或 bearer token 写进前端或仓库。
 
 ## 验证
 
