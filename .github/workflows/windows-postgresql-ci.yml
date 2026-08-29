@@ -74,7 +74,7 @@ jobs:
             '005_pair_and_state_repair.sql'
           )
           foreach ($migration in $migrationFiles) {
-            & $env:PSQL_PATH $env:DATABASE_URL -v ON_ERROR_STOP=1 -X -f ".\backend\migrations\$migration"
+            & $env:PSQL_PATH --dbname=$env:DATABASE_URL -v ON_ERROR_STOP=1 -X -f ".\backend\migrations\$migration"
             if ($LASTEXITCODE -ne 0) { throw "Migration failed: $migration" }
           }
 
