@@ -94,6 +94,19 @@ int main() {
     std::cerr << "round comment was not grounded in the user message\n";
     return 1;
   }
+  if (normalized["recommendedPhrases"].size() != 1 ||
+      normalized["recommendedPhrases"][0]["patientSays"] != messages[0]["content"] ||
+      normalized["recommendedPhrases"][0]["csReply"] !=
+          normalized["roundComments"][0]["recommendedRewrite"]) {
+    std::cerr << "report-derived phrase insight was not grounded correctly\n";
+    return 1;
+  }
+  if (normalized["learningMistakes"].size() != 1 ||
+      normalized["learningMistakes"][0]["kind"] != "improvement" ||
+      normalized["learningMistakes"][0]["originalQuote"] != messages[1]["content"]) {
+    std::cerr << "report-derived learning mistake was not created correctly\n";
+    return 1;
+  }
 
   const auto expect_invalid_report = [](const json& report, const json& history) {
     try {
@@ -174,6 +187,12 @@ int main() {
   const auto normalized_deduction = normalizeReport(capped_deduction_report, messages);
   if (normalized_deduction["violations"][0]["deduction"] != 50) {
     std::cerr << "violation deduction was not capped at 50\n";
+    return 1;
+  }
+  if (normalized_deduction["learningMistakes"].size() != 1 ||
+      normalized_deduction["learningMistakes"][0]["kind"] != "violation" ||
+      normalized_deduction["learningMistakes"][0]["priority"] != "high") {
+    std::cerr << "violation learning mistake was not classified correctly\n";
     return 1;
   }
   capped_deduction_report["dimensionScores"]["medicalCompliance"] = 61;
@@ -288,3 +307,4 @@ int main() {
   std::cout << "report validation tests passed\n";
   return 0;
 }
+

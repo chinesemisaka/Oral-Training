@@ -3,7 +3,8 @@
 1. 安装并启动 PostgreSQL。
 2. 备份现有数据库。
 3. 使用 psql 按顺序执行 migrations\001_initial.sql、002_roleplay.sql、
-   003_reliability.sql、004_identity.sql、005_pair_and_state_repair.sql。
+   003_reliability.sql、004_identity.sql、005_pair_and_state_repair.sql、
+   006_learner_insights.sql、007_training_experience.sql、008_supervisor_growth.sql。
 4. 复制 backend.env.example 为 backend.env，并填写数据库、DeepSeek 和身份配置。
 5. 双击 start-backend.cmd。
 
@@ -20,3 +21,4 @@ databasePool。API、身份服务和 Worker 共用有界连接池；连接池耗
 
 003 迁移会无损归档历史重复轮次并补建 generating 任务，迁移本身不会调用模型。
 请勿提交 backend.env，也不要在前端保存模型、数据库或微信密钥。
+

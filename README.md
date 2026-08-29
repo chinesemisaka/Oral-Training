@@ -5,7 +5,7 @@
 - 学员扮演客服，与 DeepSeek 模拟患者多轮对话，完成后生成五维报告。
 - 学员扮演患者，查看标准客服示范、学习要点和无分数复盘。
 
-当前版本已具备可靠消息幂等、可恢复 AI Worker、微信登录、单机构 `learner/admin` 权限、用户数据隔离和生产配置边界。多机构租户、排行榜和团队运营不在本轮范围内。
+当前版本已具备可靠消息幂等、可恢复 AI Worker、微信登录、单机构 `learner/admin` 权限、用户数据隔离、场景分类、合规训练提示、话术收藏、每日签到积分、主管聚合和成员学习摘要。积分只有每日签到来源；多机构租户、排行榜、兑换和团队任务运营不在本轮范围内。
 
 > 仅用于模拟训练，不构成医疗建议。请勿输入真实患者姓名、电话、病历或其他隐私信息。
 
@@ -32,6 +32,9 @@ $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\003_reliability.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\004_identity.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\005_pair_and_state_repair.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\006_learner_insights.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\007_training_experience.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\008_supervisor_growth.sql
 ```
 
 ## 构建与启动后端
@@ -65,6 +68,8 @@ $env:PATH='C:\Program Files\PostgreSQL\18\bin;' + $env:PATH
 前端启动时调用 `wx.login`，然后通过 `/api/auth/wechat` 获取服务端令牌。`AUTH_MODE=demo` 时该路径登录保留的演示用户；生产必须使用 `AUTH_MODE=wechat`。
 
 普通 API 请求超时保持 30 秒；两类逐轮模型消息接口单独使用 120 秒超时，以覆盖后端两次模型尝试。若请求仍中断，页面会按原 `clientMessageId` 查询并保留输入，不会重复计轮。报告或复盘收到 `not_started` 时会根据会话状态恢复任务、返回未完成会话或回到历史记录；页面链接缺少 `sessionId` 时会明确提示并安全导航。
+
+主管账号由受控的数据库运维流程把已验证用户设为 `admin`；小程序不提供任何自助提权入口。测试库保留了带 `Test` 前缀的主管和学员样本，便于查看主管聚合与成员详情。
 
 ## 生产最小配置
 
@@ -108,6 +113,13 @@ ctest --test-dir backend\build-msvc -C Release --output-on-failure
 & '.\backend\tests\concurrency.ps1' -DatabaseUrl 'postgresql://.../oral_training_test'
 ```
 
+在已迁移的测试库中，可额外验证训练提示、签到幂等、话术收藏、主管聚合与成员详情：
+
+```powershell
+$env:ORAL_TRAINING_TEST_DATABASE_URL = 'postgresql://.../oral_training_test'
+& '.\backend\build-msvc\Release\database_feature_test.exe'
+```
+
 所有离线和无模型检查通过后，只运行一次受控真实模型烟测：
 
 ```powershell
@@ -117,3 +129,4 @@ ctest --test-dir backend\build-msvc -C Release --output-on-failure
 最后在微信开发者工具手测：快速切换两种模式、断网恢复、回复 pending、30 秒结果页操作、续练、历史展开和数据页状态。
 
 接口、状态机和错误码见 [docs/api.md](docs/api.md)。
+
