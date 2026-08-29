@@ -95,6 +95,76 @@ int main() {
     return 1;
   }
 
+  const auto expect_invalid_report = [](const json& report, const json& history) {
+    try {
+      (void)normalizeReport(report, history);
+      return false;
+    } catch (const ApiError& error) {
+      return error.code == "MODEL_INVALID_RESPONSE";
+    }
+  };
+  auto missing_dimension_report = safe_report;
+  missing_dimension_report["dimensionScores"].erase("empathy");
+  auto invalid_dimension_report = safe_report;
+  invalid_dimension_report["dimensionScores"]["empathy"] = "75";
+  auto missing_array_report = safe_report;
+  missing_array_report.erase("improvements");
+  auto missing_summary_report = safe_report;
+  missing_summary_report.erase("summary");
+  auto empty_strengths_report = safe_report;
+  empty_strengths_report["strengths"] = json::array();
+  auto missing_violations_report = safe_report;
+  missing_violations_report.erase("violations");
+  auto invalid_strength_round = safe_report;
+  invalid_strength_round["strengths"][0]["round"] = 2;
+  auto invalid_improvement_round = safe_report;
+  invalid_improvement_round["improvements"][0]["round"] = 2;
+  const json two_round_messages = json::array({
+      messages[0], messages[1],
+      {{"role", "patient"}, {"content", "那我下一步怎么做？"}, {"round", 1}},
+      {{"role", "user"}, {"content", "我可以先协助安排医生面诊。"}, {"round", 2}},
+  });
+  if (!expect_invalid_report(missing_dimension_report, messages) ||
+      !expect_invalid_report(invalid_dimension_report, messages) ||
+      !expect_invalid_report(missing_array_report, messages) ||
+      !expect_invalid_report(missing_summary_report, messages) ||
+      !expect_invalid_report(empty_strengths_report, messages) ||
+      !expect_invalid_report(missing_violations_report, messages) ||
+      !expect_invalid_report(invalid_strength_round, messages) ||
+      !expect_invalid_report(invalid_improvement_round, messages) ||
+      !expect_invalid_report(safe_report, two_round_messages)) {
+    std::cerr << "incomplete report schema or invalid round reference was accepted\n";
+    return 1;
+  }
+
+  std::atomic<int> heartbeat_renewals{0};
+  {
+    LeaseHeartbeat heartbeat(
+        [&heartbeat_renewals] {
+          heartbeat_renewals.fetch_add(1);
+          return true;
+        },
+        std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  if (heartbeat_renewals.load() < 2) {
+    std::cerr << "job lease heartbeat did not renew repeatedly\n";
+    return 1;
+  }
+  std::atomic<int> lost_renewals{0};
+  LeaseHeartbeat lost_heartbeat(
+      [&lost_renewals] {
+        lost_renewals.fetch_add(1);
+        return false;
+      },
+      std::chrono::milliseconds(10));
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  lost_heartbeat.stop();
+  if (!lost_heartbeat.leaseLost() || lost_renewals.load() != 1) {
+    std::cerr << "job lease heartbeat did not stop after ownership loss\n";
+    return 1;
+  }
+
   auto capped_deduction_report = safe_report;
   capped_deduction_report["dimensionScores"]["medicalCompliance"] = 60;
   capped_deduction_report["violations"] = json::array({

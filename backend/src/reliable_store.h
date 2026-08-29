@@ -101,10 +101,6 @@ class ReliableDatabase {
     pqxx::work tx(connection);
     const auto scenario = tx.exec_params("SELECT * FROM scenarios WHERE id = $1", scenario_id);
     if (scenario.empty()) throw ApiError(404, "SCENARIO_NOT_FOUND", "训练场景不存在");
-    const auto active = tx.exec_params(
-        "SELECT id FROM sessions WHERE user_id = $1 AND scenario_id = $2 AND status = 'in_progress'",
-        user_id, scenario_id);
-    if (!active.empty()) throw ApiError(409, "SESSION_IN_PROGRESS", "该场景已有进行中的训练");
     const auto& row = scenario[0];
     const auto hidden = json::parse(row["hidden_config"].c_str());
     const json state = {
@@ -115,11 +111,14 @@ class ReliableDatabase {
     };
     const auto session_id = makeId("sess");
     const auto opening_id = makeId("msg");
-    tx.exec_params(R"(
+    const auto inserted = tx.exec_params(R"(
       INSERT INTO sessions
         (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds, patient_state)
       VALUES ($1, $2, $3, $4, 'in_progress', 0, $5, $6::jsonb)
+      ON CONFLICT (user_id, scenario_id) WHERE status = 'in_progress' DO NOTHING
+      RETURNING id
     )", session_id, user_id, scenario_id, row["name"].c_str(), row["max_rounds"].as<int>(), state.dump());
+    if (inserted.empty()) throw ApiError(409, "SESSION_IN_PROGRESS", "该场景已有进行中的训练");
     tx.exec_params(R"(
       INSERT INTO messages(id, session_id, role, content, round)
       VALUES ($1, $2, 'patient', $3, 0)
@@ -544,7 +543,7 @@ class ReliableDatabase {
         dimensions["serviceEtiquette"].get<int>() * 0.10));
     report["totalScore"] = clampInt(total, 0, 100);
     report["modelVersion"] = model_version;
-    report["promptVersion"] = "score-prompt-v1";
+    report["promptVersion"] = "score-prompt-v2";
     pqxx::connection connection(database_url_);
     pqxx::work tx(connection);
     const auto owned = tx.exec_params(R"(
@@ -553,9 +552,12 @@ class ReliableDatabase {
     )", job.id, job.target_id, job.generation, job.attempt);
     if (owned.empty()) throw ApiError(409, "JOB_LEASE_LOST", "评分任务租约已失效");
     tx.exec_params(R"(
-      UPDATE evaluations SET status = 'ready', report = $2::jsonb, model_version = $3,
-        prompt_version = 'score-prompt-v1', generated_at = NOW(), updated_at = NOW(), error_type = NULL
-      WHERE session_id = $1
+      INSERT INTO evaluations
+        (session_id, status, report, model_version, prompt_version, error_type, generated_at, updated_at)
+      VALUES ($1, 'ready', $2::jsonb, $3, 'score-prompt-v2', NULL, NOW(), NOW())
+      ON CONFLICT (session_id) DO UPDATE SET status = 'ready', report = EXCLUDED.report,
+        model_version = EXCLUDED.model_version, prompt_version = EXCLUDED.prompt_version,
+        error_type = NULL, generated_at = NOW(), updated_at = NOW()
     )", job.target_id, report.dump(), model_version);
     tx.exec_params(R"(
       UPDATE sessions SET evaluation_status = 'ready', total_score = $2, updated_at = NOW() WHERE id = $1
@@ -711,20 +713,18 @@ class ReliableRoleplayDatabase {
     const auto scenario = tx.exec_params(
         "SELECT id, name, max_rounds FROM scenarios WHERE id = $1", scenario_id);
     if (scenario.empty()) throw ApiError(404, "SCENARIO_NOT_FOUND", "训练场景不存在");
-    const auto active = tx.exec_params(R"(
-      SELECT id FROM roleplay_sessions
-      WHERE user_id = $1 AND scenario_id = $2 AND status = 'in_progress'
-    )", user_id, scenario_id);
-    if (!active.empty()) {
-      throw ApiError(409, "ROLEPLAY_SESSION_IN_PROGRESS", "该场景已有进行中的患者模拟");
-    }
     const auto session_id = makeId("rpsess");
     const auto max_rounds = clampInt(scenario[0]["max_rounds"].as<int>(), 1, 10);
-    tx.exec_params(R"(
+    const auto inserted = tx.exec_params(R"(
       INSERT INTO roleplay_sessions
         (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds)
       VALUES ($1, $2, $3, $4, 'in_progress', 0, $5)
+      ON CONFLICT (user_id, scenario_id) WHERE status = 'in_progress' DO NOTHING
+      RETURNING id
     )", session_id, user_id, scenario_id, scenario[0]["name"].c_str(), max_rounds);
+    if (inserted.empty()) {
+      throw ApiError(409, "ROLEPLAY_SESSION_IN_PROGRESS", "该场景已有进行中的患者模拟");
+    }
     const auto saved = getSessionRow(tx, session_id, user_id);
     tx.commit();
     return {{"session", saved}, {"messages", json::array()}};
@@ -1261,6 +1261,19 @@ class AiJobQueue {
     )", job.id, job.generation, job.attempt, worker_id);
     tx.commit();
     return job;
+  }
+
+  bool renewLease(const AiJob& job) const {
+    pqxx::connection connection(database_url_);
+    pqxx::work tx(connection);
+    const auto renewed = tx.exec_params(R"(
+      UPDATE ai_jobs SET lease_until = NOW() + ($5 * INTERVAL '1 second'), updated_at = NOW()
+      WHERE id = $1 AND status = 'running' AND target_id = $2
+        AND generation = $3 AND attempts = $4 AND lease_until > NOW()
+      RETURNING id
+    )", job.id, job.target_id, job.generation, job.attempt, kJobLeaseSeconds);
+    tx.commit();
+    return !renewed.empty();
   }
 
   void fail(const AiJob& job, const std::string& error_type,
