@@ -48,7 +48,7 @@ Content-Type: application/json
 角色只有：
 
 - `learner`：只能访问自己的场景进度、会话、消息、历史和个人看板。
-- `admin`：可读取当前单一机构的聚合看板及成员学习摘要（完成次数、分数均值、五维均值和训练趋势），但不返回原始对话、报告原文、话术或错题；不能使用训练和个人成长接口。
+- `admin`：只可读取当前单一机构的聚合看板，不返回成员列表、成员明细、原始对话、报告原文、话术或错题；不能使用训练和个人成长接口。
 
 主管角色只能通过受控的服务端数据库运维流程授予已验证的用户，客户端没有自助提权接口。
 
@@ -227,7 +227,7 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 
 小程序收到 `not_started` 时不会无限轮询：已完成会话会重新调用幂等结束接口恢复任务，进行中会话返回训练页，已放弃会话返回历史记录。训练、患者模拟及两个结果页缺少 `sessionId` 时都会明确提示并安全导航。
 
-## 9. 看板与主管成员摘要
+## 9. 看板与主管聚合
 
 ### `GET /dashboard/summary`
 
@@ -238,10 +238,8 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/supervisor/dashboard?range=week|month|quarter|all` | 机构学员数、训练量、达标率、场景聚合、五维均值和趋势 |
-| `GET` | `/supervisor/members?limit=1..100` | 成员学习摘要，按姓名展示，不按成绩排序 |
-| `GET` | `/supervisor/members/{memberId}` | 单个成员的五维均值、弱项建议和最多 12 条训练分数趋势 |
 
-主管接口不会返回消息、原始患者内容、报告全文、错题或话术；不包含排行榜、培训计划、任务分配或团队运营操作。
+主管接口只返回机构级聚合，不返回成员列表、成员明细、消息、原始患者内容、报告全文、错题或话术；不包含排行榜、培训计划、任务分配或团队运营操作。
 
 ## 10. 错误码
 
@@ -257,7 +255,7 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | 404 | `SCENARIO_NOT_FOUND` | 场景不存在 |
 | 404 | `SESSION_NOT_FOUND` / `ROLEPLAY_SESSION_NOT_FOUND` | 会话不存在或不属于本人 |
 | 404 | `LEARNING_MISTAKE_NOT_FOUND` | 错题不存在、不属于本人或不再是当前报告的派生项 |
-| 404 | `LEARNING_PHRASE_NOT_FOUND` / `MEMBER_NOT_FOUND` | 话术或成员不存在、无权访问 |
+| 404 | `LEARNING_PHRASE_NOT_FOUND` | 话术不存在、不属于本人或不再是当前报告的派生项 |
 | 409 | `IDEMPOTENCY_CONFLICT` | 同一幂等 ID 对应不同内容 |
 | 409 | `SESSION_RESPONSE_PENDING` | 模拟患者回复租约有效 |
 | 409 | `ROLEPLAY_RESPONSE_PENDING` | 标准客服回复租约有效 |

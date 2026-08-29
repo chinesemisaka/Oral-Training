@@ -1,6 +1,0 @@
-{
-  "navigationBarTitleText": "成员学习详情",
-  "usingComponents": {
-    "radar-chart": "/components/radar-chart/radar-chart"
-  }
-}

@@ -47,7 +47,6 @@ Page({
       { id: 'quarter', name: '本季度' }, { id: 'all', name: '全部' }
     ],
     supervisor: null,
-    members: [],
     suggestions: [],
     personal: { totalCount: 0, completedCount: 0, averageScore: 0, sceneStats: [], dimensionAverages: [], recentSessions: [] }
   },
@@ -70,10 +69,7 @@ Page({
   },
 
   loadSupervisor() {
-    Promise.all([
-      api.getSupervisorDashboard({ range: this.data.timeRange }),
-      api.getSupervisorMembers({ limit: 100 })
-    ]).then(([supervisor, memberData]) => {
+    api.getSupervisorDashboard({ range: this.data.timeRange }).then(supervisor => {
       const dimensionAverages = DIMENSIONS.map(item => Object.assign({}, item, {
         value: Number((supervisor.dimensionAverages || {})[item.key] || 0)
       }));
@@ -88,11 +84,6 @@ Page({
       });
       this.setData({
         supervisor: normalized,
-        members: (memberData.members || []).map(item => Object.assign({}, item, {
-          averageScore: api.formatScore(item.averageScore),
-          initial: (item.displayName || '学').slice(0, 1),
-          latestText: item.lastTrainingDate ? `最近训练：${item.lastTrainingDate}` : '暂未开始训练'
-        })),
         suggestions: coachingSuggestions(supervisor),
         loading: false
       });
@@ -134,11 +125,5 @@ Page({
     const timeRange = e.currentTarget.dataset.id;
     if (!timeRange || timeRange === this.data.timeRange) return;
     this.setData({ timeRange, loading: true }, () => this.loadSupervisor());
-  },
-
-  openMember(e) {
-    const memberId = e.currentTarget.dataset.id;
-    if (!memberId) return;
-    wx.navigateTo({ url: `/pages/member-detail/member-detail?id=${encodeURIComponent(memberId)}` });
   }
 });

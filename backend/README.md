@@ -85,7 +85,7 @@ ctest --test-dir build-msvc -C Release --output-on-failure
 ```
 
 在同一测试库中，设置 `ORAL_TRAINING_TEST_DATABASE_URL` 后运行
-`build-msvc\Release\database_feature_test.exe`，可验证提示、签到、收藏、主管聚合和成员摘要。
+`build-msvc\Release\database_feature_test.exe`，可验证提示、签到、收藏、主管聚合看板。
 
 并发测试会进行一次受控患者模型调用并在测试后删除精确会话：
 

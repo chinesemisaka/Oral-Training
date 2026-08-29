@@ -24,13 +24,6 @@ void cleanupFeatureUsers(const std::string& database_url) {
   tx.commit();
 }
 
-bool hasMember(const json& members, const std::string& id) {
-  for (const auto& member : members) {
-    if (member.value("id", "") == id) return true;
-  }
-  return false;
-}
-
 void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
@@ -133,13 +126,8 @@ int main() {
     const auto dashboard = database.supervisorDashboard("all");
     require(dashboard["studentCount"].get<int>() >= 2 && dashboard["scenarioStats"].size() == 4,
             "supervisor aggregate did not include learner and scenario data");
-    const auto members = database.listSupervisorMembers(100);
-    require(hasMember(members["members"], kLearnerId) && hasMember(members["members"], kPeerId),
-            "supervisor member list omitted test learners");
-    const auto member = database.supervisorMemberDetail(kLearnerId);
-    require(member["member"]["id"] == kLearnerId && member["trend"].size() >= 1 &&
-            member["dimensionAverages"].contains("medicalCompliance"),
-            "supervisor member detail was incomplete");
+    require(!dashboard.contains("members") && !dashboard.contains("recentSessions"),
+            "supervisor aggregate leaked member-level data");
 
     cleanupFeatureUsers(database_url);
     std::cout << "database feature tests passed\n";

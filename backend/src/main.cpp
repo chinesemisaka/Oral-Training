@@ -1950,26 +1950,6 @@ int main() {
     });
   });
 
-  CROW_ROUTE(app, "/api/supervisor/members").methods(crow::HTTPMethod::GET)([&](const crow::request& request) {
-    return handle(request, [&] {
-      const auto user = identity.authorize(request);
-      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看成员详情");
-      const auto* limit = request.url_params.get("limit");
-      int requested_limit = 50;
-      if (limit != nullptr) try { requested_limit = std::stoi(limit); } catch (...) { throw ApiError(400, "INVALID_ARGUMENT", "limit 参数无效"); }
-      return ok(service.database().listSupervisorMembers(requested_limit));
-    });
-  });
-
-  CROW_ROUTE(app, "/api/supervisor/members/<string>").methods(crow::HTTPMethod::GET)(
-      [&](const crow::request& request, const std::string& member_id) {
-    return handle(request, [&] {
-      const auto user = identity.authorize(request);
-      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看成员详情");
-      return ok(service.database().supervisorMemberDetail(member_id));
-    });
-  });
-
   CROW_CATCHALL_ROUTE(app)([&](const crow::request& request) {
     return handle(request, [&] {
       if (request.method != crow::HTTPMethod::OPTIONS) {

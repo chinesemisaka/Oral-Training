@@ -2,7 +2,7 @@
   <view class="data-header">
     <text class="eyebrow">{{isAdmin ? 'SUPERVISOR · INSIGHTS' : 'STEP 06 / DATA'}}</text>
     <text class="page-title">{{isAdmin ? '主管看板' : '训练数据'}}</text>
-    <text class="page-intro">{{isAdmin ? '只展示当前机构的聚合指标和成员学习摘要；不提供排行榜、任务或对话内容。' : '你的训练数据仅供本人复盘，不用于排名或正式考核。'}}</text>
+    <text class="page-intro">{{isAdmin ? '只展示当前机构的聚合指标；不提供成员明细、排行榜、任务或对话内容。' : '你的训练数据仅供本人复盘，不用于排名或正式考核。'}}</text>
   </view>
 
   <view class="loading-card card" wx:if="{{loading}}"><text>正在汇总训练数据…</text></view>
@@ -25,9 +25,6 @@
     <view class="section-title-row"><text class="section-title">辅导建议</text><text class="section-caption">基于聚合数据</text></view>
     <view class="suggestion-card card {{item.severity}}" wx:for="{{suggestions}}" wx:key="title"><text class="suggestion-title">{{item.title}}</text><text class="suggestion-text">{{item.text}}</text></view>
 
-    <view class="section-title-row"><text class="section-title">成员学习摘要</text><text class="section-caption">按姓名展示，非排名</text></view>
-    <view class="member-card card" wx:for="{{members}}" wx:key="id" bindtap="openMember" data-id="{{item.id}}"><view class="member-avatar">{{item.initial}}</view><view class="member-copy"><text class="member-name">{{item.displayName}}</text><text class="member-meta">完成 {{item.completedSessions}} 次 · 平均 {{item.averageScore}} 分</text><text class="member-meta">{{item.latestText}}</text></view><view class="member-side"><text>{{item.passRate}}%</text><text>达标率 ›</text></view></view>
-    <view class="empty-member card" wx:if="{{members.length === 0}}"><text>当前还没有可展示的学员账户。</text></view>
   </block>
 
   <block wx:elif="{{!isAdmin}}">

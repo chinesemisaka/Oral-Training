@@ -149,8 +149,6 @@ module.exports = {
   getLearningProfile: () => request('/learning/profile'),
   getLearningMine: () => request('/learning/mine'),
   checkIn: () => request('/learning/checkins', { method: 'POST', data: {} }),
-  getSupervisorDashboard: params => request(`/supervisor/dashboard?${query(params || {})}`),
-  getSupervisorMembers: params => request(`/supervisor/members?${query(params || {})}`),
-  getSupervisorMember: memberId => request(`/supervisor/members/${encodeURIComponent(memberId)}`)
+  getSupervisorDashboard: params => request(`/supervisor/dashboard?${query(params || {})}`)
 };
 
