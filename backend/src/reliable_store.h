@@ -17,7 +17,7 @@ inline void enqueueAiJob(pqxx::transaction_base& tx, const std::string& type,
   const auto dedupe_key = type == "evaluation"
       ? "evaluation:" + target_id : "roleplay-summary:" + target_id;
   if (reset_dead_job) {
-    tx.exec_params(R"(
+    const auto reset = tx.exec_params(R"(
       INSERT INTO ai_jobs
         (id, job_type, target_id, dedupe_key, status, attempts, available_at, updated_at)
       VALUES ($1, $2, $3, $4, 'pending', 0, NOW(), NOW())
@@ -25,7 +25,11 @@ inline void enqueueAiJob(pqxx::transaction_base& tx, const std::string& type,
         status = 'pending', generation = ai_jobs.generation + 1, attempts = 0,
         available_at = NOW(), lease_until = NULL,
         worker_id = NULL, last_error = NULL, finished_at = NULL, updated_at = NOW()
+      WHERE ai_jobs.generation < 100
     )", makeId("job"), type, target_id, dedupe_key);
+    if (reset.affected_rows() == 0) {
+      throw ApiError(409, "AI_JOB_GENERATION_EXHAUSTED", "AI 任务重试次数已达到上限");
+    }
     return;
   }
   tx.exec_params(R"(
@@ -33,6 +37,35 @@ inline void enqueueAiJob(pqxx::transaction_base& tx, const std::string& type,
     VALUES ($1, $2, $3, $4, 'pending', NOW())
     ON CONFLICT (dedupe_key) DO NOTHING
   )", makeId("job"), type, target_id, dedupe_key);
+}
+
+inline bool ensureAiJob(pqxx::transaction_base& tx, const std::string& type,
+                        const std::string& target_id) {
+  const auto dedupe_key = type == "evaluation"
+      ? "evaluation:" + target_id : "roleplay-summary:" + target_id;
+  auto jobs = tx.exec_params(
+      "SELECT status, generation FROM ai_jobs WHERE dedupe_key = $1", dedupe_key);
+  if (jobs.empty()) {
+    tx.exec_params(R"(
+      INSERT INTO ai_jobs
+        (id, job_type, target_id, dedupe_key, status, attempts, available_at, updated_at)
+      VALUES ($1, $2, $3, $4, 'pending', 0, NOW(), NOW())
+      ON CONFLICT (dedupe_key) DO NOTHING
+    )", makeId("job"), type, target_id, dedupe_key);
+    jobs = tx.exec_params(
+        "SELECT status, generation FROM ai_jobs WHERE dedupe_key = $1", dedupe_key);
+  }
+  if (jobs.empty()) return false;
+  const auto status = std::string(jobs[0]["status"].c_str());
+  if (status == "pending" || status == "running" || status == "retry_wait") return true;
+  if (jobs[0]["generation"].as<int>() >= 100) return false;
+  const auto reset = tx.exec_params(R"(
+    UPDATE ai_jobs SET status = 'pending', generation = generation + 1, attempts = 0,
+      available_at = NOW(), lease_until = NULL, worker_id = NULL,
+      last_error = NULL, finished_at = NULL, updated_at = NOW()
+    WHERE dedupe_key = $1 AND status IN ('succeeded', 'dead') AND generation < 100
+  )", dedupe_key);
+  return reset.affected_rows() == 1;
 }
 
 class ReliableDatabase {
@@ -457,13 +490,15 @@ class ReliableDatabase {
   json finish(const std::string& user_id, const std::string& session_id) const {
     pqxx::connection connection(database_url_);
     pqxx::work tx(connection);
-    const auto rows = tx.exec_params(
-        "SELECT status, current_round FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
-        session_id, user_id);
+    const auto rows = tx.exec_params(R"(
+      SELECT status, current_round, evaluation_status
+      FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE
+    )", session_id, user_id);
     if (rows.empty()) throw ApiError(404, "SESSION_NOT_FOUND", "训练会话不存在");
     const auto status = std::string(rows[0]["status"].c_str());
     if (status == "abandoned") throw ApiError(409, "SESSION_ABANDONED", "已放弃的训练不能结束或恢复");
     if (status == "completed") {
+      repairEvaluationState(tx, session_id, status, rows[0]["evaluation_status"].c_str());
       const auto saved = getSessionRow(tx, session_id, user_id);
       tx.commit();
       return saved;
@@ -502,11 +537,15 @@ class ReliableDatabase {
         std::string(rows[0]["evaluation_status"].c_str()) != "failed") {
       throw ApiError(409, "EVALUATION_NOT_RETRYABLE", "当前评分不可重试");
     }
-    tx.exec_params("UPDATE sessions SET evaluation_status = 'generating', updated_at = NOW() WHERE id = $1",
-                   session_id);
     tx.exec_params(R"(
-      UPDATE evaluations SET status = 'generating', report = NULL, error_type = NULL, updated_at = NOW()
-      WHERE session_id = $1
+      UPDATE sessions SET evaluation_status = 'generating', total_score = NULL, updated_at = NOW()
+      WHERE id = $1
+    )", session_id);
+    tx.exec_params(R"(
+      INSERT INTO evaluations(session_id, status, report, error_type, updated_at)
+      VALUES ($1, 'generating', NULL, NULL, NOW())
+      ON CONFLICT (session_id) DO UPDATE SET status = 'generating', report = NULL,
+        error_type = NULL, updated_at = NOW()
     )", session_id);
     enqueueAiJob(tx, "evaluation", session_id, true);
     tx.commit();
@@ -514,23 +553,29 @@ class ReliableDatabase {
 
   json getEvaluation(const std::string& user_id, const std::string& session_id) const {
     pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    pqxx::work tx(connection);
     const auto session = tx.exec_params(
-        "SELECT evaluation_status FROM sessions WHERE id = $1 AND user_id = $2", session_id, user_id);
+        "SELECT status, evaluation_status FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
+        session_id, user_id);
     if (session.empty()) throw ApiError(404, "SESSION_NOT_FOUND", "训练会话不存在");
-    const auto status = std::string(session[0]["evaluation_status"].c_str());
+    const auto status = repairEvaluationState(
+        tx, session_id, session[0]["status"].c_str(), session[0]["evaluation_status"].c_str());
     if (status != "ready") {
+      tx.commit();
       return {{"sessionId", session_id}, {"status", status}, {"retryable", status == "failed"},
               {"evaluation", nullptr}};
     }
     const auto evaluation = tx.exec_params(
         "SELECT report FROM evaluations WHERE session_id = $1 AND status = 'ready'", session_id);
     if (evaluation.empty() || evaluation[0]["report"].is_null()) {
+      tx.commit();
       return {{"sessionId", session_id}, {"status", "generating"}, {"retryable", false},
               {"evaluation", nullptr}};
     }
-    return {{"sessionId", session_id}, {"status", "ready"}, {"retryable", false},
-            {"evaluation", json::parse(evaluation[0]["report"].c_str())}};
+    const auto result = json{{"sessionId", session_id}, {"status", "ready"}, {"retryable", false},
+                             {"evaluation", json::parse(evaluation[0]["report"].c_str())}};
+    tx.commit();
+    return result;
   }
 
   void saveEvaluation(const AiJob& job, json report, const std::string& model_version) const {
@@ -543,7 +588,7 @@ class ReliableDatabase {
         dimensions["serviceEtiquette"].get<int>() * 0.10));
     report["totalScore"] = clampInt(total, 0, 100);
     report["modelVersion"] = model_version;
-    report["promptVersion"] = "score-prompt-v2";
+    report["promptVersion"] = "score-prompt-v3";
     pqxx::connection connection(database_url_);
     pqxx::work tx(connection);
     const auto owned = tx.exec_params(R"(
@@ -554,7 +599,7 @@ class ReliableDatabase {
     tx.exec_params(R"(
       INSERT INTO evaluations
         (session_id, status, report, model_version, prompt_version, error_type, generated_at, updated_at)
-      VALUES ($1, 'ready', $2::jsonb, $3, 'score-prompt-v2', NULL, NOW(), NOW())
+      VALUES ($1, 'ready', $2::jsonb, $3, 'score-prompt-v3', NULL, NOW(), NOW())
       ON CONFLICT (session_id) DO UPDATE SET status = 'ready', report = EXCLUDED.report,
         model_version = EXCLUDED.model_version, prompt_version = EXCLUDED.prompt_version,
         error_type = NULL, generated_at = NOW(), updated_at = NOW()
@@ -622,6 +667,69 @@ class ReliableDatabase {
   }
 
  private:
+  static std::string repairEvaluationState(pqxx::transaction_base& tx,
+                                           const std::string& session_id,
+                                           const std::string& session_status,
+                                           const std::string& session_evaluation_status) {
+    if (session_status != "completed") return session_evaluation_status;
+    const auto rows = tx.exec_params(
+        "SELECT status, report FROM evaluations WHERE session_id = $1 FOR UPDATE", session_id);
+    if (!rows.empty() && std::string(rows[0]["status"].c_str()) == "ready" &&
+        !rows[0]["report"].is_null()) {
+      try {
+        const auto report = json::parse(rows[0]["report"].c_str());
+        if (report.contains("totalScore") && report["totalScore"].is_number_integer()) {
+          const auto total_score = report["totalScore"].get<int>();
+          if (total_score < 0 || total_score > 100) throw std::out_of_range("totalScore");
+          tx.exec_params(R"(
+            UPDATE sessions SET evaluation_status = 'ready', total_score = $2, updated_at = NOW()
+            WHERE id = $1 AND (evaluation_status <> 'ready' OR total_score IS DISTINCT FROM $2)
+          )", session_id, total_score);
+          return "ready";
+        }
+      } catch (...) {
+      }
+    }
+    const bool failed = session_evaluation_status == "failed" ||
+        (!rows.empty() && std::string(rows[0]["status"].c_str()) == "failed");
+    if (failed) {
+      tx.exec_params(R"(
+        INSERT INTO evaluations(session_id, status, report, error_type, updated_at)
+        VALUES ($1, 'failed', NULL, 'STATE_RECORD_MISSING', NOW())
+        ON CONFLICT (session_id) DO UPDATE SET status = 'failed', report = NULL,
+          error_type = COALESCE(evaluations.error_type, 'STATE_RECORD_MISSING'), updated_at = NOW()
+      )", session_id);
+      tx.exec_params(R"(
+        UPDATE sessions SET evaluation_status = 'failed', total_score = NULL, updated_at = NOW()
+        WHERE id = $1 AND (evaluation_status <> 'failed' OR total_score IS NOT NULL)
+      )", session_id);
+      return "failed";
+    }
+    tx.exec_params(R"(
+      INSERT INTO evaluations(session_id, status, report, error_type, updated_at)
+      VALUES ($1, 'generating', NULL, NULL, NOW())
+      ON CONFLICT (session_id) DO UPDATE SET status = 'generating', report = NULL,
+        error_type = NULL, updated_at = NOW()
+      WHERE evaluations.status <> 'generating' OR evaluations.report IS NOT NULL
+    )", session_id);
+    tx.exec_params(R"(
+      UPDATE sessions SET evaluation_status = 'generating', total_score = NULL, updated_at = NOW()
+      WHERE id = $1 AND (evaluation_status <> 'generating' OR total_score IS NOT NULL)
+    )", session_id);
+    if (!ensureAiJob(tx, "evaluation", session_id)) {
+      tx.exec_params(R"(
+        UPDATE evaluations SET status = 'failed', error_type = 'JOB_GENERATION_EXHAUSTED',
+          updated_at = NOW() WHERE session_id = $1
+      )", session_id);
+      tx.exec_params(R"(
+        UPDATE sessions SET evaluation_status = 'failed', total_score = NULL, updated_at = NOW()
+        WHERE id = $1
+      )", session_id);
+      return "failed";
+    }
+    return "generating";
+  }
+
   static json messageJson(const std::string& id, const std::string& role,
                           const std::string& content, int round) {
     return {{"id", id}, {"role", role}, {"content", content}, {"round", round}};
@@ -1075,6 +1183,7 @@ class ReliableRoleplayDatabase {
       throw ApiError(409, "ROLEPLAY_SESSION_ABANDONED", "已放弃的患者模拟不能结束或恢复");
     }
     if (status == "completed") {
+      repairSummaryState(tx, session_id, status);
       const auto saved = getSessionRow(tx, session_id, user_id);
       tx.commit();
       return saved;
@@ -1119,8 +1228,10 @@ class ReliableRoleplayDatabase {
       throw ApiError(409, "ROLEPLAY_SUMMARY_NOT_RETRYABLE", "当前复盘不可重试");
     }
     tx.exec_params(R"(
-      UPDATE roleplay_summaries SET status = 'generating', summary = NULL,
-        error_type = NULL, updated_at = NOW() WHERE session_id = $1
+      INSERT INTO roleplay_summaries(session_id, status, summary, error_type, updated_at)
+      VALUES ($1, 'generating', NULL, NULL, NOW())
+      ON CONFLICT (session_id) DO UPDATE SET status = 'generating', summary = NULL,
+        error_type = NULL, updated_at = NOW()
     )", session_id);
     tx.exec_params("UPDATE roleplay_sessions SET updated_at = NOW() WHERE id = $1", session_id);
     enqueueAiJob(tx, "roleplay_summary", session_id, true);
@@ -1129,23 +1240,29 @@ class ReliableRoleplayDatabase {
 
   json getSummary(const std::string& user_id, const std::string& session_id) const {
     pqxx::connection connection(database_url_);
-    pqxx::read_transaction tx(connection);
+    pqxx::work tx(connection);
     const auto session = tx.exec_params(
-        "SELECT status FROM roleplay_sessions WHERE id = $1 AND user_id = $2", session_id, user_id);
+        "SELECT status FROM roleplay_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
+        session_id, user_id);
     if (session.empty()) throw ApiError(404, "ROLEPLAY_SESSION_NOT_FOUND", "患者模拟会话不存在");
+    repairSummaryState(tx, session_id, session[0]["status"].c_str());
     const auto summary = tx.exec_params(
         "SELECT status, summary FROM roleplay_summaries WHERE session_id = $1", session_id);
     if (summary.empty()) {
+      tx.commit();
       return {{"sessionId", session_id}, {"status", "not_started"},
               {"retryable", false}, {"summary", nullptr}};
     }
     const auto status = std::string(summary[0]["status"].c_str());
     if (status != "ready" || summary[0]["summary"].is_null()) {
+      tx.commit();
       return {{"sessionId", session_id}, {"status", status},
               {"retryable", status == "failed"}, {"summary", nullptr}};
     }
-    return {{"sessionId", session_id}, {"status", "ready"}, {"retryable", false},
-            {"summary", json::parse(summary[0]["summary"].c_str())}};
+    const auto result = json{{"sessionId", session_id}, {"status", "ready"}, {"retryable", false},
+                             {"summary", json::parse(summary[0]["summary"].c_str())}};
+    tx.commit();
+    return result;
   }
 
   void saveSummary(const AiJob& job, json summary, const std::string& model_version) const {
@@ -1179,6 +1296,43 @@ class ReliableRoleplayDatabase {
   }
 
  private:
+  static std::string repairSummaryState(pqxx::transaction_base& tx,
+                                        const std::string& session_id,
+                                        const std::string& session_status) {
+    const auto rows = tx.exec_params(
+        "SELECT status, summary FROM roleplay_summaries WHERE session_id = $1 FOR UPDATE", session_id);
+    if (!rows.empty() && std::string(rows[0]["status"].c_str()) == "ready" &&
+        !rows[0]["summary"].is_null()) {
+      try {
+        if (json::parse(rows[0]["summary"].c_str()).is_object()) return "ready";
+      } catch (...) {
+      }
+    }
+    if (!rows.empty() && std::string(rows[0]["status"].c_str()) == "failed") {
+      tx.exec_params(R"(
+        UPDATE roleplay_summaries SET summary = NULL, updated_at = NOW()
+        WHERE session_id = $1 AND summary IS NOT NULL
+      )", session_id);
+      return "failed";
+    }
+    if (session_status != "completed") return rows.empty() ? "not_started" : rows[0]["status"].c_str();
+    tx.exec_params(R"(
+      INSERT INTO roleplay_summaries(session_id, status, summary, error_type, updated_at)
+      VALUES ($1, 'generating', NULL, NULL, NOW())
+      ON CONFLICT (session_id) DO UPDATE SET status = 'generating', summary = NULL,
+        error_type = NULL, updated_at = NOW()
+      WHERE roleplay_summaries.status <> 'generating' OR roleplay_summaries.summary IS NOT NULL
+    )", session_id);
+    if (!ensureAiJob(tx, "roleplay_summary", session_id)) {
+      tx.exec_params(R"(
+        UPDATE roleplay_summaries SET status = 'failed', error_type = 'JOB_GENERATION_EXHAUSTED',
+          updated_at = NOW() WHERE session_id = $1
+      )", session_id);
+      return "failed";
+    }
+    return "generating";
+  }
+
   static json messageJson(const std::string& id, const std::string& role,
                           const std::string& content, int round,
                           const json& learning_points = json::array(),
@@ -1334,17 +1488,20 @@ class AiJobQueue {
                                const std::string& target_id, const std::string& error_type) {
     if (type == "evaluation") {
       tx.exec_params(R"(
-        UPDATE evaluations SET status = 'failed', error_type = $2, updated_at = NOW()
-        WHERE session_id = $1
+        INSERT INTO evaluations(session_id, status, report, error_type, updated_at)
+        VALUES ($1, 'failed', NULL, $2, NOW())
+        ON CONFLICT (session_id) DO UPDATE SET status = 'failed', report = NULL,
+          error_type = EXCLUDED.error_type, updated_at = NOW()
       )", target_id, error_type);
       tx.exec_params(R"(
-        UPDATE sessions SET evaluation_status = 'failed', updated_at = NOW() WHERE id = $1
+        UPDATE sessions SET evaluation_status = 'failed', total_score = NULL, updated_at = NOW()
+        WHERE id = $1
       )", target_id);
     } else {
       tx.exec_params(R"(
-        INSERT INTO roleplay_summaries(session_id, status, error_type, updated_at)
-        VALUES ($1, 'failed', $2, NOW())
-        ON CONFLICT (session_id) DO UPDATE SET status = 'failed',
+        INSERT INTO roleplay_summaries(session_id, status, summary, error_type, updated_at)
+        VALUES ($1, 'failed', NULL, $2, NOW())
+        ON CONFLICT (session_id) DO UPDATE SET status = 'failed', summary = NULL,
           error_type = EXCLUDED.error_type, updated_at = NOW()
       )", target_id, error_type);
       tx.exec_params("UPDATE roleplay_sessions SET updated_at = NOW() WHERE id = $1", target_id);

@@ -709,7 +709,7 @@ class ModelGateway {
 
 改进建议和推荐改写只能给出沟通结构与合规边界，不得编造价格、疗程、优惠、机构服务，不得推荐具体药物、操作或治疗手段；涉及治疗判断时必须明确需要医生结合检查评估。
 
-全部顶层字段都必须存在。五维分数必须是 0—100 的整数；strengths 和 improvements 各至少 1 项；violations 没有违规时使用空数组；roundComments 必须对每个 role=user 的实际客服轮次各点评一次，不能遗漏、重复或引用不存在的轮次。所有列表中的 round 都必须对应实际客服轮次。
+全部顶层字段都必须存在。五维分数必须是 0—100 的整数；strengths 和 improvements 各至少 1 项；violations 没有违规时使用空数组；roundComments 必须对每个 role=user 的实际客服轮次各点评一次，不能遗漏、重复或引用不存在的轮次。所有列表中的 round 都必须对应实际客服轮次。医疗合规分必须与全部违规的累计扣分一致：单项扣分达到 30 分，或累计扣分达到 30 分时，medicalCompliance 不得高于 60；累计扣分达到 60 分时不得高于 50。
 
 请只输出合法 json，结构如下：
 {"dimensionScores":{"knowledgeAccuracy":0,"medicalCompliance":0,"empathy":0,"needsDiscovery":0,"serviceEtiquette":0},"summary":"","strengths":[{"round":1,"evidence":"","content":""}],"improvements":[{"round":1,"content":""}],"violations":[{"round":1,"originalQuote":"","type":"","reason":"","deduction":0,"recommendedRewrite":""}],"roundComments":[{"round":1,"userMessage":"","comment":"","recommendedRewrite":""}]}
@@ -1075,6 +1075,21 @@ json reportArray(const json& source, const char* key, size_t min_items, size_t m
   return source[key];
 }
 
+int maximumMedicalComplianceScore(const json& violations) {
+  int total_deduction = 0;
+  int largest_deduction = 0;
+  for (const auto& violation : violations) {
+    const auto deduction = violation.value("deduction", 0);
+    total_deduction += deduction;
+    largest_deduction = std::max(largest_deduction, deduction);
+  }
+  int maximum = 100;
+  if (total_deduction >= 60) maximum = 50;
+  else if (total_deduction >= 30) maximum = 60;
+  if (largest_deduction >= 30) maximum = std::min(maximum, 60);
+  return maximum;
+}
+
 json normalizeReport(const json& source, const json& messages) {
   if (!source.is_object()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "评分报告不是 JSON 对象");
   std::map<int, std::string> user_messages;
@@ -1141,12 +1156,9 @@ json normalizeReport(const json& source, const json& messages) {
                           {"recommendedRewrite", rewrite}});
   }
 
-  const bool has_severe_violation = std::any_of(
-      violations.begin(), violations.end(), [](const auto& violation) {
-        return violation.value("deduction", 0) >= 30;
-      });
-  if (has_severe_violation && dimensions["medicalCompliance"].get<int>() > 60) {
-    throw ApiError(503, "MODEL_SCORE_INCONSISTENT", "严重违规与医疗合规评分不一致");
+  const auto maximum_compliance = maximumMedicalComplianceScore(violations);
+  if (dimensions["medicalCompliance"].get<int>() > maximum_compliance) {
+    throw ApiError(503, "MODEL_SCORE_INCONSISTENT", "累计违规扣分与医疗合规评分不一致");
   }
 
   json round_comments = json::array();
@@ -1291,6 +1303,12 @@ class Service {
     wakeWorkers();
   }
 
+  json getEvaluation(const std::string& user_id, const std::string& session_id) {
+    const auto result = database_.getEvaluation(user_id, session_id);
+    if (result["status"] == "generating") wakeWorkers();
+    return result;
+  }
+
   json sendRoleplayMessage(const std::string& user_id, const std::string& session_id,
                            const std::string& client_message_id, const std::string& content) {
     const auto saved = roleplay_database_.claimLearnerMessage(
@@ -1342,6 +1360,12 @@ class Service {
   void retrySummary(const std::string& user_id, const std::string& session_id) {
     roleplay_database_.retrySummary(user_id, session_id);
     wakeWorkers();
+  }
+
+  json getSummary(const std::string& user_id, const std::string& session_id) {
+    const auto result = roleplay_database_.getSummary(user_id, session_id);
+    if (result["status"] == "generating") wakeWorkers();
+    return result;
   }
 
  private:
@@ -1585,7 +1609,7 @@ int main() {
       [&](const crow::request& request, const std::string& session_id) {
     return handle(request, [&] {
       const auto user = identity.authorize(request, true);
-      return ok(service.roleplayDatabase().getSummary(user.id, session_id));
+      return ok(service.getSummary(user.id, session_id));
     });
   });
 
@@ -1661,7 +1685,7 @@ int main() {
       [&](const crow::request& request, const std::string& session_id) {
     return handle(request, [&] {
       const auto user = identity.authorize(request, true);
-      return ok(service.database().getEvaluation(user.id, session_id));
+      return ok(service.getEvaluation(user.id, session_id));
     });
   });
 

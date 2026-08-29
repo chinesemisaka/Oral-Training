@@ -185,6 +185,26 @@ int main() {
     if (error.code != "MODEL_SCORE_INCONSISTENT") throw;
   }
 
+  auto cumulative_deduction_report = safe_report;
+  cumulative_deduction_report["dimensionScores"]["medicalCompliance"] = 61;
+  cumulative_deduction_report["violations"] = json::array({
+      {{"round", 1}, {"originalQuote", "是否需要拔牙"}, {"type", "边界表达不充分"},
+       {"reason", "需要明确说明诊疗判断边界。"}, {"deduction", 15},
+       {"recommendedRewrite", "是否需要拔牙，要由医生结合检查结果评估。"}},
+      {{"round", 1}, {"originalQuote", "医生结合检查结果评估"}, {"type", "沟通信息不完整"},
+       {"reason", "还应说明可协助安排面诊。"}, {"deduction", 15},
+       {"recommendedRewrite", "是否需要拔牙，要由医生结合检查结果评估。"}},
+  });
+  try {
+    (void)normalizeReport(cumulative_deduction_report, messages);
+    std::cerr << "inconsistent cumulative violation score was accepted\n";
+    return 1;
+  } catch (const ApiError& error) {
+    if (error.code != "MODEL_SCORE_INCONSISTENT") throw;
+  }
+  cumulative_deduction_report["dimensionScores"]["medicalCompliance"] = 60;
+  (void)normalizeReport(cumulative_deduction_report, messages);
+
   auto unsafe_report = safe_report;
   unsafe_report["roundComments"][0]["recommendedRewrite"] = "一般需要1-2年，费用2-5万元。";
   const auto normalized_unsafe = normalizeReport(unsafe_report, messages);
