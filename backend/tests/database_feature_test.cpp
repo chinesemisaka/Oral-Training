@@ -148,10 +148,13 @@ int main() {
     {
       pqxx::connection connection(database_url);
       pqxx::read_transaction tx(connection);
-      expected_weekly_completed = tx.exec(
-          "SELECT COUNT(*) AS count FROM sessions s "
-          "WHERE s.status = 'completed' AND s.evaluation_status = 'ready'" +
-          supervisorTimeFilter("week", "s.finished_at"))[0]["count"].as<int>();
+      expected_weekly_completed = tx.exec(R"(
+        SELECT COUNT(*) AS count FROM sessions s
+        WHERE s.status = 'completed' AND s.evaluation_status = 'ready'
+          AND s.finished_at >= (
+            date_trunc('week', NOW() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai'
+          )
+      )")[0]["count"].as<int>();
     }
     const auto weekly_dashboard = database.supervisorDashboard("week");
     require(weekly_dashboard["completedSessions"].get<int>() == expected_weekly_completed,
