@@ -39,15 +39,20 @@ Page({
   },
 
   loadPhrases() {
-    this.setData({ loading: true });
-    api.getLearningPhrases({
+    this.phraseRequestVersion = (this.phraseRequestVersion || 0) + 1;
+    const requestVersion = this.phraseRequestVersion;
+    const params = {
       search: this.data.keyword.trim(),
       scenarioId: this.data.selectedScenarioId,
       favoritesOnly: this.data.favoritesOnly,
       limit: 50
-    }).then(data => {
+    };
+    this.setData({ loading: true });
+    api.getLearningPhrases(params).then(data => {
+      if (requestVersion !== this.phraseRequestVersion) return;
       this.setData({ phrases: data.items || [], loading: false });
     }).catch(error => {
+      if (requestVersion !== this.phraseRequestVersion) return;
       this.setData({ loading: false });
       wx.showToast({ title: error.message || '话术加载失败', icon: 'none' });
     });

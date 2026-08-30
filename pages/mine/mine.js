@@ -25,7 +25,19 @@ Page({
     streakText: ''
   },
 
-  onShow() { this.loadMine(); },
+  onShow() {
+    api.ensureAuthenticated().then(() => {
+      const user = api.getCurrentUser();
+      if (user && user.role === 'admin') {
+        wx.switchTab({ url: '/pages/admin/admin' });
+        return;
+      }
+      this.loadMine();
+    }).catch(error => {
+      this.setData({ loading: false });
+      wx.showToast({ title: error.message || '登录状态获取失败', icon: 'none' });
+    });
+  },
 
   loadMine() {
     this.setData({ loading: true });

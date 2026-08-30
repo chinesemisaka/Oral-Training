@@ -749,11 +749,15 @@ class ReliableDatabase {
       WHERE s.user_id = $1 AND s.status = 'completed' AND e.status = 'ready'
     )";
     if (!scenario_id.empty()) query += " AND s.scenario_id = $2";
-    query += " ORDER BY s.finished_at DESC NULLS LAST LIMIT 200";
-    const auto rows = scenario_id.empty() ? tx.exec_params(query, user_id)
-                                          : tx.exec_params(query, user_id, scenario_id);
+    constexpr int batch_size = 200;
+    int offset = 0;
     json items = json::array();
-    for (const auto& row : rows) {
+    while (items.size() < static_cast<size_t>(limit)) {
+      const auto page_query = query + " ORDER BY s.finished_at DESC NULLS LAST LIMIT " +
+          std::to_string(batch_size) + " OFFSET " + std::to_string(offset);
+      const auto rows = scenario_id.empty() ? tx.exec_params(page_query, user_id)
+                                            : tx.exec_params(page_query, user_id, scenario_id);
+      for (const auto& row : rows) {
       const auto report = storedReport(row);
       for (const auto& phrase : learningPhrasesFromReport(report)) {
         if (items.size() >= static_cast<size_t>(limit)) break;
@@ -780,7 +784,10 @@ class ReliableDatabase {
             {"csReply", cs_reply}, {"reason", reason}, {"favorited", favorited},
         });
       }
-      if (items.size() >= static_cast<size_t>(limit)) break;
+        if (items.size() >= static_cast<size_t>(limit)) break;
+      }
+      if (rows.size() < static_cast<size_t>(batch_size)) break;
+      offset += batch_size;
     }
     return {{"items", items}, {"total", static_cast<int>(items.size())},
             {"favoritesOnly", favorites_only}};
@@ -845,11 +852,15 @@ class ReliableDatabase {
       WHERE s.user_id = $1 AND s.status = 'completed' AND e.status = 'ready'
     )";
     if (!scenario_id.empty()) query += " AND s.scenario_id = $2";
-    query += " ORDER BY s.finished_at DESC NULLS LAST LIMIT 200";
-    const auto rows = scenario_id.empty() ? tx.exec_params(query, user_id)
-                                          : tx.exec_params(query, user_id, scenario_id);
+    constexpr int batch_size = 200;
+    int offset = 0;
     json items = json::array();
-    for (const auto& row : rows) {
+    while (items.size() < static_cast<size_t>(limit)) {
+      const auto page_query = query + " ORDER BY s.finished_at DESC NULLS LAST LIMIT " +
+          std::to_string(batch_size) + " OFFSET " + std::to_string(offset);
+      const auto rows = scenario_id.empty() ? tx.exec_params(page_query, user_id)
+                                            : tx.exec_params(page_query, user_id, scenario_id);
+      for (const auto& row : rows) {
       const auto session_id = std::string(row["id"].c_str());
       const auto report = storedReport(row);
       for (const auto& mistake : learningMistakesFromReport(report)) {
@@ -869,7 +880,10 @@ class ReliableDatabase {
             {"recommendedRewrite", jsonString(mistake, "recommendedRewrite")}, {"mastered", mastered},
         });
       }
-      if (items.size() >= static_cast<size_t>(limit)) break;
+        if (items.size() >= static_cast<size_t>(limit)) break;
+      }
+      if (rows.size() < static_cast<size_t>(batch_size)) break;
+      offset += batch_size;
     }
     return {{"items", items}, {"total", static_cast<int>(items.size())},
             {"includeMastered", include_mastered}};
@@ -910,12 +924,17 @@ class ReliableDatabase {
     auto connection = database_pool_->acquire();
     pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params(R"(
-      SELECT s.id, s.scenario_id, s.scenario_name, s.total_score,
-        to_char(s.finished_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS finished_date,
-        e.report
-      FROM sessions s JOIN evaluations e ON e.session_id = s.id
-      WHERE s.user_id = $1 AND s.status = 'completed' AND e.status = 'ready'
-      ORDER BY s.finished_at ASC NULLS LAST LIMIT 200
+      SELECT recent.id, recent.scenario_id, recent.scenario_name, recent.total_score,
+        to_char(recent.finished_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS finished_date,
+        recent.report
+      FROM (
+        SELECT s.id, s.scenario_id, s.scenario_name, s.total_score, s.finished_at, e.report
+        FROM sessions s JOIN evaluations e ON e.session_id = s.id
+        WHERE s.user_id = $1 AND s.status = 'completed' AND e.status = 'ready'
+        ORDER BY s.finished_at DESC NULLS LAST
+        LIMIT 200
+      ) recent
+      ORDER BY recent.finished_at ASC NULLS LAST
     )", user_id);
     const std::vector<std::string> keys = {
         "knowledgeAccuracy", "medicalCompliance", "empathy", "needsDiscovery", "serviceEtiquette"};
@@ -968,10 +987,12 @@ class ReliableDatabase {
       return averages[left].get<double>() < averages[right].get<double>();
     });
     json weaknesses = json::array();
-    for (size_t index = 0; index < ordered_keys.size() && index < 2; ++index) {
-      const auto& key = ordered_keys[index];
-      const auto& copy = dimension_copy.at(key);
-      weaknesses.push_back({{"key", key}, {"name", copy.first}, {"score", averages[key]}, {"suggestion", copy.second}});
+    if (count > 0) {
+      for (size_t index = 0; index < ordered_keys.size() && index < 2; ++index) {
+        const auto& key = ordered_keys[index];
+        const auto& copy = dimension_copy.at(key);
+        weaknesses.push_back({{"key", key}, {"name", copy.first}, {"score", averages[key]}, {"suggestion", copy.second}});
+      }
     }
     json trend = json::array();
     const size_t first = all_trend.size() > 12 ? all_trend.size() - 12 : 0;
@@ -1070,7 +1091,7 @@ class ReliableDatabase {
   }
 
   json supervisorDashboard(const std::string& time_range) const {
-    const auto time_filter = supervisorTimeFilter(time_range, "s.updated_at");
+    const auto time_filter = supervisorTimeFilter(time_range, "s.finished_at");
     auto connection = database_pool_->acquire();
     pqxx::read_transaction tx(connection.get());
     const auto student_count = tx.exec(R"(
@@ -1091,7 +1112,7 @@ class ReliableDatabase {
       FROM scenarios sc
       LEFT JOIN sessions s ON s.scenario_id = sc.id
         AND s.status = 'completed' AND s.evaluation_status = 'ready'
-    )" + supervisorTimeFilter(time_range, "s.updated_at") + R"(
+    )" + supervisorTimeFilter(time_range, "s.finished_at") + R"(
       GROUP BY sc.id, sc.name, sc.sort_order ORDER BY sc.sort_order
     )");
     const auto report_rows = tx.exec(R"(

@@ -2,7 +2,7 @@
   <view class="scene-header">
     <text class="eyebrow">STEP 01 / SCENE</text>
     <text class="page-title">{{trainingMode === 'patient_simulation' ? '选择患者模拟场景' : '选择客服训练场景'}}</text>
-    <text class="page-intro">{{trainingMode === 'patient_simulation' ? '你将扮演患者，向标准口腔客服自由提问并学习其合规答复。' : '先了解患者公开画像，再开始一段不提供提示的真实对练。'}}</text>
+    <text class="page-intro">{{trainingMode === 'patient_simulation' ? '你将扮演患者，向标准口腔客服自由提问并学习其合规答复。' : '先了解患者公开画像，再开始一段可使用有限提示与快捷表达辅助的真实对练。'}}</text>
   </view>
 
   <view class="mode-switch" aria-label="训练模式切换">

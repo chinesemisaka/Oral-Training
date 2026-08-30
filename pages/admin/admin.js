@@ -9,6 +9,13 @@ const DIMENSIONS = [
 ];
 
 const coachingSuggestions = dashboard => {
+  if (Number(dashboard.completedSessions || 0) <= 0) {
+    return [{
+      title: '暂无足够训练数据',
+      text: '完成训练并生成报告后，这里会根据机构聚合数据给出辅导建议。',
+      severity: 'normal'
+    }];
+  }
   const suggestions = [];
   const dimensions = dashboard.dimensionAverages || {};
   const weakest = DIMENSIONS.reduce((current, item) => {
@@ -69,7 +76,11 @@ Page({
   },
 
   loadSupervisor() {
-    api.getSupervisorDashboard({ range: this.data.timeRange }).then(supervisor => {
+    this.supervisorRequestVersion = (this.supervisorRequestVersion || 0) + 1;
+    const requestVersion = this.supervisorRequestVersion;
+    const requestedRange = this.data.timeRange;
+    api.getSupervisorDashboard({ range: requestedRange }).then(supervisor => {
+      if (requestVersion !== this.supervisorRequestVersion || requestedRange !== this.data.timeRange) return;
       const dimensionAverages = DIMENSIONS.map(item => Object.assign({}, item, {
         value: Number((supervisor.dimensionAverages || {})[item.key] || 0)
       }));
@@ -88,6 +99,7 @@ Page({
         loading: false
       });
     }).catch(error => {
+      if (requestVersion !== this.supervisorRequestVersion || requestedRange !== this.data.timeRange) return;
       this.setData({ loading: false });
       wx.showToast({ title: error.message || '主管数据加载失败', icon: 'none' });
     });
