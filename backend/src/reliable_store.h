@@ -1184,19 +1184,50 @@ class ReliableDatabase {
         "SELECT status, report FROM evaluations WHERE session_id = $1 FOR UPDATE", session_id);
     if (!rows.empty() && std::string(rows[0]["status"].c_str()) == "ready" &&
         !rows[0]["report"].is_null()) {
-      try {
-        const auto report = json::parse(rows[0]["report"].c_str());
-        if (report.contains("totalScore") && report["totalScore"].is_number_integer()) {
-          const auto total_score = report["totalScore"].get<int>();
-          if (total_score < 0 || total_score > 100) throw std::out_of_range("totalScore");
-          tx.exec_params(R"(
-            UPDATE sessions SET evaluation_status = 'ready', total_score = $2, updated_at = NOW()
-            WHERE id = $1 AND (evaluation_status <> 'ready' OR total_score IS DISTINCT FROM $2)
-          )", session_id, total_score);
-          return "ready";
+      auto report = json::parse(rows[0]["report"].c_str(), nullptr, false);
+      const auto valid_score = [](const json& value) {
+        if (!value.is_number()) return false;
+        const auto number = value.get<double>();
+        return std::isfinite(number) && number >= 0 && number <= 100 && std::floor(number) == number;
+      };
+      std::optional<int> total;
+      if (report.is_object()) {
+        if (report.contains("totalScore") && valid_score(report["totalScore"])) {
+          total = report["totalScore"].get<int>();
+        } else {
+          const auto session = tx.exec_params("SELECT total_score FROM sessions WHERE id = $1", session_id);
+          if (!session[0]["total_score"].is_null()) total = session[0]["total_score"].as<int>();
+          if (!total && report.contains("dimensionScores") && report["dimensionScores"].is_object()) {
+            const auto& dimensions = report["dimensionScores"];
+            const std::vector<std::pair<std::string, double>> weights = {
+                {"knowledgeAccuracy", .25}, {"medicalCompliance", .25}, {"empathy", .20},
+                {"needsDiscovery", .20}, {"serviceEtiquette", .10}};
+            double weighted = 0;
+            bool complete = true;
+            for (const auto& entry : weights) {
+              if (!dimensions.contains(entry.first) || !valid_score(dimensions[entry.first])) {
+                complete = false;
+                break;
+              }
+              weighted += dimensions[entry.first].get<double>() * entry.second;
+            }
+            if (complete) total = static_cast<int>(std::round(weighted));
+          }
         }
-      } catch (...) {
       }
+      // A read must never destroy an existing report just because it cannot
+      // infer a score. Keep the evidence for diagnosis instead of re-enqueueing.
+      if (!total) throw ApiError(503, "REPORT_INVALID", "旧报告缺少可恢复的总分，原报告已保留");
+      tx.exec_params(R"(
+        UPDATE evaluations SET report = jsonb_set(report, '{totalScore}', to_jsonb($2::int)),
+          updated_at = NOW()
+        WHERE session_id = $1 AND report->'totalScore' IS DISTINCT FROM to_jsonb($2::int)
+      )", session_id, *total);
+      tx.exec_params(R"(
+        UPDATE sessions SET evaluation_status = 'ready', total_score = $2, updated_at = NOW()
+        WHERE id = $1 AND (evaluation_status <> 'ready' OR total_score IS DISTINCT FROM $2)
+      )", session_id, *total);
+      return "ready";
     }
     const bool failed = session_evaluation_status == "failed" ||
         (!rows.empty() && std::string(rows[0]["status"].c_str()) == "failed");

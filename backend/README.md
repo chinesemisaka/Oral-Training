@@ -17,9 +17,10 @@
    & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\006_learner_insights.sql
    & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\007_training_experience.sql
    & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\008_supervisor_growth.sql
+   & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\009_legacy_report_totals.sql
    ```
 
-   `003` 会完整归档历史重复轮次后建立唯一索引，回填回复状态，并为已有 `generating` 记录补任务。`004` 保留所有旧记录并归属到 `demo-user-001`。`005` 按“最新回复 + 其之前最近一次输入”修复被拆开的历史问答，并补建完成会话缺失的报告或任务；被替换的消息、报告和任务状态都会归档。迁移本身不会调用模型，执行 `005` 时必须先停止后端。
+   `003` 会完整归档历史重复轮次后建立唯一索引，回填回复状态，并为已有 `generating` 记录补任务。`004` 保留所有旧记录并归属到 `demo-user-001`。`005` 按“最新回复 + 其之前最近一次输入”修复被拆开的历史问答，并补建完成会话缺失的报告或任务；被替换的消息、报告和任务状态都会归档。迁移本身不会调用模型，执行 `005` 至 `009` 期间必须保持后端停止，全部迁移完成后再启动。`009` 补齐旧报告总分，并恢复 `005` 误排队但未发生问答修复的归档报告；不会覆盖已重新生成的报告。
 
 3. 构建并启动：
 

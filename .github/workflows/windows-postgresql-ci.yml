@@ -74,7 +74,8 @@ jobs:
             '005_pair_and_state_repair.sql',
             '006_learner_insights.sql',
             '007_training_experience.sql',
-            '008_supervisor_growth.sql'
+            '008_supervisor_growth.sql',
+            '009_legacy_report_totals.sql'
           )
           foreach ($migration in $migrationFiles) {
             & $env:PSQL_PATH --dbname=$env:DATABASE_URL -v ON_ERROR_STOP=1 -X -f ".\backend\migrations\$migration"

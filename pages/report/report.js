@@ -139,7 +139,7 @@ Page({
       this.setData({ expandedEvaluationId: '' });
       return;
     }
-    if (session.evaluationDetail) {
+    if (session.evaluationDetail && !session.evaluationDetail.pending) {
       this.setData({ expandedEvaluationId: id });
       return;
     }

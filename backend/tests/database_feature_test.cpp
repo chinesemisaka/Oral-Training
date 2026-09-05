@@ -222,6 +222,64 @@ int main() {
     }
     require(found_old_mistake, "unmastered mistake beyond the first 200 reports was omitted");
 
+    // Legacy reports must keep all their fields and never create model jobs.
+    json original_report;
+    {
+      pqxx::connection connection(database_url);
+      pqxx::read_transaction tx(connection);
+      original_report = json::parse(tx.exec_params(
+          "SELECT report FROM evaluations WHERE session_id = $1", kReportSessionId)[0]["report"].c_str());
+    }
+    for (const int stored_total : {82, 0, -1}) {
+      {
+        pqxx::connection connection(database_url);
+        pqxx::work tx(connection);
+        tx.exec_params("UPDATE evaluations SET report = $2::jsonb WHERE session_id = $1",
+                       kReportSessionId, original_report.dump());
+        tx.exec_params("UPDATE sessions SET total_score = NULLIF($2::int, -1) WHERE id = $1",
+                       kReportSessionId, stored_total);
+        tx.commit();
+      }
+      const int expected = stored_total < 0 ? 82 : stored_total;
+      const auto result = database.getEvaluation(kLearnerId, kReportSessionId);
+      require(result["status"] == "ready" && result["evaluation"]["totalScore"] == expected,
+              "legacy total was not recovered from session or complete dimensions");
+      (void)database.finish(kLearnerId, kReportSessionId);
+      (void)database.getEvaluation(kLearnerId, kReportSessionId);
+      pqxx::connection connection(database_url);
+      pqxx::read_transaction tx(connection);
+      auto persisted = json::parse(tx.exec_params(
+          "SELECT report FROM evaluations WHERE session_id = $1", kReportSessionId)[0]["report"].c_str());
+      persisted.erase("totalScore");
+      require(persisted == original_report, "legacy report contents were modified");
+      require(tx.exec_params("SELECT 1 FROM ai_jobs WHERE target_id = $1", kReportSessionId).empty(),
+              "reading a legacy report enqueued a model job");
+    }
+    auto incomplete = original_report;
+    incomplete["dimensionScores"].erase("empathy");
+    {
+      pqxx::connection connection(database_url);
+      pqxx::work tx(connection);
+      tx.exec_params("UPDATE evaluations SET report = $2::jsonb WHERE session_id = $1",
+                     kReportSessionId, incomplete.dump());
+      tx.exec_params("UPDATE sessions SET total_score = NULL WHERE id = $1", kReportSessionId);
+      tx.commit();
+    }
+    try {
+      (void)database.getEvaluation(kLearnerId, kReportSessionId);
+      throw std::runtime_error("incomplete dimensions were silently scored");
+    } catch (const ApiError& error) {
+      require(error.code == "REPORT_INVALID", "unexpected legacy report error");
+    }
+    {
+      pqxx::connection connection(database_url);
+      pqxx::read_transaction tx(connection);
+      require(json::parse(tx.exec_params("SELECT report FROM evaluations WHERE session_id = $1",
+          kReportSessionId)[0]["report"].c_str()) == incomplete, "unrecoverable report was destroyed");
+      require(tx.exec_params("SELECT 1 FROM ai_jobs WHERE target_id = $1", kReportSessionId).empty(),
+              "unrecoverable report was automatically re-enqueued");
+    }
+
     runJobLockOrderTests(database_url);
 
     cleanupFeatureUsers(database_url);

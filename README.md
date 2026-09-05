@@ -23,7 +23,7 @@ docs/api.md                      公共 API 契约
 
 ## 初始化数据库
 
-先备份历史数据库，并只读执行 `backend/migrations/preflight_reliability.sql` 记录重复轮次和异常状态。按顺序执行全部迁移；`003` 会归档重复消息并补可靠任务，`004` 会把历史记录保留在演示用户下，`005` 会按完整生成尝试重新配对历史问答并修复缺失的报告/任务状态。迁移过程不会调用模型；执行 `005` 时必须先停止后端。
+先备份历史数据库，并只读执行 `backend/migrations/preflight_reliability.sql` 记录重复轮次和异常状态。按顺序执行全部迁移；`003` 会归档重复消息并补可靠任务，`004` 会把历史记录保留在演示用户下，`005` 会按完整生成尝试重新配对历史问答并修复缺失的报告/任务状态。迁移过程不会调用模型；执行 `005` 至 `009` 期间必须保持后端停止，全部迁移完成后再启动。`009` 补齐旧报告总分，并恢复 `005` 误排队但未发生问答修复的归档报告；不会覆盖已重新生成的报告。
 
 ```powershell
 $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
@@ -35,6 +35,7 @@ $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\006_learner_insights.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\007_training_experience.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\008_supervisor_growth.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\009_legacy_report_totals.sql
 ```
 
 ## 构建与启动后端

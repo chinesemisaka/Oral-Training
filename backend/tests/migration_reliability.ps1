@@ -45,6 +45,7 @@ try {
   Invoke-Psql $emptySchema (Join-Path $migrations '006_learner_insights.sql') ''
   Invoke-Psql $emptySchema (Join-Path $migrations '007_training_experience.sql') ''
   Invoke-Psql $emptySchema (Join-Path $migrations '008_supervisor_growth.sql') ''
+  Invoke-Psql $emptySchema (Join-Path $migrations '009_legacy_report_totals.sql') ''
   Invoke-Psql $emptySchema '' @'
 DO $$ BEGIN
   IF to_regclass('message_repair_archive') IS NULL OR to_regclass('ai_jobs') IS NULL OR
@@ -193,6 +194,58 @@ DO $$ BEGIN
   END IF;
 END $$;
 '@
+  # Exercise the actual upgrade path: v005 archives a legacy report first.
+  Invoke-Psql $historySchema '' @'
+INSERT INTO sessions(id,user_id,scenario_id,scenario_name,status,current_round,max_rounds,
+  patient_state,evaluation_status,total_score,finished_at)
+SELECT id,'demo-user-001','implant-basic','Legacy report','completed',1,10,'{}'::jsonb,'ready',80,NOW()
+FROM (VALUES ('legacy-restore'),('legacy-changed'),('legacy-new')) AS fixture(id);
+INSERT INTO evaluations(session_id,status,report,model_version,prompt_version,generated_at)
+SELECT id,'ready','{"summary":"original evidence","dimensionScores":{"knowledgeAccuracy":80,
+  "medicalCompliance":80,"empathy":80,"needsDiscovery":80,"serviceEtiquette":80}}'::jsonb,
+  'legacy-model','legacy-prompt',TIMESTAMPTZ '2026-01-01 00:00:00+08'
+FROM sessions WHERE id IN ('legacy-restore','legacy-changed','legacy-new');
+'@
+  Invoke-Psql $historySchema (Join-Path $migrations '005_pair_and_state_repair.sql') ''
+  Invoke-Psql $historySchema '' @'
+INSERT INTO message_pair_repair_audit(source_table,session_id,round,repair_status,pairing_rule,prior_live_rows)
+VALUES ('messages','legacy-changed',1,'resolved','test changed history','[]');
+UPDATE evaluations SET status='ready', report='{"totalScore":99,"summary":"new evidence"}'::jsonb
+WHERE session_id='legacy-new';
+INSERT INTO sessions(id,user_id,scenario_id,scenario_name,status,current_round,max_rounds,
+  patient_state,evaluation_status,total_score,finished_at)
+VALUES ('legacy-live','demo-user-001','implant-basic','Live legacy','completed',1,10,'{}','ready',0,NOW());
+INSERT INTO evaluations(session_id,status,report)
+VALUES ('legacy-live','ready','{"summary":"zero is valid"}');
+'@
+  foreach ($rerun in 1..2) {
+    Invoke-Psql $historySchema (Join-Path $migrations '009_legacy_report_totals.sql') ''
+    Invoke-Psql $historySchema '' @'
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM evaluations e JOIN sessions s ON s.id=e.session_id
+    WHERE s.id='legacy-restore' AND e.status='ready' AND s.total_score=80
+      AND e.report->>'summary'='original evidence' AND (e.report->>'totalScore')::int=80
+      AND e.model_version='legacy-model' AND e.prompt_version='legacy-prompt'
+      AND e.generated_at=TIMESTAMPTZ '2026-01-01 00:00:00+08') THEN
+    RAISE EXCEPTION 'legacy archive was not restored without changing evidence/metadata';
+  END IF;
+  IF (SELECT status FROM ai_jobs WHERE dedupe_key='evaluation:legacy-restore') <> 'succeeded' THEN
+    RAISE EXCEPTION 'redundant legacy model job remains claimable';
+  END IF;
+  IF EXISTS (SELECT 1 FROM evaluations WHERE session_id='legacy-changed' AND status='ready') THEN
+    RAISE EXCEPTION 'report based on changed history was restored';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM evaluations WHERE session_id='legacy-new'
+    AND report->>'summary'='new evidence' AND (report->>'totalScore')::int=99) THEN
+    RAISE EXCEPTION 'replacement report was overwritten';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM evaluations WHERE session_id='legacy-live'
+    AND report->>'summary'='zero is valid' AND (report->>'totalScore')::int=0) THEN
+    RAISE EXCEPTION 'valid zero session score was lost';
+  END IF;
+END $$;
+'@
+  }
   [pscustomobject]@{ Result = 'passed'; EmptySchema = $emptySchema; HistorySchema = $historySchema } |
     ConvertTo-Json -Compress
 } finally {
