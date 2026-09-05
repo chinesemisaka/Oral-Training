@@ -8,6 +8,16 @@ struct AiJob {
   int attempt = 0;
 };
 
+// Every transaction that touches both a session and its AI state must lock
+// the session first. The session serializes report/job writes for that target;
+// queue claim and heartbeat transactions touch jobs only and never wait on it.
+inline bool lockAiJobTarget(pqxx::transaction_base& tx, const std::string& type,
+                            const std::string& target_id, bool skip_locked = false) {
+  const std::string table = type == "evaluation" ? "sessions" : "roleplay_sessions";
+  return !tx.exec_params("SELECT id FROM " + table + " WHERE id = $1 FOR UPDATE" +
+                        (skip_locked ? " SKIP LOCKED" : ""), target_id).empty();
+}
+
 inline int aiJobRetryDelaySeconds(int completed_attempts) {
   return completed_attempts <= 1 ? 5 : 30;
 }
@@ -652,6 +662,9 @@ class ReliableDatabase {
     report["promptVersion"] = "score-prompt-v3";
     auto connection = database_pool_->acquire();
     pqxx::work tx(connection.get());
+    if (!lockAiJobTarget(tx, "evaluation", job.target_id)) {
+      throw ApiError(409, "JOB_LEASE_LOST", "AI 任务目标已不存在");
+    }
     const auto owned = tx.exec_params(R"(
       SELECT 1 FROM ai_jobs WHERE id = $1 AND status = 'running' AND target_id = $2
         AND generation = $3 AND attempts = $4 AND lease_until > NOW() FOR UPDATE
@@ -1864,6 +1877,9 @@ class ReliableRoleplayDatabase {
     summary["promptVersion"] = "roleplay-summary-prompt-v1";
     auto connection = database_pool_->acquire();
     pqxx::work tx(connection.get());
+    if (!lockAiJobTarget(tx, "roleplay_summary", job.target_id)) {
+      throw ApiError(409, "JOB_LEASE_LOST", "AI 任务目标已不存在");
+    }
     const auto owned = tx.exec_params(R"(
       SELECT 1 FROM ai_jobs WHERE id = $1 AND status = 'running' AND target_id = $2
         AND generation = $3 AND attempts = $4 AND lease_until > NOW() FOR UPDATE
@@ -2029,10 +2045,12 @@ class AiJobQueue {
             const std::string& error_message, bool retryable) const {
     auto connection = database_pool_->acquire();
     pqxx::work tx(connection.get());
+    if (!lockAiJobTarget(tx, job.type, job.target_id)) return;
     const auto rows = tx.exec_params(
         "SELECT attempts, max_attempts, job_type, target_id FROM ai_jobs "
-        "WHERE id = $1 AND status = 'running' AND generation = $2 AND attempts = $3 FOR UPDATE",
-        job.id, job.generation, job.attempt);
+        "WHERE id = $1 AND status = 'running' AND generation = $2 AND attempts = $3 "
+        "AND job_type = $4 AND target_id = $5 FOR UPDATE",
+        job.id, job.generation, job.attempt, job.type, job.target_id);
     if (rows.empty()) {
       tx.commit();
       return;
@@ -2107,9 +2125,21 @@ class AiJobQueue {
     const auto exhausted = tx.exec(R"(
       SELECT id, job_type, target_id, generation, attempts FROM ai_jobs
       WHERE status = 'running' AND lease_until <= NOW() AND attempts >= max_attempts
-      FOR UPDATE SKIP LOCKED
+      ORDER BY id LIMIT 100
     )");
-    for (const auto& row : exhausted) {
+    for (const auto& candidate : exhausted) {
+      // Never hold a job lock while waiting for its session. Skip busy targets
+      // so one active poll cannot stall reclamation of unrelated expired jobs.
+      if (!lockAiJobTarget(tx, candidate["job_type"].c_str(),
+                           candidate["target_id"].c_str(), true)) continue;
+      const auto locked = tx.exec_params(R"(
+        SELECT id, job_type, target_id, generation, attempts FROM ai_jobs
+        WHERE id = $1 AND job_type = $2 AND target_id = $3
+          AND status = 'running' AND lease_until <= NOW() AND attempts >= max_attempts
+        FOR UPDATE SKIP LOCKED
+      )", candidate["id"].c_str(), candidate["job_type"].c_str(), candidate["target_id"].c_str());
+      if (locked.empty()) continue;
+      const auto& row = locked[0];
       tx.exec_params(R"(
         UPDATE ai_job_attempts SET status = 'failed', error_type = 'JOB_LEASE_EXPIRED',
           error_message = 'worker lease expired after final attempt', finished_at = NOW()

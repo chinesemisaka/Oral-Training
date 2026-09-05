@@ -33,6 +33,8 @@ void require(bool condition, const std::string& message) {
 
 }  // namespace
 
+#include "job_lock_order_test.h"
+
 int main() {
   const char* raw_url = std::getenv("ORAL_TRAINING_TEST_DATABASE_URL");
   if (raw_url == nullptr || std::string(raw_url).empty()) {
@@ -219,6 +221,8 @@ int main() {
       if (jsonString(item, "sessionId") == kOldReportSessionId) found_old_mistake = true;
     }
     require(found_old_mistake, "unmastered mistake beyond the first 200 reports was omitted");
+
+    runJobLockOrderTests(database_url);
 
     cleanupFeatureUsers(database_url);
     std::cout << "database feature tests passed\n";
