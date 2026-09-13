@@ -113,7 +113,7 @@ AI_WORKER_CONCURRENCY=1
 
 ## 6. 初始化数据库（执行迁移）
 
-在 `backend/` 目录下，按顺序执行全部迁移。当前已到 `009`：
+在 `backend/` 目录下，按顺序执行全部迁移。当前已到 `012`：
 
 ```powershell
 $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
@@ -128,6 +128,9 @@ $env:PGCLIENTENCODING='UTF8'
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\007_supervisor_growth.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\008_custom_patient_profile.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\009_recommendation_scenario.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\010_training_plans.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\011_supervisor_team.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\012_message_emotion.sql
 ```
 
 说明：
@@ -164,11 +167,13 @@ cd backend
 ```
 
 脚本会：
-1. 自动从 `backend.env` 加载环境变量（不存在则创建模板并提示你填写）。
-2. 检查并启动 PostgreSQL 服务。
-3. 检查 exe（若不存在会从 `build-msvc\Release` 复制）。
-4. 检查 `libpq.dll` 是否在 `backend` 目录。
-5. 启动后端，监听 `http://127.0.0.1:8080/api`。
+1. 检查 `backend.env`（不存在则从模板创建并提示你填写）。
+2. 把 `backend.env` 加载到进程环境 —— 后端**只从环境变量读配置**（`getenv`），不解析该文件，所以别直接双击 exe。
+3. 检查并启动 PostgreSQL 服务。
+4. 停掉占用端口或同名的旧后端进程 —— 必须在替换 exe **之前**做，否则 Windows 会锁住正在运行的 exe。
+5. 用 `build-msvc\Release\oral_training_backend.exe` 覆盖 `backend\oral_training_backend.exe`（**每次启动都覆盖**，避免重建后仍在跑旧二进制），并打印该 exe 的时间戳供核对。
+6. 检查 `libpq.dll` 是否在 `backend` 目录。
+7. 启动后端，监听 `http://127.0.0.1:8080/api`。
 
 ### 方式 B：手动启动
 

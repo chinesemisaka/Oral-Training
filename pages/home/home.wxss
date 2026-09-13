@@ -14,9 +14,65 @@
 .brand-greet-name { font-size: 32rpx; font-weight: 600; color: var(--text-strong); letter-spacing: 1rpx; line-height: 1.2; }
 .brand-greet-text { margin-top: 6rpx; font-size: 22rpx; color: var(--text-secondary); }
 
-/* ── 主管提示 ── */
-.admin-hint { display: flex; align-items: flex-start; gap: 14rpx; margin: 0 0 24rpx; padding: 22rpx 24rpx; border-radius: var(--radius-md); background: var(--color-warning-light); color: #8A6E4B; font-size: 22rpx; line-height: 1.6; }
-.admin-hint-icon { display: inline-flex; align-items: center; justify-content: center; width: 32rpx; height: 32rpx; border-radius: 50%; background: var(--color-warning); color: #fff; font-size: 22rpx; font-weight: 600; flex-shrink: 0; margin-top: 2rpx; }
+/* 培训计划横幅样式已收敛到 app.wxss 第 9 节（首页与训练中心共用） */
+
+/* ── 主管工作台（行动优先：待办 > 待辅导成员 > 计划风险 > 团队速览） ── */
+.wb-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 4rpx 16rpx; }
+.wb-title { font-size: 32rpx; font-weight: 600; color: var(--text-strong); }
+.wb-caption { font-size: 22rpx; color: var(--text-muted); }
+
+.wb-metrics { display: flex; gap: 16rpx; margin: 0 0 30rpx; }
+.wb-metric { flex: 1; min-width: 0; padding: 24rpx 12rpx; border-radius: var(--radius-lg); background: #fff; border: 1rpx solid var(--color-border); text-align: center; }
+.wb-metric-val { display: block; font-size: 44rpx; font-weight: 600; line-height: 1.1; color: var(--text-strong); }
+.wb-metric-lbl { display: block; margin-top: 8rpx; font-size: 22rpx; color: var(--text-secondary); }
+.wb-tone-warn { color: var(--color-warning); }
+.wb-tone-info { color: var(--color-primary); }
+.wb-tone-calm { color: var(--color-success); }
+.wb-tone-plain { color: var(--text-strong); }
+
+.wb-card { padding: 8rpx 24rpx; margin: 0 0 30rpx; }
+.wb-row { display: flex; align-items: center; padding: 22rpx 0; }
+.wb-row + .wb-row { border-top: 1rpx solid var(--color-border); }
+.wb-row-hover { opacity: .7; }
+.wb-row-copy { flex: 1; margin-left: 16rpx; min-width: 0; }
+.wb-row-top { display: flex; align-items: center; gap: 10rpx; }
+.wb-row-name { font-size: 26rpx; font-weight: 600; color: var(--text-strong); }
+.wb-row-reason { display: block; margin-top: 8rpx; font-size: 22rpx; color: var(--text-secondary); line-height: 1.5; }
+.wb-avatar { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 60rpx; height: 60rpx; border-radius: 50%; font-size: 24rpx; font-weight: 600; }
+.wb-arrow { flex-shrink: 0; margin-left: 8rpx; color: var(--text-muted); font-size: 26rpx; }
+.wb-footnote { display: block; padding: 16rpx 0 22rpx; font-size: 22rpx; color: var(--text-muted); line-height: 1.5; }
+
+/* 严重度：与「数据」tab 的薄弱项预警同一套语义色（high 红 / medium 橙 / normal 绿） */
+.wb-tag { flex-shrink: 0; padding: 2rpx 12rpx; border-radius: 8rpx; font-size: 20rpx; font-weight: 600; }
+.wb-sev-high { color: var(--color-danger); background: var(--color-danger-light); }
+.wb-sev-medium { color: var(--color-warning); background: var(--color-warning-light); }
+.wb-sev-normal { color: var(--color-success); background: var(--color-success-light); }
+.wb-sev-bg-high { background: var(--color-danger-light); color: var(--color-danger); }
+.wb-sev-bg-medium { background: var(--color-warning-light); color: var(--color-warning); }
+.wb-sev-bg-normal { background: var(--color-success-light); color: var(--color-success); }
+
+.wb-plan { padding: 26rpx 24rpx; }
+.wb-plan-title { flex: 1; min-width: 0; font-size: 28rpx; font-weight: 600; color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-plan-meta { display: block; margin-top: 10rpx; font-size: 22rpx; color: var(--text-secondary); line-height: 1.5; }
+.wb-plan-bar { height: 10rpx; margin-top: 16rpx; border-radius: 6rpx; background: var(--color-bg); overflow: hidden; }
+.wb-plan-fill { height: 10rpx; border-radius: 6rpx; background: var(--color-primary); }
+.wb-sev-fill-high { background: var(--color-danger); }
+.wb-sev-fill-medium { background: var(--color-warning); }
+.wb-sev-fill-normal { background: var(--color-success); }
+.wb-plan-risk { display: block; margin-top: 12rpx; font-size: 22rpx; color: var(--text-secondary); line-height: 1.5; }
+.wb-plan-high .wb-plan-risk { color: var(--color-danger); }
+.wb-plan-medium .wb-plan-risk { color: var(--color-warning); }
+
+.wb-candidate { display: flex; align-items: center; justify-content: space-between; margin: 0 0 24rpx; padding: 24rpx; border-radius: var(--radius-lg); background: var(--color-primary-light); }
+.wb-candidate-text { flex: 1; min-width: 0; font-size: 24rpx; color: var(--color-primary); }
+.wb-candidate-link { flex-shrink: 0; margin-left: 16rpx; font-size: 24rpx; font-weight: 600; color: var(--color-primary); }
+
+.wb-snapshot { display: flex; align-items: center; justify-content: space-between; margin: 0 0 30rpx; padding: 20rpx 24rpx; border-radius: var(--radius-md); background: #fff; border: 1rpx solid var(--color-border); }
+.wb-snapshot-item { font-size: 22rpx; color: var(--text-secondary); }
+
+.wb-idle { padding: 28rpx 24rpx; margin: 0 0 30rpx; }
+.wb-idle-title { display: block; font-size: 26rpx; font-weight: 600; color: var(--text-strong); }
+.wb-idle-desc { display: block; margin-top: 10rpx; font-size: 22rpx; color: var(--text-secondary); line-height: 1.6; }
 
 /* ── 搜索框 ── */
 .search-bar { display: flex; align-items: center; margin: 0 0 24rpx; padding: 0 24rpx; height: 76rpx; background: #fff; border-radius: 38rpx; border: 2rpx solid var(--color-border); transition: border-color .2s; }
@@ -90,18 +146,29 @@
 .phrase-title { display: block; font-size: 26rpx; font-weight: 600; color: var(--text-strong); line-height: 1.4; }
 .phrase-subtitle { display: block; margin-top: 8rpx; color: var(--text-muted); font-size: 22rpx; }
 
-/* 对话预览 */
+/* 对话行：折叠预览与展开示范共用同一套结构
+   --dialog-line-h 必须由角色名与正文共用：两者字号不同，若各自用倍数行高，
+   行盒高度会不同，flex-start 下顶边对齐但基线错开 */
+.dialog-item { display: flex; align-items: flex-start; margin-bottom: 16rpx; --dialog-line-h: 38rpx; }
+.dialog-item:last-child { margin-bottom: 0; }
+.dialog-role { flex-shrink: 0; margin-right: 10rpx; font-size: 22rpx; font-weight: 600; line-height: var(--dialog-line-h); }
+.dialog-role-patient { color: var(--text-secondary); }
+.dialog-role-agent { color: var(--color-primary); }
+.dialog-line { flex: 1; font-size: 24rpx; line-height: var(--dialog-line-h); color: var(--text-strong); }
+.dialog-line-patient { color: var(--text-secondary); }
+
+/* 折叠态：仅预览前两句并截断 */
 .phrase-preview { margin-top: 12rpx; padding: 16rpx; background: var(--color-bg); border-radius: 14rpx; }
-.preview-item { display: flex; margin-bottom: 10rpx; line-height: 1.55; }
-.preview-item:last-child { margin-bottom: 0; }
-.preview-role { flex-shrink: 0; font-size: 22rpx; font-weight: 600; margin-right: 2rpx; }
-.preview-role-patient { color: var(--text-secondary); }
-.preview-role-agent { color: var(--color-primary); }
-.preview-line { font-size: 22rpx; line-height: 1.55; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; color: var(--text-secondary); }
+.phrase-preview .dialog-item { margin-bottom: 10rpx; --dialog-line-h: 34rpx; }
+.phrase-preview .dialog-line { font-size: 22rpx; color: var(--text-secondary); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 
 .phrase-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12rpx; padding-top: 16rpx; border-top: 1rpx solid var(--color-border); }
 .phrase-expand-btn { color: var(--color-primary); font-size: 22rpx; font-weight: 400; }
 .phrase-train-btn { margin: 0; padding: 10rpx 28rpx; background: var(--color-primary); color: #fff; border-radius: 24rpx; font-size: 22rpx; line-height: 1.3; font-weight: 400; }
+
+/* 展开态：完整示范在同一张卡内铺开，高度自适应、不被裁切 */
+.phrase-card-open { margin: 0 4rpx; }
+.phrase-dialog { margin-top: 20rpx; padding-top: 20rpx; border-top: 1rpx solid var(--color-border); }
 
 /* ── 页码指示器 ── */
 .swiper-page-indicator { display: flex; justify-content: center; gap: 10rpx; margin-top: 16rpx; }

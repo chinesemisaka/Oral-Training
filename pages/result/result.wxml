@@ -12,7 +12,7 @@
     <text class="score-caption">本次训练总分</text>
     <view class="level-badge {{level.key}}"><text>{{level.name}}</text></view>
     <text class="result-summary">{{level.note}}</text>
-    <text class="result-time">{{session.startedAt}} — {{session.finishedAt}}</text>
+    <text class="result-time">{{session.rangeText}}</text>
   </view>
 
   <view class="notice-box"><text class="notice-icon">i</text><text>自动评分基于固定 MVP 评分量表，仅用于演示和辅助反馈，不替代专家审核或正式考核。</text></view>
@@ -33,7 +33,7 @@
 
   <view class="feedback-grid">
     <view class="feedback-card feedback-good"><text class="feedback-icon">✓</text><view class="feedback-copy"><text class="feedback-title positive">做得好的地方</text><text class="feedback-item" wx:for="{{evaluation.strengths}}" wx:key="*this">• {{item}}</text></view></view>
-    <view class="feedback-card feedback-improve"><text class="feedback-icon improve-icon">→</text><view class="feedback-copy"><text class="feedback-title improve">下一步改进</text><text class="feedback-item" wx:for="{{evaluation.improvements}}" wx:key="*this">• {{item}}</text></view></view>
+    <view class="feedback-card feedback-improve"><text class="feedback-icon">→</text><view class="feedback-copy"><text class="feedback-title improve">下一步改进</text><text class="feedback-item" wx:for="{{evaluation.improvements}}" wx:key="*this">• {{item}}</text></view></view>
   </view>
 
   <view class="section-title-row">
@@ -76,13 +76,8 @@
   <view class="result-actions">
     <button wx:if="{{nextScenario}}" class="primary-button result-btn-main" bindtap="startNextScenario">下一场：{{nextScenario.name}}</button>
     <button wx:else class="primary-button result-btn-main" bindtap="restartTraining">重新训练</button>
-    <view class="result-btn-row">
-      <button class="secondary-button result-btn-sub" bindtap="viewPhrases">话术锦囊</button>
-      <button class="secondary-button result-btn-sub" bindtap="viewMistakes">错题复练</button>
-    </view>
+    <button class="secondary-button result-btn-sub" bindtap="viewMistakes">错题复练</button>
     <view class="result-link-row">
-      <text class="text-button" bindtap="viewProfile">个人成长</text>
-      <text class="link-divider">·</text>
       <text class="text-button" bindtap="viewHistory">历史记录</text>
     </view>
   </view>

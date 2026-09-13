@@ -7,7 +7,7 @@
     <view class="strip-label-group">
       <text class="strip-label">患者画像</text>
     </view>
-    <text class="strip-text">{{scenario.patientAge}}{{scenario.patientEmotion ? ' · ' + scenario.patientEmotion : ''}} · {{scenario.patientConcern}}</text>
+    <text class="strip-text">{{scenario.patientAge}}{{scenario.patientGender ? ' · ' + scenario.patientGender : ''}}{{scenario.patientEmotion ? ' · ' + scenario.patientEmotion : ''}} · {{scenario.patientConcern}}</text>
   </view>
 
   <scroll-view class="chat-area" scroll-y scroll-into-view="{{scrollToView}}" show-scrollbar="false">
@@ -15,7 +15,10 @@
     <view class="message-item {{item.role === 'user' ? 'user-message' : 'patient-message'}}" wx:for="{{messages}}" wx:key="id">
       <view class="message-avatar {{item.role === 'user' ? 'avatar-user' : 'avatar-patient'}}">{{item.role === 'user' ? '客' : '患'}}</view>
       <view class="message-body">
-        <text class="message-role">{{item.role === 'user' ? '客服' : '患者'}} · {{item.time}}</text>
+        <view class="message-meta">
+          <text class="message-role">{{item.role === 'user' ? '客服' : '患者'}}{{item.time ? ' · ' + item.time : ''}}</text>
+          <text class="tag emotion-tag {{item.emotionTone}}" wx:if="{{item.emotionText}}">{{item.emotionText}}</text>
+        </view>
         <view class="message-bubble"><text>{{item.content}}</text></view>
       </view>
     </view>

@@ -1,4 +1,5 @@
 const api = require('../../utils/api.js');
+const datetime = require('../../utils/datetime.js');
 
 /* 分数分档：颜色只跟随分数（≥80 良好绿 / 60–79 中间蓝 / <60 待提升橙） */
 const scoreTier = score => (score >= 80 ? 'high' : score >= 60 ? 'mid' : 'low');
@@ -76,7 +77,11 @@ Page({
       const scenario = scenarioIndex >= 0 ? scenarios[scenarioIndex] : { name: detail.session.scenarioName };
       const nextScenario = scenarioIndex >= 0 && scenarios.length > 1
         ? scenarios[(scenarioIndex + 1) % scenarios.length] : null;
-      this.setData({ session: detail.session, scenario, nextScenario });
+      /* 起止时间在 JS 预算成展示文本，WXML 里不调用函数 */
+      const sessionView = Object.assign({}, detail.session, {
+        rangeText: datetime.formatRange(detail.session.startedAt, detail.session.finishedAt)
+      });
+      this.setData({ session: sessionView, scenario, nextScenario });
       this.networkRetryIndex = 0;
       this.pollReport();
     }).catch(error => this.handleNetworkError(error, () => this.loadInitialData()));
@@ -149,9 +154,7 @@ Page({
   restartTraining() { wx.switchTab({ url: '/pages/index/index' }); },
   viewScenes() { wx.switchTab({ url: '/pages/index/index' }); },
   viewHistory() { wx.navigateTo({ url: '/pages/report/report' }); },
-  viewPhrases() { wx.navigateTo({ url: '/pages/phrases/phrases' }); },
   viewMistakes() { wx.navigateTo({ url: '/pages/mistakes/mistakes' }); },
-  viewProfile() { wx.navigateTo({ url: '/pages/profile/profile' }); },
 
   toggleViolations() { this.setData({ violationsExpanded: !this.data.violationsExpanded }); },
   toggleRoundComments() { this.setData({ roundCommentsExpanded: !this.data.roundCommentsExpanded }); },

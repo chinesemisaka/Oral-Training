@@ -6,6 +6,12 @@
 
   <view class="phrase-view-switch"><text class="phrase-view {{!favoritesOnly ? 'selected' : ''}}" bindtap="selectPhraseView" data-favorites="false">全部话术</text><text class="phrase-view {{favoritesOnly ? 'selected' : ''}}" bindtap="selectPhraseView" data-favorites="true">我的收藏</text></view>
 
+  <!-- 场景分类筛选：与「全部话术/我的收藏」「关键词搜索」三者可叠加 -->
+  <scroll-view class="category-filter" scroll-x scroll-with-animation>
+    <view class="category-chip {{sceneCategory === '' ? 'selected' : ''}}" bindtap="selectSceneCategory" data-category="">全部场景</view>
+    <view class="category-chip {{sceneCategory === item.id ? 'selected' : ''}}" wx:for="{{sceneCategories}}" wx:key="id" bindtap="selectSceneCategory" data-category="{{item.id}}">{{item.name}}</view>
+  </scroll-view>
+
   <view class="search-card card">
     <input class="search-input" placeholder="搜索场景、患者关切或话术" value="{{keyword}}" bindinput="onSearchInput" bindconfirm="onSearchConfirm" confirm-type="search" />
     <text class="search-action" bindtap="onSearchConfirm">搜索</text>
@@ -18,7 +24,7 @@
     <view class="sk-card"></view>
   </view>
   <view class="empty-card card" wx:elif="{{phrases.length === 0}}">
-    <empty-state title="{{favoritesOnly ? '还没有收藏话术' : '还没有可收录的话术'}}" text="{{favoritesOnly ? '在话术锦囊中点击收藏后，可在这里集中回顾。' : '完成客服训练并生成报告后，关键轮次的优化表达会自动出现在这里。'}}"></empty-state>
+    <empty-state title="{{emptyCopy.title}}" text="{{emptyCopy.text}}"></empty-state>
   </view>
 
   <view class="phrase-list" wx:else>

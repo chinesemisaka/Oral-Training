@@ -1,16 +1,38 @@
 const api = require('../../utils/api.js');
 
+/* 空态文案要区分「这个分类下没有」和「一条都还没有」：
+   否则用户点了某个分类后看到「完成训练并生成报告后…」，会以为自己没练过。 */
+const buildEmptyCopy = (sceneCategories, sceneCategory, favoritesOnly) => {
+  const category = (sceneCategories || []).find(item => item.id === sceneCategory);
+  if (category) {
+    return favoritesOnly
+      ? { title: `「${category.name}」下暂无收藏`, text: '切换其他分类，或在话术锦囊中收藏该场景的话术后再来查看。' }
+      : { title: `「${category.name}」下暂无话术`, text: '完成该场景的客服训练并生成报告后，优化表达会自动出现在这里。' };
+  }
+  return favoritesOnly
+    ? { title: '还没有收藏话术', text: '在话术锦囊中点击收藏后，可在这里集中回顾。' }
+    : { title: '还没有可收录的话术', text: '完成客服训练并生成报告后，关键轮次的优化表达会自动出现在这里。' };
+};
+
 Page({
   data: {
     loading: true,
     keyword: '',
     phrases: [],
     favoritesOnly: false,
-    favoriteBusyId: ''
+    favoriteBusyId: '',
+    /* 场景分类筛选：'' = 全部。中文名只取后端下发的 sceneCategories，前端不另写映射 */
+    sceneCategory: '',
+    sceneCategories: [],
+    emptyCopy: buildEmptyCopy([], '', false)
   },
 
   onLoad(options) {
-    this.setData({ keyword: options.search || '', favoritesOnly: options.favorites === '1' });
+    this.setData({
+      keyword: options.search || '',
+      favoritesOnly: options.favorites === '1',
+      sceneCategory: options.category || ''
+    });
     this.loadPhrases();
   },
 
@@ -20,14 +42,28 @@ Page({
 
   clearSearch() { this.setData({ keyword: '' }, () => this.loadPhrases()); },
 
+  /* 分类在服务端过滤（后端在 LIMIT 之前生效），不是拿到列表后再筛 */
+  selectSceneCategory(e) {
+    const sceneCategory = e.currentTarget.dataset.category || '';
+    if (sceneCategory === this.data.sceneCategory) return;
+    this.setData({ sceneCategory }, () => this.loadPhrases());
+  },
+
   loadPhrases() {
     this.setData({ loading: true });
     api.getLearningPhrases({
       search: this.data.keyword.trim(),
+      sceneCategory: this.data.sceneCategory,
       favoritesOnly: this.data.favoritesOnly,
       limit: 50
     }).then(data => {
-      this.setData({ phrases: data.items || [], loading: false });
+      const sceneCategories = data.sceneCategories || this.data.sceneCategories;
+      this.setData({
+        phrases: data.items || [],
+        sceneCategories,
+        emptyCopy: buildEmptyCopy(sceneCategories, this.data.sceneCategory, this.data.favoritesOnly),
+        loading: false
+      });
     }).catch(error => {
       this.setData({ loading: false });
       wx.showToast({ title: error.message || '话术加载失败', icon: 'none' });

@@ -140,12 +140,38 @@ module.exports = {
     `/learning/mistakes/${encodeURIComponent(sessionId)}/${encodeURIComponent(mistakeKey)}`,
     { method: 'PUT', data: { mastered } }
   ),
+  getMistakeRetrainContext: (sessionId, mistakeKey) => request(
+    `/learning/mistakes/${encodeURIComponent(sessionId)}/${encodeURIComponent(mistakeKey)}/context`
+  ),
+  retrainMistake: (sessionId, mistakeKey, answer) => request(
+    `/learning/mistakes/${encodeURIComponent(sessionId)}/${encodeURIComponent(mistakeKey)}/retrain`,
+    { method: 'POST', data: { answer }, timeout: 60000 }
+  ),
   getLearningProfile: () => request('/learning/profile'),
   getLearningMine: () => request('/learning/mine'),
   checkIn: () => request('/learning/checkins', { method: 'POST', data: {} }),
   getSupervisorDashboard: params => request(`/supervisor/dashboard?${query(params || {})}`),
   getSupervisorMembers: params => request(`/supervisor/members?${query(params || {})}`),
   getSupervisorMember: memberId => request(`/supervisor/members/${encodeURIComponent(memberId)}`),
+  getSupervisorTrainingPlans: params => request(`/supervisor/training-plans?${query(params || {})}`),
+  getSupervisorScenarios: () => request('/supervisor/scenarios'),
+  createTrainingPlan: payload => request('/supervisor/training-plans', { method: 'POST', data: payload }),
+  getTrainingPlan: planId => request(`/supervisor/training-plans/${encodeURIComponent(planId)}`),
+  notifyTrainingPlan: planId => request(`/supervisor/training-plans/${encodeURIComponent(planId)}/notify`, {
+    method: 'POST', data: {}
+  }),
+  getLearnerTrainingPlans: () => request('/learning/training-plans'),
+  getSupervisorForbiddenPhrases: params => request(`/supervisor/reports/forbidden-phrases?${query(params || {})}`),
+  getSupervisorForbiddenPhraseMembers: (category, params) => request(
+    `/supervisor/reports/forbidden-phrases/${encodeURIComponent(category)}?${query(params || {})}`
+  ),
+  getSupervisorLeaderboard: params => request(`/supervisor/reports/leaderboard?${query(params || {})}`),
+  getTeamMembers: params => request(`/supervisor/team/members?${query(params || {})}`),
+  getTeamCandidates: params => request(`/supervisor/team/candidates?${query(params || {})}`),
+  addTeamMembers: learnerIds => request('/supervisor/team/members', { method: 'POST', data: { learnerIds } }),
+  removeTeamMember: learnerId => request(`/supervisor/team/members/${encodeURIComponent(learnerId)}/remove`, {
+    method: 'POST', data: {}
+  }),
   switchRole: role => request('/auth/switch-role', { method: 'POST', data: { role } }),
   getDemoLearners: () => request('/demo/learners'),
   switchLearner: userId => request('/auth/switch-learner', { method: 'POST', data: { userId } })

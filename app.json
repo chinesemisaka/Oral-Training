@@ -13,7 +13,15 @@
     "pages/mine/mine",
     "pages/phrases/phrases",
     "pages/mistakes/mistakes",
-    "pages/profile/profile"
+    "pages/mistake-retrain/mistake-retrain",
+    "pages/profile/profile",
+    "pages/admin-training-plan-create/admin-training-plan-create",
+    "pages/admin-training-plan-detail/admin-training-plan-detail",
+    "pages/admin-phrase-members/admin-phrase-members",
+    "pages/training-plans/training-plans",
+    "pages/training-plan-detail/training-plan-detail",
+    "pages/admin-training/admin-training",
+    "pages/team-members/team-members"
   ],
   "window": {
     "navigationBarBackgroundColor": "#FFFFFF",
@@ -34,6 +42,12 @@
         "text": "首页",
         "iconPath": "static/image/tabbar/home.png",
         "selectedIconPath": "static/image/tabbar/home_selected.png"
+      },
+      {
+        "pagePath": "pages/admin-training/admin-training",
+        "text": "培训",
+        "iconPath": "static/image/tabbar/training.png",
+        "selectedIconPath": "static/image/tabbar/training_selected.png"
       },
       {
         "pagePath": "pages/index/index",

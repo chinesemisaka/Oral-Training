@@ -1,4 +1,5 @@
 const api = require('../../utils/api.js');
+const datetime = require('../../utils/datetime.js');
 
 Page({
   data: {
@@ -31,7 +32,11 @@ Page({
       api.getRoleplayScenarios()
     ]).then(([detail, scenarioData]) => {
       const scenario = scenarioData.items.find(item => item.id === detail.session.scenarioId) || { name: detail.session.scenarioName };
-      this.setData({ session: detail.session, scenario });
+      /* 起止时间在 JS 预算成展示文本，WXML 里不调用函数 */
+      const sessionView = Object.assign({}, detail.session, {
+        rangeText: datetime.formatRange(detail.session.startedAt, detail.session.finishedAt)
+      });
+      this.setData({ session: sessionView, scenario });
       this.networkRetryIndex = 0;
       this.pollSummary();
     }).catch(error => this.handleNetworkError(error, () => this.loadInitialData()));

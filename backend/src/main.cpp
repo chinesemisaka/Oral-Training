@@ -268,6 +268,65 @@ std::string jsonString(const json& object, const char* key, const std::string& f
   return object[key].get<std::string>();
 }
 
+// 患者画像来自客户端，落库前必须净化：只保留白名单键，并逐项校验类型与取值。
+// 理由：description 会被直接拼进患者开场白（见 reliable_store.h customPatientOpening），
+// 任其超长会把开场白撑变形；gender 出现自造值会让模型人设漂移；未知键则纯属噪声。
+constexpr size_t kCustomProfileDescriptionLimit = 60;
+constexpr size_t kCustomProfileEmotionLimit = 8;
+
+std::string sanitizeProfileText(const json& value, size_t max_characters) {
+  if (!value.is_string()) return "";
+  const auto text = trim(value.get<std::string>());
+  if (text.empty()) return "";
+  // utf8Length 顺带校验 UTF-8 合法性：非法字节串在入库前就按 400 拒掉，别留给数据库报错。
+  if (utf8Length(text) <= max_characters) return text;
+  return utf8Truncate(text, max_characters);
+}
+
+json sanitizeCustomProfile(const json& raw) {
+  json cleaned = json::object();
+  if (!raw.is_object()) return cleaned;
+
+  const auto description = sanitizeProfileText(
+      raw.contains("description") ? raw["description"] : json(), kCustomProfileDescriptionLimit);
+  if (!description.empty()) cleaned["description"] = description;
+
+  const auto emotion = sanitizeProfileText(
+      raw.contains("emotion") ? raw["emotion"] : json(), kCustomProfileEmotionLimit);
+  if (!emotion.empty()) cleaned["emotion"] = emotion;
+
+  // 性别只认「男」「女」；不填则沿用场景默认的 unknown，不做推断。
+  const auto gender = raw.contains("gender") && raw["gender"].is_string()
+                          ? trim(raw["gender"].get<std::string>()) : std::string();
+  if (gender == "男" || gender == "女") cleaned["gender"] = gender;
+
+  // 年龄接受数字或纯数字字符串（home 页演示话术传的是字符串），统一归一成数字；限 1—120。
+  if (raw.contains("age")) {
+    const auto& age = raw["age"];
+    std::string age_text;
+    if (age.is_string()) {
+      age_text = trim(age.get<std::string>());
+    } else if (age.is_number_integer()) {
+      age_text = std::to_string(age.get<long long>());
+    } else if (age.is_number_unsigned()) {
+      age_text = std::to_string(age.get<unsigned long long>());
+    } else if (age.is_number_float()) {
+      const auto value = age.get<double>();
+      if (value == static_cast<double>(static_cast<long long>(value))) {
+        age_text = std::to_string(static_cast<long long>(value));
+      }
+    }
+    const bool digits_only = !age_text.empty() &&
+        age_text.find_first_not_of("0123456789") == std::string::npos;
+    // 先卡位数再 stoi，避免 "99999999999999" 触发 out_of_range。
+    if (digits_only && age_text.size() <= 3) {
+      const int value = std::stoi(age_text);
+      if (value >= 1 && value <= 120) cleaned["age"] = value;
+    }
+  }
+  return cleaned;
+}
+
 json parseJson(const std::string& value, const std::string& error_code = "INVALID_ARGUMENT") {
   try {
     return json::parse(value);
@@ -583,6 +642,12 @@ json buildCompletionRequest(const std::string& model, const json& messages, int 
   return request;
 }
 
+// 评分维度的契约偏差必须当成可修复错误：既触发同一次请求内的修复重试，也交给可靠任务队列重试。
+// 历史故障：dimensionScores 缺键或量纲不符时被静默兜底成五维全 0，报告仍标记 ready。
+bool isRepairableModelError(const std::string& code) {
+  return code == "MODEL_INVALID_RESPONSE" || code == "MODEL_SCORE_INVALID";
+}
+
 class ModelGateway {
  public:
   explicit ModelGateway(Config config) : config_(std::move(config)) {}
@@ -632,19 +697,46 @@ class ModelGateway {
 
   json evaluate(const json& scenario, const json& messages) const {
     json model_messages = json::array();
-    const auto system_prompt = std::string(R"(你是口腔医疗客服训练评分器。根据完整对话评分，不提供医学诊断或治疗指令。对话 JSON 中 role=user 表示受训客服，role=patient 表示模拟患者；所有 userMessage 和 originalQuote 都必须逐字引用对应轮次的客服发言。必须重点识别：疗效或绝对安全保证、客服越权判断治疗方案、术后风险处理不当、贬低其他机构。评分必须可解释，严格依据客服发言。
+    const auto system_prompt = std::string(R"(你是口腔医疗客服训练评分器。根据完整对话评分，不提供医学诊断或治疗指令。对话 JSON 中 role=user 表示受训客服，role=patient 表示模拟患者；所有 userMessage 和 originalQuote 都必须逐字引用对应轮次的客服发言。
 
-五维权重固定：knowledgeAccuracy 25%，medicalCompliance 25%，empathy 20%，needsDiscovery 20%，serviceEtiquette 10%。
+评分量表：每个维度都是 0 到 100 的整数。禁止写成小数、百分数或 0 到 1 的比值（0.85、85% 都是错的，正确写法是 85）。
+
+分档参考：
+90—100：主动挖掘需求、共情自然、合规边界表达清晰，无违规；
+75—89：表达清楚、无违规，但引导深度或共情仍有提升空间；
+60—74：有明显欠缺（如未回应患者核心担忧、未做需求挖掘），但无严重违规；
+40—59：存在严重违规或大面积信息缺失；
+0—39：仅当受训客服几乎未进行任何有效沟通时才使用。
+
+必须重点识别：疗效或绝对安全保证、客服越权判断治疗方案、术后风险处理不当、贬低其他机构。同时必须识别学员做得好的具体发言并写入 strengths，不要只挑问题。
+
+评分纪律：
+- 缺少某项信息只影响 needsDiscovery 与 empathy，不得因此连带拉低 knowledgeAccuracy、medicalCompliance、serviceEtiquette；
+- serviceEtiquette 只在出现明确失礼、争辩或推诿时才低于 60；
+- 没有证据时不要给 0 分；对话轮数少不等于 0 分，应按“是否有效推进了沟通”给分；
+- 评分必须可解释，严格依据客服发言。
+
+总分由后端按固定权重计算，你只需给出五个维度的整数分。权重仅供参考：knowledgeAccuracy 25%，medicalCompliance 25%，empathy 20%，needsDiscovery 20%，serviceEtiquette 10%。
 
 改进建议和推荐改写只能给出沟通结构与合规边界，不得编造价格、疗程、优惠、机构服务，不得推荐具体药物、操作或治疗手段；涉及治疗判断时必须明确需要医生结合检查评估。
 
-请只输出合法 json，结构如下：
+输出体量控制：roundComments 必须逐轮覆盖每一轮客服发言；strengths 最多 4 条，improvements 最多 5 条；violations 只记录真实存在的违规，没有就输出空数组。输出一份完整可解析的 JSON 比写得更长更重要。
+
+recommendedRewrite 的写法：必须是客服能直接对患者说出口的完整话术原句，带称谓、句子完整。禁止写成“先安抚，再追问主诉”这类要点、提纲或动作说明；即使该轮学员没有犯错，也要给出一句可以照说的完整表达，不要只写“保持…”“注意…”。每条 20—100 个中文字符；comment 仍控制在 60 个中文字符以内。
+
+请只输出合法 json。dimensionScores 必须同时包含全部五个键，键名不可改写、不可嵌套；示例里的 0 只是结构占位，实际必须是 1 到 100 的评估结果，绝不能把五个维度都填 0。结构如下：
 {"dimensionScores":{"knowledgeAccuracy":0,"medicalCompliance":0,"empathy":0,"needsDiscovery":0,"serviceEtiquette":0},"summary":"","strengths":[{"round":1,"evidence":"","content":""}],"improvements":[{"round":1,"content":""}],"violations":[{"round":1,"originalQuote":"","type":"","reason":"","deduction":0,"recommendedRewrite":""}],"roundComments":[{"round":1,"userMessage":"","comment":"","recommendedRewrite":""}]}
 
 场景：)" + scenario["public"].dump() + "\n完整对话：" + messages.dump());
     model_messages.push_back({{"role", "system"}, {"content", system_prompt}});
     model_messages.push_back({{"role", "user"}, {"content", "请生成该训练的 JSON 评分报告。"}});
-    return structuredCompletion(model_messages, 1800, 0.2);
+    const std::string repair_hint =
+        "\n本次是评分报告：dimensionScores 必须同时包含 knowledgeAccuracy、medicalCompliance、empathy、"
+        "needsDiscovery、serviceEtiquette 五个键，每个键的取值都是 0 到 100 的整数（不要写成小数、百分数"
+        "或 0 到 1 的比值），并且不能把五个维度都填 0。";
+    // 7 轮对话的完整评分报告实测约 2800 输出 tokens；1800 会在第 4 轮左右被截断，
+    // 导致整份 JSON 不完整、评估任务反复失败。4096 留出约一倍余量。
+    return structuredCompletion(model_messages, 4096, 0.2, false, repair_hint);
   }
 
   json standardServiceReply(const json& scenario, const json& history) const {
@@ -680,6 +772,29 @@ summary 控制在 80—260 个中文字符；coveredTopics 1—6 条；keyPrinci
     return structuredCompletion(messages, 1500, 0.1);
   }
 
+  // 错题「复现原回合」的单轮点评：只评学员对同一患者提问的新回答，不做整场评分、
+  // 不输出五维分数（单回合覆盖不了五维，硬给会偏离整场 25/25/20/20/10 权重口径）。
+  json evaluateSingleRound(const json& scenario_public, const std::string& patient_question,
+                           const std::string& mistake_reason, const std::string& new_answer) const {
+    json messages = json::array();
+    const auto system_prompt = std::string(R"(你是口腔医疗客服训练的单回合复练点评器。学员正在重练一次表现不佳的客服回合：你会收到场景公开信息、患者当时的提问原话、当时记录的错因（仅供对照，不要复述或再扣分）、学员的新回答。
+
+请只点评新回答本身：是否回应了患者的核心担忧、共情是否自然、有无越权承诺疗效或安全性、有无编造价格或疗程、是否清晰推进了下一步（如建议面诊检查）。不提供医学诊断或治疗指令，不得编造价格、疗程、优惠或机构服务；涉及治疗判断时必须说明需要由医生结合检查评估。
+
+请只输出一个合法 JSON 对象，不要输出 Markdown、代码块或任何前后说明。严格使用以下结构：
+{"passed":true, "comment":"60字以内的点评", "recommendedRewrite":"可直接对患者说出口的完整话术原句"}
+
+passed 仅当新回答达到可直接发送给真实患者的水平且无违规时为 true。comment 控制在 60 个中文字符以内，必须指出新回答相对错因的具体改进或仍欠缺之处。recommendedRewrite 必须带称谓、句子完整，20—100 个中文字符，禁止写成“先安抚再追问”这类要点提纲；即使学员回答已经很好，也要给出一句可以照说的完整表达。
+
+场景公开信息：)" + scenario_public.dump() +
+        "\n患者当时的提问：" + patient_question +
+        (mistake_reason.empty() ? std::string() : "\n当时记录的错因（仅供参考）：" + mistake_reason) +
+        "\n学员的新回答：" + new_answer);
+    messages.push_back({{"role", "system"}, {"content", system_prompt}});
+    messages.push_back({{"role", "user"}, {"content", "请输出本次单回合复练的 JSON 点评。"}});
+    return structuredCompletion(messages, 1000, 0.2, true);
+  }
+
  private:
   std::string apiKey() const {
     std::lock_guard<std::mutex> lock(key_mutex_);
@@ -689,19 +804,25 @@ summary 控制在 80—260 个中文字符；coveredTopics 1—6 条；keyPrinci
   }
 
   json structuredCompletion(const json& messages, int max_tokens, double temperature,
-                            bool allow_plain_patient_reply = false) const {
+                            bool allow_plain_patient_reply = false,
+                            const std::string& repair_hint = "") const {
     ApiError last_error(503, "MODEL_INVALID_RESPONSE", "模型未返回可解析 JSON");
+    // 输出被 max_tokens 截断是确定性失败：同参数重试必然再次截断（7 轮对话实测需要约 2800 输出 tokens，
+    // 而评分请求只给了 1800）。因此第一次截断就把预算翻倍再试，而不是把同一个错误重复三次后宣告失败。
+    constexpr int kMaxOutputTokens = 8192;
+    int effective_max_tokens = std::max(max_tokens, 1000);
     for (int attempt = 0; attempt < 2; ++attempt) {
       try {
         auto attempt_messages = messages;
         if (attempt > 0 && !attempt_messages.empty() && attempt_messages[0].contains("content")) {
           attempt_messages[0]["content"] = attempt_messages[0]["content"].get<std::string>() +
-              "\n\n上一次生成未形成有效 JSON。本次必须只输出一个完整 JSON 对象：使用双引号，不要 Markdown、注释、尾随逗号或额外文本。";
+              "\n\n上一次生成未形成有效 JSON。本次必须只输出一个完整 JSON 对象：使用双引号，不要 Markdown、注释、尾随逗号或额外文本。"
+              + repair_hint;
         }
         const bool json_output = attempt == 0;
         const auto request = buildCompletionRequest(
             config_.deepseek_model, attempt_messages,
-            attempt == 0 ? max_tokens : std::max(max_tokens, 1000),
+            effective_max_tokens,
             attempt == 0 ? temperature : 0.0, json_output);
         const auto response = postDeepSeek(apiKey(), request.dump());
         if (response.status == 401 || response.status == 403) {
@@ -731,6 +852,13 @@ summary 控制在 80—260 个中文字符；coveredTopics 1—6 条；keyPrinci
           throw ApiError(503, "MODEL_CONTENT_FILTERED", "模型回复触发内容安全过滤，请调整客服输入后重试");
         }
         if (finish_reason == "length") {
+          // 报告长度随对话轮数线性增长，固定上限迟早不够：第一次截断就把预算翻倍再试。
+          const auto grown = std::min(effective_max_tokens * 2, kMaxOutputTokens);
+          if (grown > effective_max_tokens) {
+            std::cerr << "output truncated at max_tokens=" << effective_max_tokens
+                      << "; retrying with " << grown << '\n';
+            effective_max_tokens = grown;
+          }
           throw ApiError(503, "MODEL_INVALID_RESPONSE", "模型 JSON 输出被截断");
         }
         if (finish_reason == "insufficient_system_resource") {
@@ -751,7 +879,7 @@ summary 控制在 80—260 个中文字符；coveredTopics 1—6 条；keyPrinci
         }
       } catch (const ApiError& error) {
         last_error = error;
-        if (error.code != "MODEL_INVALID_RESPONSE") throw;
+        if (!isRepairableModelError(error.code)) throw;
         std::cerr << "model JSON validation failed on attempt " << attempt + 1 << ": " << error.what() << '\n';
       } catch (const std::exception& error) {
         last_error = ApiError(503, "MODEL_INVALID_RESPONSE", "模型响应结构或 JSON 格式无效");
@@ -1003,15 +1131,39 @@ json normalizeReport(const json& source, const json& messages) {
   }
   if (user_messages.empty()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "评分报告缺少客服对话依据");
 
-  const auto input_dimensions = source.value("dimensionScores", json::object());
-  if (!input_dimensions.is_object()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "五维评分格式无效");
-  json dimensions = {
-      {"knowledgeAccuracy", clampInt(jsonInt(input_dimensions, "knowledgeAccuracy", 0), 0, 100)},
-      {"medicalCompliance", clampInt(jsonInt(input_dimensions, "medicalCompliance", 0), 0, 100)},
-      {"empathy", clampInt(jsonInt(input_dimensions, "empathy", 0), 0, 100)},
-      {"needsDiscovery", clampInt(jsonInt(input_dimensions, "needsDiscovery", 0), 0, 100)},
-      {"serviceEtiquette", clampInt(jsonInt(input_dimensions, "serviceEtiquette", 0), 0, 100)},
-  };
+  // 五维分数是评分的唯一来源，任何契约偏差都必须显式失败，绝不能静默退化成 0 分：
+  // 0 是量表上的合法取值，静默兜底产生的 0 与"真的考了 0 分"无法区分，会污染平均分、达标率和培训计划进度。
+  if (!source.contains("dimensionScores") || !source["dimensionScores"].is_object()) {
+    throw ApiError(503, "MODEL_SCORE_INVALID", "评分报告缺少 dimensionScores 对象");
+  }
+  const auto& input_dimensions = source["dimensionScores"];
+  static const std::vector<std::string> dimension_keys = {
+      "knowledgeAccuracy", "medicalCompliance", "empathy", "needsDiscovery", "serviceEtiquette"};
+  json dimensions = json::object();
+  int zero_dimensions = 0;
+  bool all_within_unit_scale = true;
+  for (const auto& key : dimension_keys) {
+    if (!input_dimensions.contains(key)) {
+      throw ApiError(503, "MODEL_SCORE_INVALID", std::string("维度分缺失：") + key);
+    }
+    if (!input_dimensions[key].is_number()) {
+      throw ApiError(503, "MODEL_SCORE_INVALID", std::string("维度分不是数字：") + key);
+    }
+    const auto raw_value = input_dimensions[key].get<double>();
+    if (raw_value < 0.0 || raw_value > 100.0) {
+      throw ApiError(503, "MODEL_SCORE_INVALID", std::string("维度分超出 0—100 范围：") + key);
+    }
+    if (raw_value == 0.0) ++zero_dimensions;
+    if (raw_value <= 0.0 || raw_value > 1.0) all_within_unit_scale = false;
+    dimensions[key] = clampInt(static_cast<int>(std::lround(raw_value)), 0, 100);
+  }
+  if (zero_dimensions == static_cast<int>(dimension_keys.size())) {
+    throw ApiError(503, "MODEL_SCORE_INVALID", "五维评分全为 0，判定为契约失败而非真实成绩");
+  }
+  if (all_within_unit_scale) {
+    throw ApiError(503, "MODEL_SCORE_INVALID", "维度分疑似使用 0—1 量纲，应输出 0—100 的整数");
+  }
+  std::cerr << json({{"event", "dimension_scores_accepted"}, {"values", dimensions}}).dump() << '\n';
 
   json strengths = json::array();
   for (const auto& item : reportArray(source, "strengths", 10)) {
@@ -1150,6 +1302,21 @@ json normalizeReport(const json& source, const json& messages) {
           {"recommendedPhrases", recommended_phrases}, {"learningMistakes", learning_mistakes}};
 }
 
+// 错题单轮复练结果的归一化：passed 缺失或非法一律按 false 处理（保守判定，不虚报达标）；
+// comment 空时给兜底文案而不是 503——单轮点评重试成本高，点评缺失不该让整个请求失败。
+json normalizeSingleRoundVerdict(const json& source) {
+  const bool passed = source.contains("passed") && source["passed"].is_boolean()
+      && source["passed"].get<bool>();
+  auto comment = reportText(source, "comment", "", false, 200);
+  if (comment.empty()) {
+    comment = "本轮回答已记录。建议对照推荐改写，练习回应患者核心担忧并清晰说明下一步安排。";
+  }
+  const auto rewrite = safeAdviceOrFallback(
+      reportText(source, "recommendedRewrite", "", true, 600),
+      "我理解您的担忧，具体情况需要医生结合检查结果评估，我们可以先安排面诊沟通。");
+  return {{"passed", passed}, {"comment", comment}, {"recommendedRewrite", rewrite}};
+}
+
 class Service {
  public:
   explicit Service(const Config& config)
@@ -1196,6 +1363,8 @@ class Service {
         auto& profile = scenario["public"]["patientProfile"];
         if (custom.contains("age")) profile["age"] = custom["age"];
         if (custom.contains("description")) profile["description"] = custom["description"];
+        // 性别只用于稳住模型人设，不参与开场白文本（真人不会自我介绍性别）。
+        if (custom.contains("gender")) profile["gender"] = custom["gender"];
       }
       if (scenario.contains("hidden") && scenario["hidden"].contains("initialState")) {
         auto& initial = scenario["hidden"]["initialState"];
@@ -1213,6 +1382,9 @@ class Service {
         addText(custom["age"].get<std::string>(), "年龄");
       } else if (custom.contains("age") && custom["age"].is_number()) {
         addText(std::to_string(custom["age"].get<int>()), "年龄");
+      }
+      if (custom.contains("gender") && custom["gender"].is_string()) {
+        addText(custom["gender"].get<std::string>(), "性别");
       }
       if (custom.contains("emotion") && custom["emotion"].is_string()) {
         addText(custom["emotion"].get<std::string>(), "情绪");
@@ -1299,6 +1471,22 @@ class Service {
             {"session", {{"currentRound", session["currentRound"]},
                          {"remainingRounds", std::max(0, session["maxRounds"].get<int>() - session["currentRound"].get<int>())},
                          {"status", session["status"]}, {"shouldFinish", should_finish}}}};
+  }
+
+  // 错题「复现原回合」：先在短事务里取齐上下文（内部已提交），再调模型，
+  // 模型网络调用保持在任何数据库事务之外。
+  json retrainMistake(const std::string& user_id, const std::string& session_id,
+                      const std::string& mistake_key, const std::string& answer) const {
+    const auto context = database_.getMistakeRetrainContext(user_id, session_id, mistake_key);
+    const auto scenario = database_.getScenarioInternal(
+        context["session"]["scenarioId"].get<std::string>());
+    const auto verdict = normalizeSingleRoundVerdict(model_.evaluateSingleRound(
+        scenario["public"], context["patientQuestion"].get<std::string>(),
+        context["mistake"]["reason"].get<std::string>(), answer));
+    return {{"sessionId", session_id}, {"mistakeKey", mistake_key},
+            {"round", context["mistake"]["round"]},
+            {"passed", verdict["passed"]}, {"comment", verdict["comment"]},
+            {"recommendedRewrite", verdict["recommendedRewrite"]}};
   }
 
   json finishSummary(const std::string& user_id, const std::string& session_id) {
@@ -1588,7 +1776,9 @@ int main() {
       if (scenario_id.empty()) throw ApiError(400, "INVALID_ARGUMENT", "scenarioId 不能为空");
       json custom_profile = nullptr;
       if (body.contains("customPatientProfile") && body["customPatientProfile"].is_object()) {
-        custom_profile = body["customPatientProfile"];
+        // 净化后再决定是否落库：全部字段都不合法时按"未提供画像"处理，沿用场景默认。
+        const auto cleaned = sanitizeCustomProfile(body["customPatientProfile"]);
+        if (!cleaned.empty()) custom_profile = cleaned;
       }
       return ok(service.database().createSession(user.id, scenario_id, custom_profile), "created", 201);
     });
@@ -1684,6 +1874,7 @@ int main() {
       const auto user = identity.authorize(request, true);
       const auto* search = request.url_params.get("search");
       const auto* scenario_id = request.url_params.get("scenarioId");
+      const auto* scene_category = request.url_params.get("sceneCategory");
       const auto* favorites_only = request.url_params.get("favoritesOnly");
       const auto* limit = request.url_params.get("limit");
       bool requested_favorites_only = false;
@@ -1696,6 +1887,7 @@ int main() {
       if (limit != nullptr) try { requested_limit = std::stoi(limit); } catch (...) { throw ApiError(400, "INVALID_ARGUMENT", "limit 参数无效"); }
       return ok(service.database().listLearningPhrases(
           user.id, search == nullptr ? "" : search, scenario_id == nullptr ? "" : scenario_id,
+          scene_category == nullptr ? "" : scene_category,
           requested_favorites_only, requested_limit));
     });
   });
@@ -1745,6 +1937,30 @@ int main() {
     });
   });
 
+  CROW_ROUTE(app, "/api/learning/mistakes/<string>/<string>/context").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request, const std::string& session_id, const std::string& mistake_key) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request, true);
+      return ok(service.database().getMistakeRetrainContext(user.id, session_id, mistake_key));
+    });
+  });
+
+  // 同步单轮模型点评：Crow multithreaded 下占用一个 IO 线程数秒，换来前端免轮询。
+  CROW_ROUTE(app, "/api/learning/mistakes/<string>/<string>/retrain").methods(crow::HTTPMethod::POST)(
+      [&](const crow::request& request, const std::string& session_id, const std::string& mistake_key) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request, true);
+      const auto body = parseRequest(request);
+      const auto answer = body.is_object() && body.contains("answer") && body["answer"].is_string()
+          ? trim(body["answer"].get<std::string>()) : std::string();
+      const auto length = utf8Length(answer);
+      if (length < 1 || length > 1000) {
+        throw ApiError(400, "INVALID_ARGUMENT", "回答长度应为 1 到 1000 个字符");
+      }
+      return ok(service.retrainMistake(user.id, session_id, mistake_key, answer));
+    });
+  });
+
   CROW_ROUTE(app, "/api/learning/profile").methods(crow::HTTPMethod::GET)([&](const crow::request& request) {
     return handle(request, [&] {
       const auto user = identity.authorize(request, true);
@@ -1779,7 +1995,7 @@ int main() {
       const auto user = identity.authorize(request);
       if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看团队聚合数据");
       const auto* range = request.url_params.get("range");
-      return ok(service.database().supervisorDashboard(range == nullptr ? "month" : range));
+      return ok(service.database().supervisorDashboard(user.id, range == nullptr ? "month" : range));
     });
   });
 
@@ -1790,7 +2006,7 @@ int main() {
       const auto* limit = request.url_params.get("limit");
       int requested_limit = 50;
       if (limit != nullptr) try { requested_limit = std::stoi(limit); } catch (...) { throw ApiError(400, "INVALID_ARGUMENT", "limit 参数无效"); }
-      return ok(service.database().listSupervisorMembers(requested_limit));
+      return ok(service.database().listSupervisorMembers(user.id, requested_limit));
     });
   });
 
@@ -1799,7 +2015,170 @@ int main() {
     return handle(request, [&] {
       const auto user = identity.authorize(request);
       if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看成员详情");
-      return ok(service.database().supervisorMemberDetail(member_id));
+      return ok(service.database().supervisorMemberDetail(user.id, member_id));
+    });
+  });
+
+  // ── 培训运营（文档 3.2 第三模块） ──
+  CROW_ROUTE(app, "/api/supervisor/training-plans").methods(crow::HTTPMethod::POST)(
+      [&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可发布培训计划");
+      return ok(service.database().createTrainingPlan(parseRequest(request), user.id), "created", 201);
+    });
+  });
+
+  CROW_ROUTE(app, "/api/supervisor/training-plans").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看培训计划");
+      const auto* status = request.url_params.get("status");
+      return ok(service.database().listTrainingPlans(user.id, status == nullptr ? "all" : status));
+    });
+  });
+
+  // 提醒动作降级为「回传未完成名单」：当前没有订阅消息通道，前端负责复制名单。
+  CROW_ROUTE(app, "/api/supervisor/training-plans/<string>/notify").methods(crow::HTTPMethod::POST)(
+      [&](const crow::request& request, const std::string& plan_id) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可提醒培训计划");
+      return ok(service.database().markPlanNotified(user.id, plan_id), "notified");
+    });
+  });
+
+  CROW_ROUTE(app, "/api/supervisor/training-plans/<string>").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request, const std::string& plan_id) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看培训计划详情");
+      return ok(service.database().trainingPlanDetail(user.id, plan_id));
+    });
+  });
+
+  // 发布页需要场景目录来选「适用场景」。学员侧的 /api/scenarios 是 learner_only
+  // （会返回 bestScore/activeSession），主管调用必然 403，因此单独开放只读目录。
+  CROW_ROUTE(app, "/api/supervisor/scenarios").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看场景目录");
+      return ok(service.database().listScenarioCatalog());
+    });
+  });
+
+  CROW_ROUTE(app, "/api/learning/training-plans").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request, true);
+      return ok(service.database().listLearnerTrainingPlans(user.id));
+    });
+  });
+
+  // ── 数据报表（文档 3.2 第四模块） ──
+  // 违规词直接读 evaluations.report->'violations'，不新增检测层或数据表。
+  CROW_ROUTE(app, "/api/supervisor/reports/forbidden-phrases").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看团队违规统计");
+      const auto* range = request.url_params.get("range");
+      const auto* category = request.url_params.get("category");
+      const auto* limit = request.url_params.get("limit");
+      int requested_limit = 10;
+      if (limit != nullptr) try { requested_limit = std::stoi(limit); } catch (...) { throw ApiError(400, "INVALID_ARGUMENT", "limit 参数无效"); }
+      return ok(service.database().forbiddenPhrases(user.id,
+          range == nullptr ? "month" : range, category == nullptr ? "" : category, requested_limit));
+    });
+  });
+
+  CROW_ROUTE(app, "/api/supervisor/reports/forbidden-phrases/<string>").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request, const std::string& category) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看违规成员明细");
+      const auto* range = request.url_params.get("range");
+      const auto* limit = request.url_params.get("limit");
+      int requested_limit = 50;
+      if (limit != nullptr) try { requested_limit = std::stoi(limit); } catch (...) { throw ApiError(400, "INVALID_ARGUMENT", "limit 参数无效"); }
+      return ok(service.database().forbiddenPhraseMembers(user.id, category,
+          range == nullptr ? "month" : range, requested_limit));
+    });
+  });
+
+  CROW_ROUTE(app, "/api/supervisor/reports/leaderboard").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看团队排行榜");
+      const auto* dimension = request.url_params.get("dimension");
+      const auto* limit = request.url_params.get("limit");
+      int requested_limit = 10;
+      if (limit != nullptr) try { requested_limit = std::stoi(limit); } catch (...) { throw ApiError(400, "INVALID_ARGUMENT", "limit 参数无效"); }
+      return ok(service.database().leaderboard(user.id,
+          dimension == nullptr ? "weekly_sessions" : dimension, requested_limit));
+    });
+  });
+
+  // ── 我的团队：主管 ↔ 学员归属管理 ──
+  // 一名学员最多隶属一个主管。移出团队只解除归属，账号与训练记录全部保留。
+  CROW_ROUTE(app, "/api/supervisor/team/members").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看团队成员");
+      const auto* limit = request.url_params.get("limit");
+      int requested_limit = 100;
+      if (limit != nullptr) try { requested_limit = std::stoi(limit); } catch (...) { throw ApiError(400, "INVALID_ARGUMENT", "limit 参数无效"); }
+      return ok(service.database().listSupervisorMembers(user.id, requested_limit));
+    });
+  });
+
+  CROW_ROUTE(app, "/api/supervisor/team/candidates").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可查看可添加学员");
+      const auto* limit = request.url_params.get("limit");
+      int requested_limit = 100;
+      if (limit != nullptr) try { requested_limit = std::stoi(limit); } catch (...) { throw ApiError(400, "INVALID_ARGUMENT", "limit 参数无效"); }
+      return ok(service.database().listTeamCandidates(user.id, requested_limit));
+    });
+  });
+
+  CROW_ROUTE(app, "/api/supervisor/team/members").methods(crow::HTTPMethod::POST)(
+      [&](const crow::request& request) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可添加团队成员");
+      const auto payload = parseRequest(request);
+      std::vector<std::string> learner_ids;
+      if (payload.contains("learnerIds") && payload["learnerIds"].is_array()) {
+        for (const auto& item : payload["learnerIds"]) {
+          if (!item.is_string()) continue;
+          const auto candidate = trim(item.get<std::string>());
+          if (candidate.empty()) continue;
+          if (candidate.size() > 120) throw ApiError(400, "INVALID_ARGUMENT", "学员标识无效");
+          bool duplicated = false;
+          for (const auto& existing : learner_ids) {
+            if (existing == candidate) { duplicated = true; break; }
+          }
+          if (!duplicated) learner_ids.push_back(candidate);
+        }
+      }
+      return ok(service.database().addTeamMembers(user.id, learner_ids), "created", 201);
+    });
+  });
+
+  CROW_ROUTE(app, "/api/supervisor/team/members/<string>/remove").methods(crow::HTTPMethod::POST)(
+      [&](const crow::request& request, const std::string& learner_id) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request);
+      if (!user.isAdmin()) throw ApiError(403, "ROLE_FORBIDDEN", "仅主管可移出团队成员");
+      if (!request.body.empty()) parseRequest(request);
+      return ok(service.database().removeTeamMember(user.id, learner_id), "removed");
     });
   });
 

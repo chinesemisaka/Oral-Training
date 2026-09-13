@@ -1,6 +1,5 @@
 const api = require('../../utils/api.js');
-
-const timeOf = value => value ? value.slice(11, 16) : '';
+const datetime = require('../../utils/datetime.js');
 
 Page({
   data: {
@@ -42,7 +41,7 @@ Page({
       }
       const scenarioInfo = scenarioData.items.find(item => item.id === detail.session.scenarioId) || {};
       const messages = (detail.messages || []).map(item => Object.assign({}, item, {
-        time: timeOf(item.createdAt),
+        time: datetime.formatClock(item.createdAt),
         learningPoints: item.learningPoints || []
       }));
       const nextData = {
@@ -121,7 +120,7 @@ Page({
     api.getRoleplaySession(this.sessionId).then(detail => {
       const pending = detail.pendingMessage || null;
       const messages = (detail.messages || []).map(item => Object.assign({}, item, {
-        time: timeOf(item.createdAt),
+        time: datetime.formatClock(item.createdAt),
         learningPoints: item.learningPoints || []
       }));
       this.setData({

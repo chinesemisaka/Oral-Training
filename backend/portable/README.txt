@@ -24,11 +24,11 @@
   $env:PGCLIENTENCODING='UTF8'
   $env:DATABASE_URL='postgresql://oral_training_app:oral_training_pass@127.0.0.1:5432/oral_training'
   & 'C:\Program Files\PostgreSQL\18\bin\psql.exe' $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\001_initial.sql
-  ...（002 ~ 009 同理，依次执行）
+  ...（002 ~ 010 同理，依次执行）
 
 迁移文件：001_initial、002_roleplay、003_reliability、004_identity、
 005_learner_insights、006_training_experience、007_supervisor_growth、
-008_custom_patient_profile、009_recommendation_scenario。
+008_custom_patient_profile、009_recommendation_scenario、010_training_plans。
 迁移可重复执行（幂等）。
 
 可选演示数据：若想立即看到主管端聚合/成员数据，可在迁移后执行：

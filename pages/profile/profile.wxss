@@ -4,7 +4,7 @@
 .skeleton-block { padding: 0 4rpx; }
 .skeleton-hero { height: 140rpx; border-radius: 24rpx; background: linear-gradient(90deg, var(--color-primary-light) 25%, #E3E8FF 50%, var(--color-primary-light) 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.6s infinite; }
 .skeleton-stats { display: flex; gap: 14rpx; margin-top: 20rpx; }
-.skeleton-stat { flex: 1; height: 100rpx; border-radius: 24rpx; background: linear-gradient(90deg, var(--color-primary-light) 25%, #E3E8FF 50%, var(--color-primary-light) 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.6s infinite; }
+.skeleton-stat { flex: 1; height: 172rpx; border-radius: 20rpx; background: linear-gradient(90deg, var(--color-primary-light) 25%, #E3E8FF 50%, var(--color-primary-light) 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.6s infinite; }
 .skeleton-bars { margin-top: 28rpx; padding: 20rpx; border-radius: 24rpx; background: #fff; }
 .skeleton-bar { width: 100%; height: 16rpx; margin-bottom: 20rpx; border-radius: 10rpx; background: linear-gradient(90deg, var(--color-primary-light) 25%, #E3E8FF 50%, var(--color-primary-light) 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.6s infinite; }
 .skeleton-bar:last-child { margin-bottom: 0; }
@@ -19,23 +19,26 @@
 .page-title { display: block; color: var(--text-strong); font-size: 40rpx; font-weight: 600; }
 .page-intro { display: block; margin-top: 10rpx; color: var(--text-secondary); font-size: 24rpx; line-height: 1.6; }
 
-/* ── 统计卡 横滑（白卡深色数字，便于纵向比对） ── */
+/* ── 统计卡（三栏等分，图标 / 数字 / 标签共用一条中轴） ── */
 .stat-scroll { margin-top: 20rpx; }
-.stat-row { display: flex; white-space: nowrap; padding-right: 24rpx; }
+.stat-row { display: flex; gap: 14rpx; }
 .stat-card {
-  flex-shrink: 0; width: 200rpx; box-sizing: border-box;
-  padding: 20rpx 18rpx 18rpx; margin-right: 14rpx;
+  flex: 1; min-width: 0; box-sizing: border-box;
+  padding: 20rpx 6rpx 16rpx; text-align: center;
   border-radius: 20rpx; background: #fff;
   box-shadow: none;
   border: 1rpx solid var(--color-border);
 }
-.stat-card:last-child { margin-right: 0; }
-.stat-icon { display: flex; align-items: center; justify-content: center; height: 40rpx; margin-bottom: 10rpx; }
-.stat-icon-img { width: 34rpx; height: 34rpx; }
-.stat-val { display: block; font-size: 32rpx; font-weight: 600; color: var(--text-strong); }
+.stat-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 48rpx; height: 48rpx; margin: 0 auto 8rpx;
+  border-radius: 14rpx; background: var(--color-primary-light);
+}
+.stat-icon-img { width: 32rpx; height: 32rpx; }
+.stat-val { display: block; font-size: 32rpx; font-weight: 600; letter-spacing: .5rpx; line-height: 1.3; color: var(--text-strong); }
 .stat-card-delta.delta-positive .stat-val { color: var(--color-success); }
 .stat-card-delta.delta-negative .stat-val { color: var(--color-danger); }
-.stat-lbl { display: block; margin-top: 6rpx; color: var(--text-secondary); font-size: 22rpx; }
+.stat-lbl { display: block; margin-top: 8rpx; color: var(--text-secondary); font-size: 22rpx; line-height: 1.4; }
 
 /* ── 章节标题 ── */
 .section-heading {

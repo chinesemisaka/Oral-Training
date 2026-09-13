@@ -20,7 +20,7 @@ foreach ($line in Get-Content -LiteralPath $envFile) {
 }
 
 # 3. Ensure PostgreSQL running
-Write-Host "[1/3] Checking PostgreSQL ..." -ForegroundColor Cyan
+Write-Host "[1/4] Checking PostgreSQL ..." -ForegroundColor Cyan
 $pgService = Get-Service -Name "postgresql-x64-18" -ErrorAction SilentlyContinue
 if (-not $pgService) {
   Write-Host "  WARNING: postgresql-x64-18 service not found. Is PostgreSQL installed?" -ForegroundColor Yellow
@@ -39,34 +39,11 @@ if (-not $pgService) {
   Write-Host "  PostgreSQL is already running." -ForegroundColor Green
 }
 
-# 4. Check backend executable
-Write-Host "[2/3] Checking backend executable ..." -ForegroundColor Cyan
-$exePath = Join-Path $root "oral_training_backend.exe"
-if (-not (Test-Path $exePath)) {
-  $buildExe = Join-Path $root "build-msvc\Release\oral_training_backend.exe"
-  if (Test-Path $buildExe) {
-    Write-Host "  Copying executable from build directory..." -ForegroundColor Yellow
-    Copy-Item $buildExe $root
-  } else {
-    Write-Host "  ERROR: oral_training_backend.exe not found. Build the project first!" -ForegroundColor Red
-    Write-Host "  Run: cmake --build $root\build-msvc --config Release" -ForegroundColor Yellow
-    exit 1
-  }
-}
-
-$libpq = Join-Path $root "libpq.dll"
-if (-not (Test-Path $libpq)) {
-  Write-Host "  ERROR: libpq.dll missing. Ensure all DLLs are in the backend directory." -ForegroundColor Red
-  exit 1
-}
-Write-Host "  Backend executable ready." -ForegroundColor Green
-
-# 5. Start backend
-Write-Host "[3/3] Starting backend server ..." -ForegroundColor Cyan
-$env:PATH = "$root;$env:PATH"
-Write-Host "  http://$($env:BIND_ADDRESS):$($env:PORT)/api" -ForegroundColor White
-
-# Kill stale processes (by port to be safe; never let a failure abort startup)
+# 4. Stop any stale instance BEFORE touching the exe. Windows locks a running
+#    executable, so refreshing the binary while the old server is still alive
+#    fails with "being used by another process" and the rebuild would silently
+#    never reach the server. Never let a failure here abort startup.
+Write-Host "[2/4] Stopping any stale backend ..." -ForegroundColor Cyan
 $port = $env:PORT
 if (-not $port) { $port = "8080" }
 $stalePids = @()
@@ -93,6 +70,42 @@ foreach ($id in $stalePids) {
   }
 }
 if ($stalePids) { Start-Sleep -Seconds 1 }
+
+# 5. Refresh + verify executable
+Write-Host "[3/4] Checking backend executable ..." -ForegroundColor Cyan
+$exePath = Join-Path $root "oral_training_backend.exe"
+$buildExe = Join-Path $root "build-msvc\Release\oral_training_backend.exe"
+if (Test-Path $buildExe) {
+  # Refresh whenever the build output is newer than the deployed copy. Copying
+  # only when the exe is missing silently keeps launching a stale binary after
+  # every rebuild, which looks exactly like "the route does not exist".
+  $needCopy = $true
+  if (Test-Path $exePath) {
+    $needCopy = (Get-Item $buildExe).LastWriteTimeUtc -gt (Get-Item $exePath).LastWriteTimeUtc
+  }
+  if ($needCopy) {
+    Write-Host "  Copying executable from build directory..." -ForegroundColor Yellow
+    Copy-Item $buildExe $root -Force
+  } else {
+    Write-Host "  Deployed executable is up to date." -ForegroundColor Green
+  }
+} elseif (-not (Test-Path $exePath)) {
+  Write-Host "  ERROR: oral_training_backend.exe not found. Build the project first!" -ForegroundColor Red
+  Write-Host "  Run: cmake --build $root\build-msvc --config Release" -ForegroundColor Yellow
+  exit 1
+}
+
+$libpq = Join-Path $root "libpq.dll"
+if (-not (Test-Path $libpq)) {
+  Write-Host "  ERROR: libpq.dll missing. Ensure all DLLs are in the backend directory." -ForegroundColor Red
+  exit 1
+}
+Write-Host "  Backend executable ready." -ForegroundColor Green
+
+# 6. Start backend
+Write-Host "[4/4] Starting backend server ..." -ForegroundColor Cyan
+$env:PATH = "$root;$env:PATH"
+Write-Host "  http://$($env:BIND_ADDRESS):$($env:PORT)/api" -ForegroundColor White
 
 & $exePath
 exit $LASTEXITCODE

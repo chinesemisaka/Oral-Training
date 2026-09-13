@@ -203,3 +203,68 @@ button::after { border: none; }
 .mt-16 { margin-top: 16rpx; } .mb-16 { margin-bottom: 16rpx; }
 .mt-20 { margin-top: 20rpx; } .mb-20 { margin-bottom: 20rpx; }
 .mt-24 { margin-top: 24rpx; } .mb-24 { margin-bottom: 24rpx; }
+
+/* ── 9. 培训计划横幅（学员端首页 / 训练中心共用，故放全局） ──
+   结构：眉标 + 计划名 + （剩余时间 · 达标差额）+ 进度条，右侧箭头。
+   紧急态（24h 内截止或已过截止）整体转警示色，只用既有的 warning token。 */
+.plan-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin: 0 0 24rpx;
+  padding: 22rpx 24rpx;
+  border-radius: var(--radius-lg);
+  background: #fff;
+  border: 1rpx solid var(--color-primary);
+  transition: transform .15s;
+}
+.plan-banner-hover { transform: scale(.98); }
+
+.plan-banner-main { flex: 1; min-width: 0; }
+.plan-banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+.plan-banner-eyebrow { font-size: 22rpx; color: var(--text-secondary); }
+.plan-banner-count { flex-shrink: 0; font-size: 22rpx; color: var(--color-primary); }
+.plan-banner-title {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--text-strong);
+  line-height: 1.4;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.plan-banner-meta {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: var(--text-secondary);
+}
+.plan-banner-countdown { color: var(--color-primary); }
+.plan-banner-progress { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.plan-banner-dot { color: var(--text-muted); }
+.plan-banner-bar {
+  margin-top: 14rpx;
+  height: 6rpx;
+  border-radius: 6rpx;
+  background: var(--color-border);
+  overflow: hidden;
+}
+.plan-banner-fill { height: 100%; border-radius: 6rpx; background: var(--color-primary); }
+.plan-banner-arrow { flex-shrink: 0; font-size: 32rpx; color: var(--text-secondary); }
+
+/* 紧急态：与 .admin-hint 同一套警示配色，不再引入新色 */
+.plan-banner.is-urgent { background: var(--color-warning-light); border-color: var(--color-warning); }
+.plan-banner.is-urgent .plan-banner-eyebrow,
+.plan-banner.is-urgent .plan-banner-countdown,
+.plan-banner.is-urgent .plan-banner-count { color: #8A6E4B; }
+.plan-banner.is-urgent .plan-banner-fill { background: var(--color-warning); }

@@ -1,7 +1,11 @@
 {
-  "navigationBarTitleText": "演示数据",
+  "navigationBarTitleText": "团队数据看板",
   "navigationBarBackgroundColor": "#FFFFFF",
   "navigationBarTextStyle": "black",
   "enablePullDownRefresh": false,
-  "backgroundColor": "#F7F9FC"
+  "backgroundColor": "#F7F9FC",
+  "usingComponents": {
+    "trend-chart": "/components/trend-chart/trend-chart",
+    "empty-state": "/components/empty-state/empty-state"
+  }
 }

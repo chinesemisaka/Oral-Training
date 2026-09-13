@@ -1,4 +1,5 @@
 const api = require('../../utils/api.js');
+const datetime = require('../../utils/datetime.js');
 
 Page({
   data: {
@@ -41,6 +42,7 @@ Page({
       const sessions = data.items.map(item => Object.assign({}, item, {
         statusText: item.status === 'in_progress' ? '进行中' : item.status === 'completed' ? '已完成' : '已放弃',
         statusClass: item.status,
+        updatedAtText: datetime.formatDateTime(item.updatedAt),
         evaluation: !isRoleplay && item.totalScore !== null ? { totalScore: item.totalScore } : null,
         isRoleplay
       }));

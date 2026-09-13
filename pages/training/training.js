@@ -1,20 +1,18 @@
 const api = require('../../utils/api.js');
+const datetime = require('../../utils/datetime.js');
+const emotion = require('../../utils/emotion.js');
+const { normalizeScenario } = require('../../utils/patient-profile.js');
 
-const normalizeScenario = (item, customProfile) => {
-  // 优先展示自定义画像；未填写时回退到场景默认患者画像
-  const fallback = (item && item.patientProfile) || {};
-  const hasCustom = customProfile && (customProfile.age || customProfile.description || customProfile.emotion);
-  const profile = hasCustom ? customProfile : fallback;
-  return Object.assign({}, item, {
-    patientAge: profile.age ? `${profile.age}岁` : '年龄待填写',
-    patientConcern: profile.description || '描述待填写',
-    patientEmotion: profile.emotion || ''
+/* 情绪标签在 JS 里预算成 emotionText/emotionTone：WXML 禁止对数据路径调用函数，
+   派生字段必须提前算好（函数调用表达式的依赖不会被追踪）。 */
+const normalizeMessages = messages => messages.map(message => {
+  const emotionText = emotion.emotionTextOf(message);
+  return Object.assign({}, message, {
+    time: datetime.formatClock(message.createdAt),
+    emotionText,
+    emotionTone: emotion.emotionToneOf(emotionText)
   });
-};
-
-const normalizeMessages = messages => messages.map(message => Object.assign({}, message, {
-  time: message.createdAt || ''
-}));
+});
 
 const QUICK_PHRASES = [
   '我先帮您确认一下目前最关心的是哪一方面。',
@@ -93,7 +91,17 @@ Page({
         }
       });
     }).catch(error => {
-      wx.showModal({ title: '会话加载失败', content: error.message || '请从场景列表重新开始训练。', showCancel: false, success: () => wx.navigateBack() });
+      // 页面栈只有本页时（如分享/扫码直达）navigateBack 无处可退，落回训练 tab
+      const canGoBack = getCurrentPages().length > 1;
+      wx.showModal({
+        title: '会话加载失败',
+        content: error.message || '请从场景列表重新开始训练。',
+        showCancel: false,
+        success: () => {
+          if (canGoBack) wx.navigateBack();
+          else wx.switchTab({ url: '/pages/index/index' });
+        }
+      });
     });
   },
 

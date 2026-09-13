@@ -5,15 +5,42 @@ Component({
       value: [],
       observer() { this.scheduleDraw(); }
     },
+    /* 团队均线对比：长度需与 dimensions 一致；为空时保持原样，session-detail 不受影响 */
+    compare: {
+      type: Array,
+      value: [],
+      observer() {
+        this.computeLegend();
+        this.scheduleDraw();
+      }
+    },
+    primaryLabel: { type: String, value: '本人' },
+    compareLabel: { type: String, value: '团队平均' },
     canvasWidth: { type: Number, value: 300 },
     canvasHeight: { type: Number, value: 260 }
   },
+
+  data: { legend: [] },
 
   lifetimes: {
     ready() { this.scheduleDraw(); }
   },
 
   methods: {
+    computeLegend() {
+      const compareList = (this.properties.compare || []).filter(item => Number.isFinite(Number(item)));
+      if (!compareList.length) {
+        this.setData({ legend: [] });
+        return;
+      }
+      this.setData({
+        legend: [
+          { key: 'primary', text: this.properties.primaryLabel, color: '#1F3864' },
+          { key: 'compare', text: this.properties.compareLabel, color: '#6B7A93', dashed: true }
+        ]
+      });
+    },
+
     scheduleDraw() {
       if (this.drawTimer) clearTimeout(this.drawTimer);
       this.drawTimer = setTimeout(() => this.draw(), 20);
@@ -29,7 +56,8 @@ Component({
         const ctx = canvas.getContext('2d');
         const width = this.properties.canvasWidth;
         const height = this.properties.canvasHeight;
-        const dpr = wx.getSystemInfoSync().pixelRatio || 1;
+        const dpr = (typeof wx.getWindowInfo === 'function' ? wx.getWindowInfo().pixelRatio : 0)
+          || wx.getSystemInfoSync().pixelRatio || 1;
         canvas.width = width * dpr;
         canvas.height = height * dpr;
         ctx.scale(dpr, dpr);
@@ -68,6 +96,28 @@ Component({
         ctx.strokeStyle = '#edf0f6';
         ctx.stroke();
       }
+
+      /* 团队均线对比系列：虚线 + 浅灰描边 + 极浅填充，无标签和点 */
+      const compareList = (this.properties.compare || []).filter(item => Number.isFinite(Number(item)));
+      if (compareList.length === count) {
+        ctx.beginPath();
+        compareList.forEach((value, index) => {
+          const score = Math.max(0, Math.min(100, Number(value) || 0));
+          const target = point(index, score / 100);
+          if (index === 0) ctx.moveTo(target.x, target.y);
+          else ctx.lineTo(target.x, target.y);
+        });
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(107, 122, 147, 0.10)';
+        ctx.fill();
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = '#6B7A93';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      /* 主数据：实线 + 实心浅色填充 */
       ctx.beginPath();
       dimensions.forEach((item, index) => {
         const score = Math.max(0, Math.min(100, Number(item.score) || 0));
@@ -81,6 +131,7 @@ Component({
       ctx.strokeStyle = '#1F3864';
       ctx.lineWidth = 2;
       ctx.stroke();
+
       ctx.font = '11px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';

@@ -24,6 +24,11 @@
 .user-message .message-body { margin-right: 14rpx; margin-left: 0; }
 .message-role { display: block; margin-bottom: 7rpx; color: var(--text-secondary); font-size: 22rpx; }
 .user-message .message-role { text-align: right; }
+/* 角色行：角色/时间在左，患者情绪标签紧随其后；无 emotionText 时不渲染 */
+.message-meta { display: flex; align-items: center; gap: 10rpx; margin-bottom: 7rpx; }
+.message-meta .message-role { margin-bottom: 0; }
+.user-message .message-meta { justify-content: flex-end; }
+.emotion-tag { flex-shrink: 0; padding: 2rpx 12rpx; font-size: 20rpx; line-height: 1.6; }
 .message-bubble { padding: 18rpx 22rpx; border-radius: 8rpx 24rpx 24rpx 24rpx; color: var(--text-strong); background: #fff; border: 1rpx solid var(--color-border); font-size: 28rpx; line-height: 1.6; }
 .user-message .message-bubble { border-radius: 24rpx 8rpx 24rpx 24rpx; color: #fff; background: var(--color-primary); }
 .typing { display: flex; align-items: center; width: max-content; padding: 15rpx 20rpx; margin: 4rpx 0 20rpx 72rpx; border-radius: 18rpx; color: var(--text-secondary); background: #fff; border: 1rpx solid var(--color-border); font-size: 22rpx; }

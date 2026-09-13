@@ -19,7 +19,7 @@
         <text class="status {{session.status}}">{{statusText}}</text>
       </view>
       <view class="detail-meta">
-        <text>{{session.startedAt || ''}}</text>
+        <text>{{session.startedAtText}}</text>
         <text>{{session.currentRound}} / {{session.maxRounds}} 轮</text>
       </view>
     </view>
@@ -78,8 +78,11 @@
     <view class="chat-card card">
       <view class="message-item {{item.role === 'user' || item.role === 'learner_patient' ? 'mine' : ''}}" wx:for="{{messages}}" wx:key="id">
         <view class="message-head">
-          <text class="message-role">{{item.role === 'user' ? '客服' : item.role === 'patient' ? '患者' : item.role === 'learner_patient' ? '模拟患者（我）' : '标准客服'}}</text>
-          <text class="message-time">{{item.time}}</text>
+          <view class="message-head-left">
+            <text class="message-role">{{item.role === 'user' ? '客服' : item.role === 'patient' ? '患者' : item.role === 'learner_patient' ? '模拟患者（我）' : '标准客服'}}</text>
+            <text class="tag emotion-tag {{item.emotionTone}}" wx:if="{{item.emotionText}}">{{item.emotionText}}</text>
+          </view>
+          <text class="message-time" wx:if="{{item.time}}">{{item.time}}</text>
         </view>
         <view class="message-text">{{item.content}}</view>
         <view class="learning-box" wx:if="{{item.role === 'standard_customer' && item.learningPoints.length}}">

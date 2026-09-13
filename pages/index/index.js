@@ -1,4 +1,5 @@
 const api = require('../../utils/api.js');
+const plan = require('../../utils/plan.js');
 
 const CATEGORY_CONFIG = [
   { id: 'consultation', name: '咨询解答', icon: '咨', description: '先了解患者关切，再清楚说明服务边界' },
@@ -13,6 +14,42 @@ const DIFFICULTY_MAP = {
   advanced: { level: 'advanced', label: '高级' },
   basic: { level: 'beginner', label: '初级' }
 };
+
+/* 患者画像预设。后端会把 description 直接拼在「您好，我最近」之后，并把 emotion
+   拼进「心里挺X的」/「现在有点X」句式，所以预设文案必须满足：
+   1) 能通顺接在「我最近」后面；2) 不以「我」开头（否则拼成「我最近我…」）；3) 末尾不带标点。
+   情绪取值也刻意落在后端情绪词表内，避免开场白句式突兀。 */
+const PROFILE_DESC_PRESETS = {
+  'implant-basic': [
+    '缺了一颗后牙，想问问种植牙大概要花多少钱',
+    '缺牙很久了，一直纠结要不要种，想先了解下情况',
+    '朋友做了种植牙效果不错，我也想问问自己适不适合'
+  ],
+  'orthodontic-basic': [
+    '牙齿有点不整齐，想做隐形矫正，想知道大概要多久',
+    '觉得牙齿不太整齐，想了解矫正的大概费用',
+    '想矫正但怕拔牙，也怕别人看出来在戴牙套'
+  ],
+  'price-comparison': [
+    '在别家也问过价，觉得你们这边报价偏高',
+    '问了别家同样的牙，价格差挺多，想知道差在哪',
+    '在比较几家诊所，主要想搞清楚材料和服务的区别'
+  ],
+  'post-treatment-discomfort': [
+    '做完治疗后一直有点疼，还肿着',
+    '拔完牙三天了，还在渗血，不知道正不正常',
+    '治疗后一直不太舒服，担心是不是没处理好'
+  ],
+  'orthodontic-option': [
+    '想做矫正，但纠结隐形牙套和传统托槽选哪个',
+    '上班要见客户，担心戴牙套影响形象',
+    '想做矫正，但预算有限，也怕影响平时吃饭'
+  ]
+};
+const PROFILE_EMOTION_PRESETS = ['焦虑', '担心', '紧张', '犹豫', '害怕', '不满'];
+const PROFILE_GENDER_OPTIONS = ['男', '女'];
+const EMPTY_PROFILE_DRAFT = { age: '', gender: '', description: '', emotion: '' };
+const DESC_MAX_LENGTH = 60;
 
 const inferCategory = item => {
   if (CATEGORY_CONFIG.some(category => category.id === item.category)) return item.category;
@@ -50,18 +87,31 @@ Page({
     trainingMode: 'customer_service',
     roleBlocked: false,
     currentRole: '',
+    /* 横幅展示的是「最紧急的那个待办计划」摘要，无待办时为 null */
+    planNotice: null,
     // 自由提问模式
     freeDescription: '',
     activeFreeSession: null,
     // 自定义画像（底部弹层，非阻塞）
     customProfiles: {},
     profileModalVisible: false,
-    profileModalScenarioId: ''
+    profileModalScenarioId: '',
+    /* 弹层当前编辑的草稿。弹层只操作它，确认时才写回 customProfiles，
+       这样 WXML 里的绑定路径短、性别选中态也只需做值比较而不必调方法。 */
+    profileDraft: Object.assign({}, EMPTY_PROFILE_DRAFT),
+    profileDescPresets: [],
+    profileEmotionPresets: PROFILE_EMOTION_PRESETS,
+    profileGenderOptions: PROFILE_GENDER_OPTIONS,
+    profileDraftHasInput: false,
+    descMaxLength: DESC_MAX_LENGTH
   },
 
   onShow() {
-    if (typeof this.getTabBar === 'function' && this.getTabBar()) {
-      this.getTabBar().setData({ selected: 1 });
+    /* 每次显示都同步 tabBar 角色列表，避免切换身份后残留另一套导航 */
+    const tabBar = typeof this.getTabBar === 'function' ? this.getTabBar() : null;
+    if (tabBar) {
+      tabBar.applyRoleList();
+      tabBar.setData({ selected: 1 });
     }
     const user = api.getCurrentUser();
     if (user && user.role) {
@@ -75,6 +125,26 @@ Page({
     this.loadScenarios();
     // 检查是否有进行中的自由模拟会话
     this.checkActiveFreeSession();
+    // 培训计划横幅：只展示最早截止的待办计划
+    this.loadPlanNotice();
+  },
+
+  loadPlanNotice() {
+    api.getLearnerTrainingPlans().then(data => {
+      this.setData({ planNotice: plan.pickPlanNotice(data.plans) });
+    }).catch(() => {});
+  },
+
+  // 横幅主体：直达最紧急计划的明细
+  openUrgentPlan() {
+    const notice = this.data.planNotice;
+    if (!notice || !notice.id) return;
+    wx.navigateTo({ url: `/pages/training-plan-detail/training-plan-detail?id=${encodeURIComponent(notice.id)}` });
+  },
+
+  // 横幅右上角「全部 N 个」：进计划列表看全量
+  openMyPlans() {
+    wx.navigateTo({ url: '/pages/training-plans/training-plans' });
   },
 
   checkActiveFreeSession() {
@@ -113,7 +183,10 @@ Page({
           actionText: item.activeSession
             ? (isRoleplay ? '继续模拟' : '继续训练')
             : (isRoleplay ? '开始模拟' : (item.bestScore !== null && item.bestScore !== undefined ? '再练' : '开始训练')),
-          suggestedQuestions: item.suggestedQuestions || []
+          suggestedQuestions: item.suggestedQuestions || [],
+          /* WXML 里不能对数据路径调用 Page 方法（依赖追踪失效且不报错），
+             所以「是否已填画像」在这里预算成布尔字段。 */
+          hasProfile: this.hasProfileInput(item.id)
         });
       });
 
@@ -150,7 +223,10 @@ Page({
       expandedCategories: {},
       freeDescription: '',
       profileModalVisible: false,
-      profileModalScenarioId: ''
+      profileModalScenarioId: '',
+      profileDraft: Object.assign({}, EMPTY_PROFILE_DRAFT),
+      profileDescPresets: [],
+      profileDraftHasInput: false
     }, () => {
       this.loadScenarios();
       if (mode === 'patient_simulation') {
@@ -205,12 +281,20 @@ Page({
   // ═══════════════════════════════════════
 
   onCustomProfileChange(e) {
-    const { id, field } = e.currentTarget.dataset;
-    const value = e.detail.value;
-    const customProfiles = Object.assign({}, this.data.customProfiles);
-    if (!customProfiles[id]) customProfiles[id] = {};
-    customProfiles[id][field] = value;
-    this.setData({ customProfiles });
+    const { field } = e.currentTarget.dataset;
+    if (!field) return;
+    const profileDraft = Object.assign({}, this.data.profileDraft, { [field]: e.detail.value });
+    this.setData({ profileDraft, profileDraftHasInput: this.draftHasInput(profileDraft) });
+  },
+
+  /* 预设标签：覆盖式单选。性别允许再点一次取消，回到「未指定」，
+     这样学员也能明确表达「不想限定性别」而不是被迫二选一。 */
+  pickProfileOption(e) {
+    const { field, value } = e.currentTarget.dataset;
+    if (!field || !value) return;
+    const nextValue = field === 'gender' && this.data.profileDraft.gender === value ? '' : value;
+    const profileDraft = Object.assign({}, this.data.profileDraft, { [field]: nextValue });
+    this.setData({ profileDraft, profileDraftHasInput: this.draftHasInput(profileDraft) });
   },
 
   openTraining(e) {
@@ -225,30 +309,53 @@ Page({
       this.goTraining(scenario.activeSession.id);
       return;
     }
-    // 有已填画像 → 直接开始；否则弹层引导（可跳过用默认画像）
-    if (this.hasCustomProfile(id)) {
+    // 已填过画像 → 直接开始；否则弹层引导（可跳过用默认画像）
+    if (this.hasProfileInput(id)) {
       this.startWithCustomProfile(id);
     } else {
-      this.setData({ profileModalVisible: true, profileModalScenarioId: id });
+      this.openProfileModal(id);
     }
+  },
+
+  openProfileModal(id) {
+    const source = this.data.customProfiles[id] || {};
+    const profileDraft = {
+      age: source.age || '',
+      gender: source.gender || '',
+      description: source.description || '',
+      emotion: source.emotion || ''
+    };
+    this.setData({
+      profileModalVisible: true,
+      profileModalScenarioId: id,
+      profileDraft,
+      profileDescPresets: PROFILE_DESC_PRESETS[id] || [],
+      profileDraftHasInput: this.draftHasInput(profileDraft)
+    });
   },
 
   closeProfileModal() {
     this.setData({ profileModalVisible: false });
   },
 
-  // 用当前已填画像创建会话（描述必填校验放在这里）
+  // 仅供遮罩层 catchtouchmove 挂载：拖动遮罩时不要带着背景页面滚动
+  preventPageScroll() {},
+
+  // 画像是否填过任意一项（不再要求描述必填）
+  draftHasInput(draft) {
+    if (!draft) return false;
+    return ['age', 'gender', 'description', 'emotion'].some(
+      field => !!(draft[field] && String(draft[field]).trim()));
+  },
+
+  // 用当前已填画像创建会话
   startWithCustomProfile(id) {
     const source = this.data.customProfiles[id] || {};
     const profileData = {};
     if (source.age && String(source.age).trim()) profileData.age = String(source.age).trim();
+    if (source.gender && String(source.gender).trim()) profileData.gender = String(source.gender).trim();
     if (source.description && String(source.description).trim()) profileData.description = String(source.description).trim();
     if (source.emotion && String(source.emotion).trim()) profileData.emotion = String(source.emotion).trim();
-
-    if (!profileData.description) {
-      wx.showToast({ title: '请填写患者描述（描述为必填）', icon: 'none' });
-      return;
-    }
 
     api.createSession(id, profileData).then(data => {
       const sessionId = data.session.id;
@@ -257,16 +364,23 @@ Page({
     }).catch(error => wx.showToast({ title: error.message, icon: 'none' }));
   },
 
-  // 弹层确认：以当前填写的画像开始（描述仍必填，但允许跳过到默认画像）
+  /* 弹层确认：草稿写回 customProfiles 后按内容分流。
+     画像全空时按钮文案已是「使用默认画像开始」，直接走跳过路径，不再拦人。 */
   confirmProfileAndStart() {
     const id = this.data.profileModalScenarioId;
-    const source = this.data.customProfiles[id] || {};
-    const hasDescription = !!(source.description && String(source.description).trim());
-    if (!hasDescription) {
-      wx.showToast({ title: '请填写患者描述（描述为必填）', icon: 'none' });
+    const draft = this.data.profileDraft || {};
+    const stored = {};
+    ['age', 'gender', 'description', 'emotion'].forEach(field => {
+      const value = draft[field] ? String(draft[field]).trim() : '';
+      if (value) stored[field] = value;
+    });
+    const customProfiles = Object.assign({}, this.data.customProfiles, { [id]: stored });
+    this.setData({ profileModalVisible: false, customProfiles });
+
+    if (!this.draftHasInput(stored)) {
+      this.skipProfileAndStart();
       return;
     }
-    this.setData({ profileModalVisible: false });
     this.startWithCustomProfile(id);
   },
 
@@ -279,10 +393,9 @@ Page({
     }).catch(error => wx.showToast({ title: error.message, icon: 'none' }));
   },
 
-  // 是否已填写必填画像（描述）
-  hasCustomProfile(id) {
-    const source = this.data.customProfiles[id] || {};
-    return !!(source.description && String(source.description).trim());
+  // 是否已填写画像（年龄/性别/描述/情绪任一非空）
+  hasProfileInput(id) {
+    return this.draftHasInput(this.data.customProfiles[id]);
   },
 
   // 生成画像摘要
@@ -379,6 +492,11 @@ Page({
           wx.setStorageSync('oralTrainingUser', data.user);
           wx.showToast({ title: '已切换，即将刷新', icon: 'success', duration: 1500 });
           setTimeout(() => {
+            /* 切回学员时落点可能是「我的」等已存在的 tab 页，onShow 未必重跑，
+               先本地把底部导航刷成新身份那套 */
+            if (typeof this.getTabBar === 'function' && this.getTabBar()) {
+              this.getTabBar().applyRoleList();
+            }
             wx.switchTab({ url: targetRole === 'admin' ? '/pages/admin/admin' : '/pages/mine/mine' });
           }, 1600);
         }).catch(error => {

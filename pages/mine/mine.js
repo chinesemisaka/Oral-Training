@@ -39,8 +39,11 @@ Page({
   },
 
   onShow() {
-    if (typeof this.getTabBar === 'function' && this.getTabBar()) {
-      this.getTabBar().setData({ selected: 3 });
+    /* 每次显示都同步 tabBar 角色列表，避免切换身份后残留另一套导航 */
+    const tabBar = typeof this.getTabBar === 'function' ? this.getTabBar() : null;
+    if (tabBar) {
+      tabBar.applyRoleList();
+      tabBar.setData({ selected: 3 });
     }
     const user = api.getCurrentUser();
     if (user) {
@@ -116,6 +119,10 @@ Page({
       wx.showToast({ title: '已切换账号', icon: 'success', duration: 1500 });
       setTimeout(() => {
         const role = api.getCurrentUser() ? api.getCurrentUser().role : 'learner';
+        /* 切到的可能还是「我的」页本身，onShow 未必重跑，先本地刷一次导航 */
+        if (typeof this.getTabBar === 'function' && this.getTabBar()) {
+          this.getTabBar().applyRoleList();
+        }
         wx.switchTab({ url: role === 'admin' ? '/pages/admin/admin' : '/pages/mine/mine' });
       }, 1600);
     }).catch(error => {
@@ -149,6 +156,10 @@ Page({
         if (cached) {
           const fixed = Object.assign({}, cached, { role: 'admin' });
           try { wx.setStorageSync('oralTrainingUser', fixed); } catch (e) {}
+        }
+        /* 身份判定刚变为主管，底部导航要立刻换成主管那套 */
+        if (typeof this.getTabBar === 'function' && this.getTabBar()) {
+          this.getTabBar().applyRoleList();
         }
         this.setData({ isAdmin: true, loading: true, loadError: false, loadErrorMsg: '' });
         this.loadAdminMine();
@@ -195,6 +206,11 @@ Page({
           wx.showToast({ title: '已切换，即将刷新', icon: 'success', duration: 1500 });
           setTimeout(() => {
             this.setData({ switchingRole: false });
+            /* 目标页可能就是当前页（切回学员时落回「我的」），那一步不一定重跑 onShow，
+               所以在这里先把底部导航刷成新身份那套。 */
+            if (typeof this.getTabBar === 'function' && this.getTabBar()) {
+              this.getTabBar().applyRoleList();
+            }
             wx.switchTab({ url: targetRole === 'admin' ? '/pages/admin/admin' : '/pages/mine/mine' });
           }, 1600);
         }).catch(error => {
@@ -205,8 +221,9 @@ Page({
     });
   },
 
-  goAdminDashboard() { wx.switchTab({ url: '/pages/admin/admin' }); },
-  goAdminMembers() { wx.switchTab({ url: '/pages/admin/admin' }); },
+  /* 「数据看板」「学员管理」入口已移除：数据看板走底部「数据」tab，
+     学员能力摘要并入「我的团队」→ 成员详情，避免同一目标三处入口。 */
+  goTeamMembers() { wx.navigateTo({ url: '/pages/team-members/team-members' }); },
 
   toggleRules() {
     this.setData({ rulesExpanded: !this.data.rulesExpanded });
@@ -219,5 +236,7 @@ Page({
   goProfile() { wx.navigateTo({ url: '/pages/profile/profile' }); },
   goMistakes() { wx.navigateTo({ url: '/pages/mistakes/mistakes' }); },
   goPhrases() { wx.navigateTo({ url: '/pages/phrases/phrases' }); },
-  goFavorites() { wx.navigateTo({ url: '/pages/phrases/phrases?favorites=1' }); }
+  goFavorites() { wx.navigateTo({ url: '/pages/phrases/phrases?favorites=1' }); },
+  /* 计划列表页原本只能从首页/训练页的横幅进入，无待办计划时横幅消失就再也进不去 */
+  goTrainingPlans() { wx.navigateTo({ url: '/pages/training-plans/training-plans' }); }
 });

@@ -70,14 +70,12 @@
     <view class="section-heading">
       <view><text>管理中心</text></view>
     </view>
-    <view class="tool-card card tool-accent-blue" bindtap="goAdminDashboard">
-      <text class="tool-icon">数据</text>
-      <view><text>数据看板</text><text>五维能力 · 场景分布 · 辅导建议</text></view>
-      <text class="tool-arrow">›</text>
-    </view>
-    <view class="tool-card card tool-accent-green" bindtap="goAdminMembers">
-      <text class="tool-icon">成员</text>
-      <view><text>学员管理</text><text>成员学习摘要与详情</text></view>
+    <view class="tool-card card" bindtap="goTeamMembers">
+      <view class="tool-icon-wrap"><image class="tool-icon-img" src="/static/image/data/sessions.png" mode="aspectFit"></image></view>
+      <view class="tool-body">
+        <text class="tool-title">我的团队</text>
+        <text class="tool-sub">添加 / 移出成员 · 维护团队名单</text>
+      </view>
       <text class="tool-arrow">›</text>
     </view>
 
@@ -107,16 +105,8 @@
       <view class="hero-info">
         <view class="hero-name-row">
           <text class="hero-name">{{displayName}}</text>
-          <view class="hero-level-tag">Lv.{{levelInfo.level}}</view>
         </view>
         <text class="hero-subtitle">已完成 {{mine.stats.totalCompleted}} 次训练 · 平均 {{mine.stats.averageScore}} 分</text>
-        <view class="hero-level-row" wx:if="{{!levelInfo.isMax}}">
-          <view class="hero-level-bar">
-            <view class="hero-level-fill" style="width:{{levelInfo.progress}}%;"></view>
-          </view>
-          <text class="hero-level-text">{{levelInfo.currentPoints}}/{{levelInfo.nextLevelPoints}}</text>
-        </view>
-        <text class="hero-level-max" wx:else>{{levelInfo.levelName}} · 已达最高等级</text>
         <view class="hero-footer">
           <view class="hero-points">
             <text class="hero-points-val">{{mine.points}}</text>
@@ -157,7 +147,15 @@
 
     <!-- 学习工具（置顶：训练相关入口优先） -->
     <view class="section-heading"><view><text>学习工具</text><text>全部基于本人记录</text></view></view>
-    <view class="tool-card card tool-tool-growth tool-prominent" bindtap="goProfile">
+    <view class="tool-card card" bindtap="goTrainingPlans">
+      <view class="tool-icon-wrap"><image class="tool-icon-img" src="/static/image/tools/train.png" mode="aspectFit"></image></view>
+      <view class="tool-body">
+        <text class="tool-title">培训计划</text>
+        <text class="tool-sub">主管发布的要求与我的进度</text>
+      </view>
+      <text class="tool-arrow">›</text>
+    </view>
+    <view class="tool-card card tool-prominent" bindtap="goProfile">
       <view class="tool-icon-wrap"><image class="tool-icon-img" src="/static/image/tools/growth.png" mode="aspectFit"></image></view>
       <view class="tool-body">
         <text class="tool-title">个人成长</text>
@@ -165,7 +163,7 @@
       </view>
       <text class="tool-arrow">›</text>
     </view>
-    <view class="tool-card card tool-tool-mistake" bindtap="goMistakes">
+    <view class="tool-card card" bindtap="goMistakes">
       <view class="tool-icon-wrap"><image class="tool-icon-img" src="/static/image/tools/mistake.png" mode="aspectFit"></image></view>
       <view class="tool-body">
         <text class="tool-title">错题复练</text>
@@ -173,7 +171,7 @@
       </view>
       <text class="tool-arrow">›</text>
     </view>
-    <view class="tool-card card tool-tool-phrase" bindtap="goPhrases">
+    <view class="tool-card card" bindtap="goPhrases">
       <view class="tool-icon-wrap"><image class="tool-icon-img" src="/static/image/tools/phrase.png" mode="aspectFit"></image></view>
       <view class="tool-body">
         <text class="tool-title">话术锦囊</text>
@@ -181,7 +179,7 @@
       </view>
       <text class="tool-arrow">›</text>
     </view>
-    <view class="tool-card card tool-tool-favorite" bindtap="goFavorites">
+    <view class="tool-card card" bindtap="goFavorites">
       <view class="tool-icon-wrap"><image class="tool-icon-img" src="/static/image/tools/favorite.png" mode="aspectFit"></image></view>
       <view class="tool-body">
         <text class="tool-title">我的话术收藏</text>

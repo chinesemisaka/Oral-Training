@@ -1,4 +1,22 @@
 <view class="page-shell home-page">
+  <!-- 卡片头部与对话行：折叠浏览、展开示范两种形态共用同一份结构 -->
+  <template name="phraseCardHead">
+    <view class="phrase-header">
+      <view class="phrase-meta">
+        <text class="phrase-scene-tag">{{p.tag}}</text>
+        <text class="phrase-difficulty" wx:if="{{p.difficulty}}">{{p.difficulty}}</text>
+      </view>
+      <text class="phrase-title">{{p.title}}</text>
+      <text class="phrase-subtitle">适用场景：{{p.scenario}} · 患者类型：{{p.patientType}}</text>
+    </view>
+  </template>
+  <template name="phraseDialogRow">
+    <view class="dialog-item">
+      <text class="dialog-role {{l.role === 'patient' ? 'dialog-role-patient' : 'dialog-role-agent'}}">{{l.role === 'patient' ? '患者' : '客服'}}</text>
+      <text class="dialog-line {{l.role === 'patient' ? 'dialog-line-patient' : 'dialog-line-agent'}}">{{l.text}}</text>
+    </view>
+  </template>
+
   <!-- 品牌问候横幅（LOGO + 问候，单行） -->
   <view class="brand-greet">
     <view class="brand-logo-wrap">
@@ -10,11 +28,110 @@
     </view>
   </view>
 
-  <!-- 主管提示 -->
-  <view class="admin-hint" wx:if="{{isAdmin}}">
-    <view class="admin-hint-icon">!</view>
-    <text>当前为机构主管视图，点击「查看机构数据」可查看成员训练概况与统计。</text>
+  <!-- 培训计划提醒：最紧急的待办计划摘要（标题 / 剩余时间 / 达标差额 / 进度），
+       主体点击进该计划明细，右上角「全部 N 个」进列表看全量 -->
+  <view class="plan-banner {{planNotice.urgent ? 'is-urgent' : ''}}" wx:if="{{!isAdmin && planNotice}}" bindtap="openUrgentPlan" hover-class="plan-banner-hover">
+    <view class="plan-banner-main">
+      <view class="plan-banner-head">
+        <text class="plan-banner-eyebrow">待完成培训计划</text>
+        <text class="plan-banner-count" wx:if="{{planNotice.extraCount > 0}}" catchtap="openMyPlans">全部 {{planNotice.totalCount}} 个 ›</text>
+      </view>
+      <text class="plan-banner-title">{{planNotice.title}}</text>
+      <view class="plan-banner-meta">
+        <text class="plan-banner-countdown">{{planNotice.countdownText}}</text>
+        <text class="plan-banner-dot" wx:if="{{planNotice.countdownText}}">·</text>
+        <text class="plan-banner-progress">{{planNotice.ruleSummary}}</text>
+      </view>
+      <view class="plan-banner-bar">
+        <view class="plan-banner-fill" style="width:{{planNotice.progressPercent}}%;"></view>
+      </view>
+    </view>
+    <text class="plan-banner-arrow">›</text>
   </view>
+
+  <!-- 主管工作台：行动优先。
+       只回答「今天要处理什么」；趋势 / 五维 / 排行榜等分析一律留在「数据」tab，
+       这里不重复造一份，避免同一目标出现多个入口。 -->
+  <block wx:elif="{{isAdmin}}">
+    <view class="empty-hint" wx:if="{{!workbench}}">正在汇总团队待办…</view>
+
+    <block wx:else>
+      <!-- 任一路接口失败都要亮出来，避免「0 待办」被误读成团队太平 -->
+      <view class="wb-card card wb-idle" wx:if="{{workbenchFailed}}" bindtap="retryWorkbench" hover-class="wb-row-hover">
+        <text class="wb-idle-title">数据加载失败</text>
+        <text class="wb-idle-desc">网络不佳或服务暂不可用，下方数据可能不完整。点击重试。</text>
+      </view>
+      <view class="wb-head">
+        <text class="wb-title">今天要处理</text>
+        <text class="wb-caption">{{workbench.snapshot.rangeText}}</text>
+      </view>
+      <view class="wb-metrics">
+        <view class="wb-metric" wx:for="{{workbench.metrics}}" wx:key="id">
+          <text class="wb-metric-val wb-tone-{{item.tone}}">{{item.value}}</text>
+          <text class="wb-metric-lbl">{{item.label}}</text>
+        </view>
+      </view>
+
+      <!-- 待辅导成员：判定口径与「数据」tab 成员管理完全一致
+           （连续 7 天未训练，或平均分低于 60） -->
+      <block wx:if="{{workbench.coachingTotal}}">
+        <view class="wb-head">
+          <text class="wb-title">待辅导成员</text>
+          <text class="wb-caption">按严重度排序</text>
+        </view>
+        <view class="wb-card card">
+          <view class="wb-row" wx:for="{{workbench.coachingMembers}}" wx:key="id" bindtap="openWorkbenchMember" data-id="{{item.id}}" hover-class="wb-row-hover">
+            <view class="wb-avatar wb-sev-bg-{{item.severity}}">{{item.initial}}</view>
+            <view class="wb-row-copy">
+              <view class="wb-row-top">
+                <text class="wb-row-name">{{item.displayName}}</text>
+                <text class="wb-tag wb-sev-{{item.severity}}">{{item.severityText}}</text>
+              </view>
+              <text class="wb-row-reason">{{item.reason}}</text>
+            </view>
+            <text class="wb-arrow">›</text>
+          </view>
+          <text class="wb-footnote" wx:if="{{workbench.coachingExtra}}">另有 {{workbench.coachingExtra}} 名，可在「数据」tab 的成员管理中查看全部。</text>
+        </view>
+      </block>
+
+      <!-- 计划进度：挑中最该被催的那一个；进行中计划很多时也只看这一个 -->
+      <block wx:if="{{workbench.planRisk}}">
+        <view class="wb-head">
+          <text class="wb-title">计划进度</text>
+          <text class="wb-caption" wx:if="{{workbench.planRisk.activeCount > 1}}">共 {{workbench.planRisk.activeCount}} 个进行中</text>
+        </view>
+        <view class="wb-card wb-plan card wb-plan-{{workbench.planRisk.severity}}" bindtap="openWorkbenchPlan" hover-class="wb-row-hover">
+          <view class="wb-row-top">
+            <text class="wb-plan-title">{{workbench.planRisk.title}}</text>
+            <text class="wb-tag wb-sev-{{workbench.planRisk.severity}}">{{workbench.planRisk.severityText}}</text>
+          </view>
+          <text class="wb-plan-meta">{{workbench.planRisk.countdownText}} · {{workbench.planRisk.progressText}} · 团队均分 {{workbench.planRisk.avgScoreText}}</text>
+          <view class="wb-plan-bar">
+            <view class="wb-plan-fill wb-sev-fill-{{workbench.planRisk.severity}}" style="width:{{workbench.planRisk.progressPercent}}%;"></view>
+          </view>
+          <text class="wb-plan-risk" wx:if="{{workbench.planRisk.riskText}}">{{workbench.planRisk.riskText}}</text>
+        </view>
+      </block>
+
+      <!-- 未归属学员：只有真有人可加时才出现，否则就是个恒为 0 的噪音 -->
+      <view class="wb-candidate" wx:if="{{workbench.candidateCount}}" bindtap="openWorkbenchCandidates" hover-class="wb-row-hover">
+        <text class="wb-candidate-text">有 {{workbench.candidateCount}} 名在职学员尚未加入团队</text>
+        <text class="wb-candidate-link">去添加 ›</text>
+      </view>
+
+      <view class="wb-snapshot">
+        <text class="wb-snapshot-item">团队 {{workbench.snapshot.studentCount}} 人</text>
+        <text class="wb-snapshot-item">{{workbench.snapshot.rangeText}}训练 {{workbench.snapshot.totalSessions}} 次</text>
+        <text class="wb-snapshot-item">达标率 {{workbench.snapshot.passRateText}}</text>
+      </view>
+
+      <view class="wb-card card wb-idle" wx:if="{{!workbench.hasAction && !workbenchFailed}}">
+        <text class="wb-idle-title">当前没有需要处理的待办</text>
+        <text class="wb-idle-desc">团队训练节奏正常，也没有进行中的培训计划。可在「培训」tab 发布计划，或在「数据」tab 查看团队分析。</text>
+      </view>
+    </block>
+  </block>
 
   <block wx:if="{{!isAdmin}}">
   <!-- 搜索框 -->
@@ -29,7 +146,7 @@
     <view class="overview-head">
       <text class="overview-title">我的训练概览</text>
     </view>
-    <view class="overview-stats">
+    <view class="overview-stats" wx:if="{{!overviewFailed}}">
       <view class="overview-stat">
         <text class="overview-val">{{overview.totalCount}}</text>
         <text class="overview-lbl">累计训练</text>
@@ -45,6 +162,8 @@
         <text class="overview-lbl">最近得分</text>
       </view>
     </view>
+    <!-- 失败态：宁可有声地报错，也别让 0/0/'-' 冒充真实成绩 -->
+    <view class="empty-hint" wx:if="{{overviewFailed}}" bindtap="retryHomeContent" hover-class="wb-row-hover">训练概览加载失败，点击重试</view>
   </view>
 
   <!-- 推荐场景（2 列卡片，重点模块） -->
@@ -57,7 +176,7 @@
     <view class="section-link" bindtap="startFromHome">更多 ›</view>
   </view>
   <view class="scene-grid" wx:if="{{recommendScenarios.length}}">
-    <view class="scene-card card scene-level-{{item.difficulty}}" wx:for="{{recommendScenarios}}" wx:key="id" hover-class="scene-card-hover" bindtap="startFromHome">
+    <view class="scene-card card scene-level-{{item.difficulty}}" wx:for="{{recommendScenarios}}" wx:key="id" hover-class="scene-card-hover" bindtap="startScenarioFromHome" data-id="{{item.id}}">
       <view class="scene-card-top">
         <text class="scene-card-diff diff-{{item.difficulty}}">{{item.difficulty === 'advanced' ? '进阶' : '入门'}}</text>
         <text class="scene-card-go">去训练 ›</text>
@@ -66,6 +185,7 @@
       <text class="scene-card-summary">{{item.summary}}</text>
     </view>
   </view>
+  <view class="empty-hint" wx:if="{{recommendFailed}}" bindtap="retryHomeContent" hover-class="wb-row-hover">推荐场景加载失败，点击重试</view>
 
   <!-- 最近训练（单列精简列表） -->
   <view class="section-heading">
@@ -87,7 +207,8 @@
       <text class="recent-row-arrow">›</text>
     </view>
   </view>
-  <view class="empty-hint" wx:if="{{!recentSessions.length}}">还没有训练记录，去练一个场景吧</view>
+  <view class="empty-hint" wx:if="{{recentFailed}}" bindtap="retryHomeContent" hover-class="wb-row-hover">训练记录加载失败，点击重试</view>
+  <view class="empty-hint" wx:elif="{{!recentSessions.length}}">还没有训练记录，去练一个场景吧</view>
 
   <!-- 热门话术轮播 -->
   <view class="section-heading">
@@ -100,34 +221,37 @@
     <view class="section-link pill-btn" bindtap="viewPhrases">话术锦囊 ›</view>
   </view>
   <view class="swiper-wrap">
-    <swiper class="phrase-swiper" duration="500" circular="{{true}}" current="{{swiperCurrent}}" bindchange="onSwiperChange" indicator-dots="{{false}}">
+    <!-- 折叠态：轮播浏览，预览前两句 -->
+    <swiper wx:if="{{!expandedPhrase}}" class="phrase-swiper" duration="500" circular="{{true}}" current="{{swiperCurrent}}" bindchange="onSwiperChange" indicator-dots="{{false}}">
       <swiper-item wx:for="{{hotPhrases}}" wx:key="id">
         <view class="phrase-card card">
-          <view class="phrase-header">
-            <view class="phrase-meta">
-              <text class="phrase-scene-tag">{{item.tag}}</text>
-              <text class="phrase-difficulty" wx:if="{{item.difficulty}}">{{item.difficulty}}</text>
-            </view>
-            <text class="phrase-title">{{item.title}}</text>
-            <text class="phrase-subtitle">适用场景：{{item.scenario}} · 患者类型：{{item.patientType}}</text>
-          </view>
+          <template is="phraseCardHead" data="{{p: item}}"/>
           <view class="phrase-preview">
-            <view class="preview-item">
-              <text class="preview-role preview-role-patient">患者：</text>
-              <text class="preview-line preview-patient">{{item.dialog[0].text}}</text>
-            </view>
-            <view class="preview-item">
-              <text class="preview-role preview-role-agent">客服：</text>
-              <text class="preview-line preview-agent">{{item.dialog[1].text}}</text>
-            </view>
+            <template is="phraseDialogRow" data="{{l: item.dialog[0]}}"/>
+            <template is="phraseDialogRow" data="{{l: item.dialog[1]}}"/>
           </view>
           <view class="phrase-footer">
-            <text class="phrase-expand-btn" bindtap="viewPhraseDetail" data-tag="{{item.tag}}">查看标准对话示范</text>
-            <button class="phrase-train-btn" bindtap="goTrainingFromHome" data-scenario="{{item.scenario}}">去训练</button>
+            <text class="phrase-expand-btn" bindtap="togglePhraseDetail" data-id="{{item.id}}">查看标准对话示范</text>
+            <button class="phrase-train-btn" bindtap="goTrainingFromHome" data-id="{{item.id}}">去训练</button>
           </view>
         </view>
       </swiper-item>
     </swiper>
+
+    <!-- 展开态：脱离 swiper 的定高裁切，同一张卡就地长高 -->
+    <view wx:if="{{expandedPhrase}}" class="phrase-card phrase-card-open card">
+      <template is="phraseCardHead" data="{{p: expandedPhrase}}"/>
+      <view class="phrase-dialog">
+        <block wx:for="{{expandedPhrase.dialog}}" wx:key="text">
+          <template is="phraseDialogRow" data="{{l: item}}"/>
+        </block>
+      </view>
+      <view class="phrase-footer">
+        <text class="phrase-expand-btn" bindtap="togglePhraseDetail" data-id="{{expandedPhrase.id}}">收起示范</text>
+        <button class="phrase-train-btn" bindtap="goTrainingFromHome" data-id="{{expandedPhrase.id}}">去训练</button>
+      </view>
+    </view>
+
     <!-- 页码指示器 -->
     <view class="swiper-page-indicator">
       <view class="page-dot {{index === swiperCurrent ? 'active' : ''}}" wx:for="{{hotPhrases}}" wx:key="id" wx:for-index="index"></view>

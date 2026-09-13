@@ -25,6 +25,8 @@
 .boundary-tip { display: flex; align-items: center; padding: 20rpx 24rpx; margin-bottom: 24rpx; border-radius: 16rpx; color: var(--color-primary); background: var(--color-primary-light); font-size: 22rpx; line-height: 1.5; }
 .boundary-icon { width: 32rpx; height: 32rpx; line-height: 32rpx; flex-shrink: 0; margin-right: 14rpx; border-radius: 50%; text-align: center; color: #fff; background: var(--color-primary); font-size: 22rpx; }
 
+/* 培训计划横幅样式已收敛到 app.wxss 第 9 节（首页与训练中心共用） */
+
 /* ═══════════════════════════════════════ */
 /* 患者模拟：自由提问面板 */
 /* ═══════════════════════════════════════ */
@@ -112,12 +114,16 @@
 
 /* ── 患者画像底部弹层 ── */
 .profile-mask { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 90; background: rgba(22, 35, 59, .4); }
-.profile-modal { position: fixed; left: 0; right: 0; bottom: 0; z-index: 91; padding: 32rpx 32rpx calc(32rpx + env(safe-area-inset-bottom)); border-radius: 28rpx 28rpx 0 0; background: #fff; box-shadow: 0 -8rpx 32rpx rgba(22, 35, 59, .12); transform: translateY(100%); transition: transform .28s ease; }
+/* 底部内边距必须留出与页面级一致的 tabBar 净空（150rpx + 安全区，见 .scene-page），
+   否则「开始训练」按钮与「使用默认画像直接开始」会落到 tab 条底下点不到 */
+.profile-modal { position: fixed; left: 0; right: 0; bottom: 0; z-index: 91; padding: 32rpx 32rpx calc(150rpx + env(safe-area-inset-bottom)); border-radius: 28rpx 28rpx 0 0; background: #fff; box-shadow: 0 -8rpx 32rpx rgba(22, 35, 59, .12); transform: translateY(100%); transition: transform .28s ease; }
 .profile-modal.profile-modal-show { transform: translateY(0); }
 .profile-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24rpx; }
 .profile-modal-title { font-size: 32rpx; font-weight: 600; color: #16233B; }
 .profile-modal-close { padding: 8rpx 16rpx; border-radius: 16rpx; color: var(--color-primary); background: var(--color-primary-light); font-size: 22rpx; }
-.profile-modal-body { padding: 24rpx; border-radius: 16rpx; background: #F7F9FC; }
+/* 必须是 scroll-view：普通 view 的 overflow-y:auto 在小程序里不产生滚动区，
+   触摸会被页面背景截走（症状：只能滑动背景，画像内容不动） */
+.profile-modal-body { box-sizing: border-box; max-height: 52vh; padding: 24rpx; border-radius: 16rpx; background: #F7F9FC; }
 .profile-modal-actions { margin-top: 28rpx; }
 .profile-modal-btn { width: 100%; height: 84rpx; line-height: 84rpx; font-size: 26rpx; font-weight: 600; }
 .profile-skip { display: block; margin-top: 20rpx; padding: 12rpx; color: #6B7A93; font-size: 24rpx; text-align: center; }
@@ -130,6 +136,18 @@
 .custom-input:focus { border-color: var(--color-primary); }
 .custom-input-short { max-width: 160rpx; }
 .custom-profile-hint { display: block; margin-top: 14rpx; color: var(--text-secondary); font-size: 22rpx; line-height: 1.5; }
+
+/* 画像选项按钮（性别） */
+.profile-option-group { display: flex; flex: 1; gap: 12rpx; }
+.profile-option { min-width: 120rpx; padding: 14rpx 24rpx; border-radius: 12rpx; border: 2rpx solid #E3E9F2; background: #fff; color: #3C4658; font-size: 26rpx; text-align: center; transition: background .2s, border-color .2s; }
+.profile-option-active { border-color: var(--color-primary); background: var(--color-primary-light); color: var(--color-primary); font-weight: 600; }
+
+/* 画像预设标签（描述 / 情绪） */
+.profile-preset-row { margin-bottom: 16rpx; }
+.profile-preset-label { display: block; margin-bottom: 10rpx; color: var(--text-muted); font-size: 22rpx; }
+.profile-preset-chips { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.profile-preset-chip { padding: 12rpx 18rpx; border-radius: 12rpx; border: 2rpx solid #E3E9F2; background: #fff; color: #3C4658; font-size: 22rpx; line-height: 1.45; transition: background .2s, border-color .2s; }
+.profile-preset-chip-active { border-color: var(--color-primary); background: var(--color-primary-light); color: var(--color-primary); }
 
 /* 操作按钮 */
 .scenario-actions { display: flex; flex-direction: column; align-items: stretch; margin-top: 22rpx; }

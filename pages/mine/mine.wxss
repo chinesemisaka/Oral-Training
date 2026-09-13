@@ -23,13 +23,7 @@
 .hero-info { flex: 1; min-width: 0; }
 .hero-name-row { display: flex; align-items: center; gap: 14rpx; }
 .hero-name { font-size: 36rpx; font-weight: 600; color: var(--text-strong); }
-.hero-level-tag { padding: 4rpx 16rpx; border-radius: 14rpx; background: var(--color-primary-light); font-size: 22rpx; font-weight: 600; color: var(--color-primary); }
 .hero-subtitle { display: block; margin-top: 8rpx; color: var(--text-secondary); font-size: 24rpx; line-height: 1.4; max-width: 440rpx; }
-.hero-level-row { display: flex; align-items: center; margin-top: 14rpx; gap: 12rpx; }
-.hero-level-bar { flex: 1; height: 10rpx; border-radius: 6rpx; background: var(--color-border); overflow: hidden; }
-.hero-level-fill { height: 100%; border-radius: 6rpx; background: var(--color-primary); transition: width .3s; }
-.hero-level-text { font-size: 22rpx; color: var(--text-secondary); white-space: nowrap; }
-.hero-level-max { display: block; margin-top: 12rpx; color: var(--color-primary); font-size: 22rpx; font-weight: 600; }
 
 /* ── 主管角色徽章 ── */
 .admin-role-badge { padding: 5rpx 18rpx; border-radius: 14rpx; background: #fff; font-size: 22rpx; font-weight: 600; color: var(--color-primary); border: 1rpx solid var(--color-border); }
@@ -148,7 +142,8 @@
 
 /* ── 切换账号面板 ── */
 .demo-mask { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 100; background: rgba(0,0,0,.4); }
-.demo-picker { position: fixed; left: 0; right: 0; bottom: 0; z-index: 101; padding: 28rpx 28rpx calc(30rpx + env(safe-area-inset-bottom)); background: #fff; border-radius: 28rpx 28rpx 0 0; transform: translateY(100%); transition: transform .25s ease; }
+/* 同 profile-modal：底部留出 tabBar 净空（150rpx + 安全区），否则末行提示会被 tab 条盖住 */
+.demo-picker { position: fixed; left: 0; right: 0; bottom: 0; z-index: 101; padding: 28rpx 28rpx calc(150rpx + env(safe-area-inset-bottom)); background: #fff; border-radius: 28rpx 28rpx 0 0; transform: translateY(100%); transition: transform .25s ease; }
 .demo-picker-show { transform: translateY(0); }
 .demo-picker-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20rpx; }
 .demo-picker-title { font-size: 32rpx; font-weight: 600; color: var(--text-strong); }

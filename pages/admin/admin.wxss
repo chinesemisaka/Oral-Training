@@ -13,10 +13,10 @@
 .hero-time { flex: 1; padding: 10rpx 6rpx; border-radius: 10rpx; color: var(--text-secondary); font-size: 22rpx; text-align: center; }
 .hero-time.selected { color: #fff; background: var(--color-primary); font-weight: 600; }
 
-/* 锚点快速导航（文字链接 + 下划线态） */
-.anchor-nav { display: flex; gap: 6rpx; margin: -8rpx 0 24rpx; padding: 4rpx 8rpx; }
-.anchor-item { flex: 1; padding: 12rpx 0; color: var(--text-secondary); font-size: 22rpx; text-align: center; border-bottom: 3rpx solid transparent; transition: color .2s, border-color .2s; }
-.anchor-item-hover { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+/* 四个模块分段导航（白底 + 下划线选中态） */
+.module-tabs { display: flex; gap: 6rpx; margin: -4rpx 0 24rpx; border-bottom: 1rpx solid var(--color-border); }
+.module-tab { flex: 1; padding: 16rpx 0 18rpx; color: var(--text-secondary); font-size: 26rpx; text-align: center; border-bottom: 4rpx solid transparent; }
+.module-tab.selected { color: var(--color-primary); font-weight: 600; border-bottom-color: var(--color-primary); }
 
 /* ── 2. 数据概览卡（白卡 + 图标，2×2 网格） ── */
 .summary-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14rpx; margin-bottom: 24rpx; }
@@ -26,6 +26,16 @@
 .summary-icon-img { width: 40rpx; height: 40rpx; }
 .summary-value { display: block; font-size: 32rpx; font-weight: 600; color: var(--text-strong); }
 .summary-label { display: block; margin-top: 4rpx; font-size: 22rpx; color: var(--text-secondary); }
+.summary-hint { display: block; margin-top: 4rpx; font-size: 20rpx; color: var(--text-muted); }
+
+/* ── 训练趋势（趋势图下钻） ── */
+.trend-point { display: flex; flex-direction: column; gap: 4rpx; margin-top: 18rpx; padding: 14rpx 18rpx; border-radius: 12rpx; background: var(--color-primary-light); }
+.trend-point-date { font-size: 22rpx; font-weight: 600; color: var(--color-primary); }
+.trend-point-text { font-size: 22rpx; color: var(--text-secondary); }
+
+/* ── 场景分布：薄弱场景预警 ── */
+.scene-name-wrap { display: flex; align-items: center; gap: 10rpx; }
+.scene-weak-tag { padding: 2rpx 10rpx; border-radius: 8rpx; font-size: 20rpx; font-weight: 600; color: #fff; background: var(--color-warning); }
 
 /* ── 通用标题区 ── */
 .section-title-row { display: flex; align-items: baseline; justify-content: space-between; margin: 0 4rpx 20rpx; }
@@ -80,18 +90,78 @@
 .suggestion-card.medium::before { background: var(--color-warning); }
 .suggestion-card.normal::before { background: var(--color-success); }
 
+/* ── 个人级薄弱预警（可点击下钻到成员详情） ── */
+.warning-card { display: flex; align-items: center; padding: 22rpx; margin-bottom: 14rpx; transition: transform .15s ease; }
+.warning-card-hover { transform: scale(.98); }
+.warning-avatar { width: 64rpx; height: 64rpx; line-height: 64rpx; flex-shrink: 0; border-radius: 20rpx; background: var(--color-primary-light); color: var(--color-primary); font-size: 26rpx; font-weight: 600; text-align: center; }
+.warning-copy { flex: 1; min-width: 0; margin-left: 16rpx; }
+.warning-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10rpx; }
+.warning-name { color: var(--text-body); font-size: 26rpx; font-weight: 600; }
+.warning-sev { flex-shrink: 0; padding: 2rpx 10rpx; border-radius: 8rpx; font-size: 20rpx; font-weight: 600; }
+.warning-text { display: block; margin-top: 6rpx; color: var(--text-secondary); font-size: 22rpx; line-height: 1.5; }
+.warning-arrow { margin-left: 8rpx; font-size: 30rpx; color: var(--text-secondary); }
+.warning-card.high .warning-avatar { background: var(--color-danger-light); color: var(--color-danger); }
+.warning-card.high .warning-sev { color: var(--color-danger); background: var(--color-danger-light); }
+.warning-card.medium .warning-sev { color: var(--color-warning); background: var(--color-warning-light); }
+
 /* ── 6. 成员摘要（圆形头像 + 微动效） ── */
 .member-card { display: flex; align-items: center; padding: 22rpx; margin-bottom: 14rpx; transition: transform .15s ease, box-shadow .15s ease; }
 .member-card-hover { transform: scale(.98); box-shadow: 0 2rpx 12rpx rgba(0,0,0,.04); }
 .member-avatar-ring { display: flex; align-items: center; justify-content: center; width: 80rpx; height: 80rpx; flex-shrink: 0; border-radius: 50%; box-sizing: border-box; }
 .member-avatar { width: 68rpx; height: 68rpx; line-height: 68rpx; border-radius: 50%; color: var(--color-primary); background: #fff; font-size: 32rpx; font-weight: 600; text-align: center; }
 .member-copy { flex: 1; min-width: 0; margin-left: 18rpx; }
-.member-name { display: block; color: var(--text-body); font-size: 26rpx; font-weight: 600; }
+.member-name-row { display: flex; align-items: center; gap: 10rpx; }
+.member-name { color: var(--text-body); font-size: 26rpx; font-weight: 600; }
+.member-level { padding: 1rpx 8rpx; border-radius: 6rpx; font-size: 20rpx; color: var(--text-secondary); background: var(--color-bg); }
+.member-warn-tag { padding: 1rpx 8rpx; border-radius: 6rpx; font-size: 20rpx; font-weight: 600; color: var(--color-danger); background: var(--color-danger-light); }
 .member-meta-line1 { display: block; margin-top: 4rpx; color: var(--text-secondary); font-size: 22rpx; }
 .member-meta { display: block; margin-top: 2rpx; color: var(--text-secondary); font-size: 22rpx; }
 .member-side { display: flex; flex-direction: column; align-items: flex-end; color: var(--color-primary); font-size: 26rpx; font-weight: 600; }
 .member-side text:last-child { margin-top: 4rpx; color: var(--text-secondary); font-size: 22rpx; font-weight: 400; }
 .empty-member { padding: 34rpx 22rpx; color: var(--text-secondary); font-size: 22rpx; text-align: center; }
+
+/* ── 成员模块：搜索 / 排序 / 筛选 ── */
+.filter-card { padding: 24rpx; margin-bottom: 18rpx; }
+.filter-search-row { display: flex; align-items: center; gap: 12rpx; padding: 8rpx 16rpx; border-radius: 12rpx; background: var(--color-primary-light); }
+.filter-input { flex: 1; font-size: 24rpx; color: var(--text-strong); background: transparent; }
+.filter-input-placeholder { color: var(--text-muted); }
+.filter-clear { font-size: 22rpx; color: var(--color-primary); }
+.filter-chip-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10rpx; margin-top: 16rpx; }
+.filter-chip-label { font-size: 22rpx; color: var(--text-secondary); margin-right: 4rpx; }
+.filter-chip { padding: 8rpx 18rpx; border-radius: 18rpx; font-size: 22rpx; color: var(--color-primary); background: var(--color-primary-light); }
+.filter-chip.selected { color: #fff; background: var(--color-primary); font-weight: 600; }
+.filter-summary { display: block; margin-top: 16rpx; font-size: 22rpx; color: var(--text-secondary); }
+.filter-note { display: block; margin-top: 4rpx; font-size: 20rpx; color: var(--text-muted); }
+
+/* ── 违规词统计（「培训运营」样式已随功能迁至 pages/admin-training） ── */
+.phrase-row { padding: 6rpx 10rpx 4rpx; margin: 0 -10rpx 18rpx; border-radius: 12rpx; }
+.phrase-row:last-of-type { margin-bottom: 0; }
+.phrase-head { display: flex; align-items: center; justify-content: space-between; gap: 12rpx; }
+.phrase-name { font-size: 26rpx; font-weight: 600; color: var(--text-body); }
+.phrase-count { flex-shrink: 0; font-size: 22rpx; color: var(--text-secondary); }
+.phrase-bar { height: 12rpx; margin-top: 10rpx; overflow: hidden; border-radius: 7rpx; background: var(--color-danger-light); }
+.phrase-fill { height: 100%; border-radius: 7rpx; background: var(--color-danger); transition: width .4s ease; }
+.phrase-hint { display: block; margin-top: 18rpx; font-size: 20rpx; color: var(--text-muted); }
+
+/* ── 团队排行榜 ── */
+.board-card { padding: 22rpx 24rpx; }
+.board-dimension-row { margin: 0 0 16rpx; }
+.board-row { display: flex; align-items: center; gap: 16rpx; padding: 16rpx 12rpx; border-radius: 12rpx; }
+.board-row:not(:last-child) { border-bottom: 1rpx solid var(--color-border); }
+.board-row.top { background: var(--color-primary-pale); border-bottom-color: transparent; }
+.board-row-hidden { display: none; }
+.board-rank { flex-shrink: 0; width: 44rpx; font-size: 26rpx; font-weight: 600; color: var(--text-secondary); text-align: center; }
+.board-row.top .board-rank { color: var(--color-primary); font-size: 30rpx; }
+.board-name { flex: 1; min-width: 0; font-size: 26rpx; color: var(--text-body); }
+.board-row.top .board-name { font-weight: 600; color: var(--text-strong); }
+.board-score { flex-shrink: 0; font-size: 26rpx; font-weight: 600; color: var(--color-primary); }
+.board-more { display: block; padding: 20rpx 0 6rpx; font-size: 22rpx; color: var(--color-primary); text-align: center; }
+
+/* ── 占位块（保留给后续模块） ── */
+.placeholder-card { padding: 36rpx 28rpx; margin-bottom: 18rpx; }
+.placeholder-block { display: flex; flex-direction: column; align-items: center; padding: 18rpx 0 8rpx; }
+.placeholder-block-title { font-size: 28rpx; font-weight: 600; color: var(--text-strong); }
+.placeholder-block-text { display: block; margin-top: 12rpx; font-size: 22rpx; line-height: 1.6; color: var(--text-secondary); text-align: center; padding: 0 20rpx; }
 
 /* ── 学习者概览（唯一焦点环 + 数字卡） ── */
 .learner-summary { margin-bottom: 24rpx; }

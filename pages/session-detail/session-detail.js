@@ -1,4 +1,6 @@
 const api = require('../../utils/api.js');
+const datetime = require('../../utils/datetime.js');
+const emotion = require('../../utils/emotion.js');
 
 /* 分数分档：颜色只跟随分数 */
 const scoreTier = score => (score >= 80 ? 'high' : score >= 60 ? 'mid' : 'low');
@@ -60,12 +62,23 @@ Page({
       const session = detail.session;
       const statusText = session.status === 'in_progress' ? '进行中'
         : session.status === 'completed' ? '已完成' : '已放弃';
-      const messages = (detail.messages || []).map(message => Object.assign({}, message, {
-        time: message.createdAt || '',
-        learningPoints: message.learningPoints || []
-      }));
+      /* 情绪标签在 JS 预算；roleplay 消息 role 为 learner_patient / standard_customer，
+         不会命中 patient，因此本页两种模式天然隔离 */
+      const messages = (detail.messages || []).map(message => {
+        const emotionText = emotion.emotionTextOf(message);
+        return Object.assign({}, message, {
+          time: datetime.formatClock(message.createdAt),
+          learningPoints: message.learningPoints || [],
+          emotionText,
+          emotionTone: emotion.emotionToneOf(emotionText)
+        });
+      });
+      /* 展示文本在 JS 预算好，WXML 里不调用函数（函数调用表达式的依赖不会被追踪） */
+      const sessionView = Object.assign({}, session, {
+        startedAtText: datetime.formatFull(session.startedAt)
+      });
       this.setData({
-        session,
+        session: sessionView,
         statusText,
         messages,
         loading: false

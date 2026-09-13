@@ -22,7 +22,7 @@
       <view class="quote-box" wx:if="{{item.originalQuote}}"><text class="field-label">当时表达</text><text>“{{item.originalQuote}}”</text></view>
       <view class="reason-box"><text class="field-label">为什么需要调整</text><text>{{item.reason}}</text></view>
       <view class="rewrite-box"><text class="field-label">建议改写</text><text>{{item.recommendedRewrite}}</text></view>
-      <view class="mistake-actions"><text class="mastery-action" bindtap="toggleMastery" data-id="{{item.id}}" data-session-id="{{item.sessionId}}" data-mistake-key="{{item.mistakeKey}}" data-mastered="{{item.mastered}}">{{savingId === item.id ? '保存中…' : item.mastered ? '恢复为待练习' : '标记已掌握'}}</text><text class="retrain-action" bindtap="retrain" data-scenario-id="{{item.scenarioId}}">用此场景复练 ›</text></view>
+      <view class="mistake-actions"><text class="mastery-action" bindtap="toggleMastery" data-id="{{item.id}}" data-session-id="{{item.sessionId}}" data-mistake-key="{{item.mistakeKey}}" data-mastered="{{item.mastered}}">{{savingId === item.id ? '保存中…' : item.mastered ? '恢复为待练习' : '标记已掌握'}}</text><text class="retrain-action" bindtap="retrainRound" data-session-id="{{item.sessionId}}" data-mistake-key="{{item.mistakeKey}}">重练本回合 ›</text><text class="retrain-action" bindtap="retrain" data-scenario-id="{{item.scenarioId}}">用此场景复练 ›</text></view>
     </view>
   </view>
 

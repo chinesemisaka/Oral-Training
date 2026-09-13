@@ -44,13 +44,26 @@ try {
   Invoke-Psql $emptySchema (Join-Path $migrations '005_learner_insights.sql') ''
   Invoke-Psql $emptySchema (Join-Path $migrations '006_training_experience.sql') ''
   Invoke-Psql $emptySchema (Join-Path $migrations '007_supervisor_growth.sql') ''
+  Invoke-Psql $emptySchema (Join-Path $migrations '008_custom_patient_profile.sql') ''
+  Invoke-Psql $emptySchema (Join-Path $migrations '009_recommendation_scenario.sql') ''
+  Invoke-Psql $emptySchema (Join-Path $migrations '010_training_plans.sql') ''
+  Invoke-Psql $emptySchema (Join-Path $migrations '011_supervisor_team.sql') ''
+  Invoke-Psql $emptySchema (Join-Path $migrations '012_message_emotion.sql') ''
   Invoke-Psql $emptySchema '' @'
 DO $$ BEGIN
   IF to_regclass('message_repair_archive') IS NULL OR to_regclass('ai_jobs') IS NULL OR
      to_regclass('users') IS NULL OR to_regclass('auth_sessions') IS NULL OR
      to_regclass('learner_mistake_progress') IS NULL OR to_regclass('session_hints') IS NULL OR
-     to_regclass('learner_checkins') IS NULL OR to_regclass('learner_phrase_favorites') IS NULL THEN
+     to_regclass('learner_checkins') IS NULL OR to_regclass('learner_phrase_favorites') IS NULL OR
+     to_regclass('training_plans') IS NULL OR to_regclass('training_assignments') IS NULL OR
+     to_regclass('supervisor_team_members') IS NULL THEN
     RAISE EXCEPTION 'empty database migration did not create required tables';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'messages' AND column_name = 'emotion'
+  ) THEN
+    RAISE EXCEPTION 'message emotion column was not created';
   END IF;
 END $$;
 '@
@@ -61,6 +74,11 @@ END $$;
   Invoke-Psql $historySchema (Join-Path $migrations '005_learner_insights.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '006_training_experience.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '007_supervisor_growth.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '008_custom_patient_profile.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '009_recommendation_scenario.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '010_training_plans.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '011_supervisor_team.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '012_message_emotion.sql') ''
   Invoke-Psql $historySchema '' @'
 INSERT INTO learner_mistake_progress(user_id, session_id, mistake_key, mastered_at)
 VALUES ('demo-user-001', 'test-max-rounds', 'fixture-mistake', NOW());
@@ -104,6 +122,11 @@ END $$;
   Invoke-Psql $historySchema (Join-Path $migrations '005_learner_insights.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '006_training_experience.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '007_supervisor_growth.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '008_custom_patient_profile.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '009_recommendation_scenario.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '010_training_plans.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '011_supervisor_team.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '012_message_emotion.sql') ''
   Invoke-Psql $historySchema '' @'
 DO $$ BEGIN
   IF NOT EXISTS (
@@ -130,6 +153,35 @@ DO $$ BEGIN
     WHERE user_id = 'demo-user-001' AND session_id = 'test-max-rounds' AND phrase_key = 'fixture-phrase'
   ) THEN
     RAISE EXCEPTION 'phrase favorite was not preserved on migration rerun';
+  END IF;
+END $$;
+'@
+
+  # 011 的存量回填必须只发生在首次安装：这里先造出「恰好一个在职主管 + 一个在职学员」
+  # 的场景，再重跑迁移。若 first_install 守卫失效，学员会被重新塞回主管名下，
+  # 主管手动移出的成员就会被静默复活。
+  Invoke-Psql $historySchema '' @'
+INSERT INTO users(id, display_name, role, status, is_demo)
+VALUES ('reliability-supervisor', 'Reliability Supervisor', 'admin', 'active', TRUE),
+       ('reliability-learner', 'Reliability Learner', 'learner', 'active', TRUE)
+ON CONFLICT (id) DO NOTHING;
+'@
+  Invoke-Psql $historySchema (Join-Path $migrations '011_supervisor_team.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '012_message_emotion.sql') ''
+  Invoke-Psql $historySchema '' @'
+DO $$ BEGIN
+  IF to_regclass('supervisor_team_members') IS NULL THEN
+    RAISE EXCEPTION 'supervisor team table vanished on migration rerun';
+  END IF;
+  IF (SELECT COUNT(*) FROM supervisor_team_members) <> 0 THEN
+    RAISE EXCEPTION 'migration rerun resurrected team membership a supervisor had removed';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'supervisor_team_members' AND constraint_type = 'PRIMARY KEY'
+      AND constraint_name = 'supervisor_team_members_pkey'
+  ) THEN
+    RAISE EXCEPTION 'supervisor team table lost its learner_id primary key';
   END IF;
 END $$;
 '@

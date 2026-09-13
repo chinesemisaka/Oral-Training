@@ -3,7 +3,7 @@
   <view class="role-blocked-card" wx:if="{{roleBlocked}}">
     <view class="blocked-icon">锁</view>
     <text class="blocked-title">当前是主管身份，无法使用训练功能</text>
-    <text class="blocked-desc">训练场景和模拟对话面向学员开放，主管可在「数据」Tab 查看机构整体训练情况。</text>
+    <text class="blocked-desc">训练场景和模拟对话面向学员开放，主管可在「数据」Tab 查看机构整体训练情况，在「培训」Tab 管理培训计划。</text>
     <view class="blocked-action" bindtap="switchRole"><text>切换为学员身份</text></view>
   </view>
 
@@ -27,6 +27,27 @@
   </view>
 
   <view class="boundary-tip"><text class="boundary-icon">i</text><text>{{trainingMode === 'patient_simulation' ? '标准客服会展示答复思路与合规边界；不提供诊断、治疗承诺或未经确认的价格信息。' : '患者隐藏信息不会直接展示，训练中请通过提问逐步了解。'}}</text></view>
+
+  <!-- 培训计划提醒：最紧急的待办计划摘要（标题 / 剩余时间 / 达标差额 / 进度），
+       主体点击进该计划明细，右上角「全部 N 个」进列表看全量 -->
+  <view class="plan-banner {{planNotice.urgent ? 'is-urgent' : ''}}" wx:if="{{planNotice}}" bindtap="openUrgentPlan" hover-class="plan-banner-hover">
+    <view class="plan-banner-main">
+      <view class="plan-banner-head">
+        <text class="plan-banner-eyebrow">待完成培训计划</text>
+        <text class="plan-banner-count" wx:if="{{planNotice.extraCount > 0}}" catchtap="openMyPlans">全部 {{planNotice.totalCount}} 个 ›</text>
+      </view>
+      <text class="plan-banner-title">{{planNotice.title}}</text>
+      <view class="plan-banner-meta">
+        <text class="plan-banner-countdown">{{planNotice.countdownText}}</text>
+        <text class="plan-banner-dot" wx:if="{{planNotice.countdownText}}">·</text>
+        <text class="plan-banner-progress">{{planNotice.ruleSummary}}</text>
+      </view>
+      <view class="plan-banner-bar">
+        <view class="plan-banner-fill" style="width:{{planNotice.progressPercent}}%;"></view>
+      </view>
+    </view>
+    <text class="plan-banner-arrow">›</text>
+  </view>
 
   <!-- ═══════════════════════════════════════ -->
   <!-- 患者模拟模式：自由提问面板 -->
@@ -112,7 +133,7 @@
           <view class="score-row">
             <text class="pass-score">及格分：{{scenario.passScore || 60}}分</text>
             <text class="best-score" wx:if="{{scenario.bestScore !== null && scenario.bestScore !== undefined}}">历史最佳：{{scenario.bestScore}}分</text>
-            <text class="profile-tag" wx:elif="{{!hasCustomProfile(scenario.id)}}">新场景</text>
+            <text class="profile-tag" wx:elif="{{!scenario.hasProfile}}">新场景</text>
           </view>
 
           <!-- 操作按钮 -->
@@ -128,30 +149,48 @@
   </view>
 
   <!-- 患者画像底部弹层（首次训练时填写，不阻塞浏览） -->
-  <view class="profile-mask" wx:if="{{profileModalVisible}}" bindtap="closeProfileModal"></view>
+  <view class="profile-mask" wx:if="{{profileModalVisible}}" bindtap="closeProfileModal" catchtouchmove="preventPageScroll"></view>
   <view class="profile-modal {{profileModalVisible ? 'profile-modal-show' : ''}}">
     <view class="profile-modal-head">
       <text class="profile-modal-title">填写患者画像</text>
       <text class="profile-modal-close" bindtap="closeProfileModal">关闭</text>
     </view>
-    <view class="profile-modal-body">
+    <scroll-view class="profile-modal-body" scroll-y show-scrollbar="{{false}}">
       <view class="custom-input-row">
         <text class="custom-input-label">年龄</text>
-        <input class="custom-input custom-input-short" type="number" placeholder="例如：35（选填）" value="{{customProfiles[profileModalScenarioId] ? customProfiles[profileModalScenarioId].age : ''}}" bindinput="onCustomProfileChange" data-id="{{profileModalScenarioId}}" data-field="age" />
+        <input class="custom-input custom-input-short" type="number" placeholder="例如：35（选填）" value="{{profileDraft.age}}" bindinput="onCustomProfileChange" data-field="age" />
+      </view>
+      <view class="custom-input-row">
+        <text class="custom-input-label">性别</text>
+        <view class="profile-option-group">
+          <text wx:for="{{profileGenderOptions}}" wx:key="*this" class="profile-option {{profileDraft.gender === item ? 'profile-option-active' : ''}}" bindtap="pickProfileOption" data-field="gender" data-value="{{item}}">{{item}}</text>
+        </view>
       </view>
       <view class="custom-input-row">
         <text class="custom-input-label">描述</text>
-        <input class="custom-input" placeholder="例如：刚拔完智齿，担心感染（选填）" value="{{customProfiles[profileModalScenarioId] ? customProfiles[profileModalScenarioId].description : ''}}" bindinput="onCustomProfileChange" data-id="{{profileModalScenarioId}}" data-field="description" />
+        <input class="custom-input" maxlength="{{descMaxLength}}" placeholder="例如：刚拔完智齿，担心感染（选填）" value="{{profileDraft.description}}" bindinput="onCustomProfileChange" data-field="description" />
+      </view>
+      <view class="profile-preset-row" wx:if="{{profileDescPresets.length}}">
+        <text class="profile-preset-label">常用描述 · 点击填入后可继续修改</text>
+        <view class="profile-preset-chips">
+          <text wx:for="{{profileDescPresets}}" wx:key="*this" class="profile-preset-chip {{profileDraft.description === item ? 'profile-preset-chip-active' : ''}}" bindtap="pickProfileOption" data-field="description" data-value="{{item}}">{{item}}</text>
+        </view>
       </view>
       <view class="custom-input-row">
         <text class="custom-input-label">情绪</text>
-        <input class="custom-input" placeholder="例如：焦虑、犹豫（选填）" value="{{customProfiles[profileModalScenarioId] ? customProfiles[profileModalScenarioId].emotion : ''}}" bindinput="onCustomProfileChange" data-id="{{profileModalScenarioId}}" data-field="emotion" />
+        <input class="custom-input" maxlength="8" placeholder="例如：焦虑、犹豫（选填）" value="{{profileDraft.emotion}}" bindinput="onCustomProfileChange" data-field="emotion" />
       </view>
-      <text class="custom-profile-hint">不填写将使用场景默认患者画像，训练中可随时了解患者情况。</text>
-    </view>
+      <view class="profile-preset-row">
+        <text class="profile-preset-label">常用情绪</text>
+        <view class="profile-preset-chips">
+          <text wx:for="{{profileEmotionPresets}}" wx:key="*this" class="profile-preset-chip {{profileDraft.emotion === item ? 'profile-preset-chip-active' : ''}}" bindtap="pickProfileOption" data-field="emotion" data-value="{{item}}">{{item}}</text>
+        </view>
+      </view>
+      <text class="custom-profile-hint">全部选填。不填写将使用场景默认患者画像，训练中可随时了解患者情况。</text>
+    </scroll-view>
     <view class="profile-modal-actions">
-      <button class="primary-button profile-modal-btn" bindtap="confirmProfileAndStart">开始训练</button>
-      <text class="profile-skip" bindtap="skipProfileAndStart">使用默认画像直接开始</text>
+      <button class="primary-button profile-modal-btn" bindtap="confirmProfileAndStart">{{profileDraftHasInput ? '开始训练' : '使用默认画像开始'}}</button>
+      <text class="profile-skip" wx:if="{{profileDraftHasInput}}" bindtap="skipProfileAndStart">使用默认画像直接开始</text>
     </view>
   </view>
   </block>

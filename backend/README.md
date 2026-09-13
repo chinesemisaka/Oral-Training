@@ -16,6 +16,11 @@
    & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\005_learner_insights.sql
    & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\006_training_experience.sql
    & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\007_supervisor_growth.sql
+   & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\008_custom_patient_profile.sql
+   & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\009_recommendation_scenario.sql
+   & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\010_training_plans.sql
+   & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\011_supervisor_team.sql
+   & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\012_message_emotion.sql
    ```
 
    `003` 会完整归档历史重复轮次后建立唯一索引，回填回复状态，并为已有 `generating` 记录补任务；迁移本身不会调用模型。`004` 保留所有旧记录并归属到 `demo-user-001`。
