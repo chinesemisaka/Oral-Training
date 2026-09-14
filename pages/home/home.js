@@ -272,6 +272,11 @@ Page({
     wx.navigateTo({ url: '/pages/team-members/team-members' });
   },
 
+  /* 工作台：训练场景管理（新建 / 编辑 / 上下架） */
+  openScenarioAdmin() {
+    wx.navigateTo({ url: '/pages/admin-scenarios/admin-scenarios' });
+  },
+
   // 培训计划横幅入口：主体直达最紧急计划的明细
   openUrgentPlan() {
     const notice = this.data.planNotice;

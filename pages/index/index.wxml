@@ -49,10 +49,18 @@
     <text class="plan-banner-arrow">›</text>
   </view>
 
+  <!-- 场景加载失败：不能空成「没有场景可练」，必须给出重试出口 -->
+  <view class="role-blocked-card" wx:if="{{scenariosFailed}}">
+    <view class="blocked-icon">!</view>
+    <text class="blocked-title">场景列表加载失败</text>
+    <text class="blocked-desc">可能是网络波动。你的训练记录和历史成绩不受影响，点击下方重新加载。</text>
+    <view class="blocked-action" bindtap="retryScenarios"><text>重新加载</text></view>
+  </view>
+
   <!-- ═══════════════════════════════════════ -->
   <!-- 患者模拟模式：自由提问面板 -->
   <!-- ═══════════════════════════════════════ -->
-  <view class="free-roleplay-panel" wx:if="{{trainingMode === 'patient_simulation'}}">
+  <view class="free-roleplay-panel" wx:if="{{trainingMode === 'patient_simulation' && !scenariosFailed}}">
     <view class="free-roleplay-header">
       <text class="free-roleplay-title">你想模拟什么场景？</text>
       <text class="free-roleplay-subtitle">描述你在实际工作中遇到的患者情况，AI 会扮演标准客服进行回复与学习</text>
@@ -97,7 +105,7 @@
   <!-- ═══════════════════════════════════════ -->
   <!-- 客服训练模式：4 张可折叠分类卡 -->
   <!-- ═══════════════════════════════════════ -->
-  <view class="category-cards" wx:if="{{trainingMode === 'customer_service'}}">
+  <view class="category-cards" wx:if="{{trainingMode === 'customer_service' && !scenariosFailed}}">
     <view class="category-card {{item.expanded ? 'expanded' : ''}}" wx:for="{{categories}}" wx:key="id">
       <!-- 分类卡头部 -->
       <view class="category-header" bindtap="toggleCategory" data-id="{{item.id}}">
@@ -117,12 +125,12 @@
       <!-- 展开后的情景题目列表 -->
       <view class="category-body" wx:if="{{item.expanded}}">
         <view wx:if="{{item.items.length === 0}}" class="category-empty">暂无题目</view>
-        <view class="scenario-card card scenario-level-{{scenario.difficultyLevel}}" wx:for="{{item.items}}" wx:for-item="scenario" wx:for-index="scenarioIndex" wx:key="id">
+        <view class="scenario-card card scenario-level-{{scenario.difficultyLevel}}" wx:for="{{item.items}}" wx:for-item="scenario" wx:key="id">
           <!-- 顶部标签行 -->
           <view class="scenario-topline">
-            <text class="scenario-index">0{{scenarioIndex + 1}}</text>
+            <text class="scenario-index">{{scenario.indexLabel}}</text>
             <text class="difficulty difficulty-{{scenario.difficultyLevel}}">{{scenario.difficultyLabel}}</text>
-            <text class="active-mark" wx:if="{{scenario.activeSession}}">进行中 · {{scenario.activeSession.currentRound}}/10轮</text>
+            <text class="active-mark" wx:if="{{scenario.activeSession}}">进行中 · {{scenario.activeSession.currentRound}}/{{scenario.activeSession.maxRounds}}轮</text>
           </view>
 
           <!-- 题目名称与描述 -->

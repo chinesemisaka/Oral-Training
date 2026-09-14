@@ -30,6 +30,7 @@ Page({
     loadError: false,
     loadErrorMsg: '',
     displayName: '',
+    avatarText: '',
     avatar: '',
     showDemoPicker: false,
     demoUsers: [],
@@ -74,6 +75,8 @@ Page({
         : dashboard.averageScore || 0;
       this.setData({
         displayName,
+        /* WXML 不能对数据路径调用函数（依赖追踪失效且不报错），头像首字在这里预算 */
+        avatarText: String(displayName || '').trim().slice(0, 1),
         avatar: savedAvatar,
         adminData: {
           studentCount: dashboard.studentCount || memberCount || 0,
@@ -143,6 +146,8 @@ Page({
       this.setData({
         mine: data,
         displayName,
+        /* WXML 不能对数据路径调用函数，头像首字在这里预算 */
+        avatarText: String(displayName || '').trim().slice(0, 1),
         avatar: savedAvatar,
         calendarDays: buildCalendar(data.checkin),
         streakText,

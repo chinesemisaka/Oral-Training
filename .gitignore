@@ -39,6 +39,10 @@ backend/server_err.txt
 server_out.txt
 query
 
+# Local scratch scripts & build leftovers (never part of the repo)
+backend/_*
+*.exe.old
+
 # IDE / tooling
 .workbuddy/
 .vscode/

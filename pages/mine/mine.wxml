@@ -24,7 +24,7 @@
     <view class="mine-hero admin-hero">
       <view class="hero-avatar">
         <image wx:if="{{avatar}}" src="{{avatar}}" class="hero-avatar-img" mode="aspectFill"></image>
-        <text wx:else class="hero-avatar-text">{{displayName.charAt(0)}}</text>
+        <text wx:else class="hero-avatar-text">{{avatarText}}</text>
       </view>
       <view class="hero-info">
         <view class="hero-name-row">
@@ -100,7 +100,7 @@
     <view class="mine-hero">
       <view class="hero-avatar">
         <image wx:if="{{avatar}}" src="{{avatar}}" class="hero-avatar-img" mode="aspectFill"></image>
-        <text wx:else class="hero-avatar-text">{{displayName.charAt(0)}}</text>
+        <text wx:else class="hero-avatar-text">{{avatarText}}</text>
       </view>
       <view class="hero-info">
         <view class="hero-name-row">

@@ -9,9 +9,13 @@ const normalizePlans = plans => (plans || []).map(item => normalizeSupervisorPla
 
 Page({
   data: {
+    exporting: false,
     loading: true,
     isAdmin: false,
     plans: [],
+    /* 加载失败必须留痕：否则会落进「还没有培训计划」空态并把主管
+       引导去「发布第一个计划」，团队可能因此收到重复指派。 */
+    plansFailed: false,
     trainingLoading: false,
     planStatus: 'all',
     planStatusFilters: [
@@ -53,12 +57,21 @@ Page({
     api.getSupervisorTrainingPlans({ status: this.data.planStatus }).then(data => {
       this.setData({
         plans: normalizePlans(data.plans || []),
+        plansFailed: false,
         trainingLoading: false
       });
     }).catch(error => {
-      this.setData({ trainingLoading: false });
+      /* 一并清空旧列表：失败时若留着上一次筛选的结果，会显示与当前
+         筛选条件不符的数据，比留白更误导。 */
+      this.setData({ plans: [], trainingLoading: false, plansFailed: true });
       wx.showToast({ title: error.message || '培训计划加载失败', icon: 'none' });
     });
+  },
+
+  /* 失败态的自救入口 */
+  retryTrainingPlans() {
+    this.setData({ plansFailed: false });
+    this.loadTrainingPlans();
   },
 
   selectPlanStatus(e) {
@@ -69,6 +82,45 @@ Page({
 
   openPlanCreate() {
     wx.navigateTo({ url: '/pages/admin-training-plan-create/admin-training-plan-create' });
+  },
+
+  /* 导出全部计划的学员进度明细 CSV。
+     小程序无法直接下载：后端返回 JSON 包裹的 CSV 文本，前端补 UTF-8 BOM
+     写入用户目录后转发文件；转发不可用时降级为复制到剪贴板。 */
+  exportPlanMembersCsv() {
+    if (this.data.exporting) return;
+    this.setData({ exporting: true });
+    api.exportSupervisorReport({ scope: 'plan_members' }).then(data => {
+      const csv = `\uFEFF${data.csv || ''}`;
+      const filePath = `${wx.env.USER_DATA_PATH}/${data.filename || 'plan-members.csv'}`;
+      const filesystem = wx.getFileSystemManager();
+      filesystem.writeFile({
+        filePath,
+        data: csv,
+        encoding: 'utf8',
+        success: () => {
+          wx.shareFileMessage({
+            filePath,
+            fileName: data.filename || 'plan-members.csv',
+            success: () => this.setData({ exporting: false }),
+            fail: () => {
+              this.setData({ exporting: false });
+              wx.setClipboardData({
+                data: data.csv || '',
+                success: () => wx.showToast({ title: '已复制 CSV 内容（转发不可用）', icon: 'none' })
+              });
+            }
+          });
+        },
+        fail: () => {
+          this.setData({ exporting: false });
+          wx.showToast({ title: '文件写入失败，请重试', icon: 'none' });
+        }
+      });
+    }).catch(error => {
+      this.setData({ exporting: false });
+      wx.showToast({ title: error.message || '导出失败', icon: 'none' });
+    });
   },
 
   openPlanDetail(e) {

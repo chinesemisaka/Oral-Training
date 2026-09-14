@@ -42,7 +42,7 @@
   </view>
   <view class="empty-card card" wx:if="{{evaluation.violations.length === 0}}"><text>本次没有识别到严重违规，继续保持医疗合规边界。</text></view>
   <block wx:else>
-    <view class="violation-card card" wx:for="{{violationsExpanded ? evaluation.violations : evaluation.violations.slice(0, 1)}}" wx:key="id">
+    <view class="violation-card card" wx:for="{{visibleViolations}}" wx:key="id">
       <view class="violation-top"><text class="violation-type">{{item.type}}</text><text class="deduction">-{{item.deduction}}分</text></view>
       <text class="quote">“{{item.quote}}”</text>
       <text class="violation-reason">{{item.reason}}</text>
@@ -56,7 +56,7 @@
     <text class="section-caption fold-toggle" wx:if="{{evaluation.roundComments.length > 1}}" bindtap="toggleRoundComments">{{roundCommentsExpanded ? '收起' : '展开全部 ' + evaluation.roundComments.length + ' 个回合'}}</text>
   </view>
   <block wx:if="{{evaluation.roundComments.length}}">
-    <view class="round-card card" wx:for="{{roundCommentsExpanded ? evaluation.roundComments : evaluation.roundComments.slice(0, 1)}}" wx:key="round">
+    <view class="round-card card" wx:for="{{visibleRoundComments}}" wx:key="round">
       <view class="round-badge"><text class="round-label">第 {{item.round}} 轮</text></view>
       <text class="round-quote">“{{item.userQuote}}”</text>
       <text class="round-comment">{{item.comment}}</text>
@@ -65,8 +65,8 @@
     <view class="fold-more" wx:if="{{!roundCommentsExpanded && evaluation.roundComments.length > 1}}" bindtap="toggleRoundComments">还有 {{evaluation.roundComments.length - 1}} 个回合点评，展开查看 ›</view>
   </block>
 
-  <view class="section-title-row"><text class="section-title">本次可收录话术</text><text class="section-caption">来自已点评轮次</text></view>
-  <view class="empty-card card" wx:if="{{evaluation.recommendedPhrases.length === 0}}"><text>本次暂无可收录的话术，完成更多训练后可在话术锦囊中回顾。</text></view>
+  <view class="section-title-row"><text class="section-title">本次优秀话术</text><text class="section-caption">已自动收进话术锦囊</text></view>
+  <view class="empty-card card" wx:if="{{evaluation.recommendedPhrases.length === 0}}"><text>本次暂无评优话术，完成更多训练后可在话术锦囊中回顾。</text></view>
   <view class="phrase-card card" wx:for="{{evaluation.recommendedPhrases}}" wx:key="phraseKey">
     <text class="phrase-patient" wx:if="{{item.patientSays}}">患者：{{item.patientSays}}</text>
     <text class="phrase-copy">{{item.csReply}}</text>

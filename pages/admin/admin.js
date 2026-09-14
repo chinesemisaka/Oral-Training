@@ -113,6 +113,9 @@ Page({
     ],
     rangeName: '本月',
     supervisor: null,
+    /* 主管看板请求失败标记：失败时 wxml 三个分支都不成立，页面只剩一行
+       免责声明（等同白页）。给错误态 + 重试，与报表的 reportError 同模式。 */
+    supervisorFailed: false,
     metricCards: [],
     trendLabels: [],
     trendSeries: [],
@@ -200,9 +203,15 @@ Page({
     ]).then(([supervisor, memberData]) => {
       this.applySupervisor(supervisor, memberData);
     }).catch(error => {
-      this.setData({ loading: false });
+      this.setData({ loading: false, supervisorFailed: true });
       wx.showToast({ title: error.message || '主管数据加载失败', icon: 'none' });
     });
+  },
+
+  /* 主管看板失败后的自救入口 */
+  retrySupervisor() {
+    this.setData({ supervisorFailed: false, loading: true });
+    this.loadSupervisor();
   },
 
   applySupervisor(supervisor, memberData) {
@@ -291,6 +300,7 @@ Page({
 
     this.setData({
       supervisor: normalized,
+      supervisorFailed: false,
       rangeName,
       metricCards,
       trendLabels,

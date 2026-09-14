@@ -114,7 +114,10 @@ module.exports = {
   retryEvaluation: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/evaluation/retry`, { method: 'POST', data: {} }),
   getSessions: params => request(`/sessions?${query(params || {})}`),
   getRoleplayScenarios: () => request('/roleplay/scenarios'),
-  createRoleplaySession: scenarioId => request('/roleplay/sessions', { method: 'POST', data: { scenarioId } }),
+  createRoleplaySession: (scenarioId, freeDescription) => request('/roleplay/sessions', {
+    method: 'POST',
+    data: freeDescription ? { scenarioId, freeDescription } : { scenarioId }
+  }),
   restartRoleplaySession: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/restart`, { method: 'POST', data: {} }),
   getRoleplaySession: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}`),
   sendRoleplayMessage: (sessionId, clientMessageId, content) => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/messages`, {
@@ -172,6 +175,16 @@ module.exports = {
   removeTeamMember: learnerId => request(`/supervisor/team/members/${encodeURIComponent(learnerId)}/remove`, {
     method: 'POST', data: {}
   }),
+  // ── 场景管理 / 抽查 / 导出（主管端） ──
+  getSupervisorScenarioCatalog: () => request('/supervisor/scenarios/manage'),
+  createSupervisorScenario: payload => request('/supervisor/scenarios', { method: 'POST', data: payload }),
+  updateSupervisorScenario: (scenarioId, payload) => request(
+    `/supervisor/scenarios/${encodeURIComponent(scenarioId)}`, { method: 'PUT', data: payload }
+  ),
+  getSupervisorMemberSession: (memberId, sessionId) => request(
+    `/supervisor/members/${encodeURIComponent(memberId)}/sessions/${encodeURIComponent(sessionId)}`
+  ),
+  exportSupervisorReport: params => request(`/supervisor/reports/export?${query(params || {})}`),
   switchRole: role => request('/auth/switch-role', { method: 'POST', data: { role } }),
   getDemoLearners: () => request('/demo/learners'),
   switchLearner: userId => request('/auth/switch-learner', { method: 'POST', data: { userId } })

@@ -132,6 +132,7 @@
 .filter-chip.selected { color: #fff; background: var(--color-primary); font-weight: 600; }
 .filter-summary { display: block; margin-top: 16rpx; font-size: 22rpx; color: var(--text-secondary); }
 .filter-note { display: block; margin-top: 4rpx; font-size: 20rpx; color: var(--text-muted); }
+.filter-link { display: block; margin-top: 16rpx; font-size: 24rpx; color: var(--color-primary); }
 
 /* ── 违规词统计（「培训运营」样式已随功能迁至 pages/admin-training） ── */
 .phrase-row { padding: 6rpx 10rpx 4rpx; margin: 0 -10rpx 18rpx; border-radius: 12rpx; }

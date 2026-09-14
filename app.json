@@ -21,7 +21,9 @@
     "pages/training-plans/training-plans",
     "pages/training-plan-detail/training-plan-detail",
     "pages/admin-training/admin-training",
-    "pages/team-members/team-members"
+    "pages/team-members/team-members",
+    "pages/admin-scenarios/admin-scenarios",
+    "pages/session-inspect/session-inspect"
   ],
   "window": {
     "navigationBarBackgroundColor": "#FFFFFF",

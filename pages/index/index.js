@@ -1,12 +1,7 @@
 const api = require('../../utils/api.js');
 const plan = require('../../utils/plan.js');
 
-const CATEGORY_CONFIG = [
-  { id: 'consultation', name: '咨询解答', icon: '咨', description: '先了解患者关切，再清楚说明服务边界' },
-  { id: 'price_negotiation', name: '价格异议', icon: '价', description: '客观说明费用构成，不承诺固定价格' },
-  { id: 'complaint_handling', name: '投诉安抚', icon: '诉', description: '先回应情绪，及时引导联系医生或复诊' },
-  { id: 'recommendation', name: '项目推荐', icon: '推', description: '从真实需求出发，不替代医生判断' }
-];
+const CATEGORY_CONFIG = require('../../utils/scenario.js').CATEGORY_CONFIG;
 
 const DIFFICULTY_MAP = {
   beginner: { level: 'beginner', label: '初级' },
@@ -14,6 +9,11 @@ const DIFFICULTY_MAP = {
   advanced: { level: 'advanced', label: '高级' },
   basic: { level: 'beginner', label: '初级' }
 };
+
+/* 自由模拟专用的隐藏模板场景（is_template，不进场景列表）。场景描述随会话
+   入库并由后端注入标准客服与复盘的 prompt，不再借用列表第一个场景，
+   否则服务要点和复盘口径会跟着场景排序漂移。 */
+const FREE_ROLEPLAY_TEMPLATE_ID = 'free-roleplay-template';
 
 /* 患者画像预设。后端会把 description 直接拼在「您好，我最近」之后，并把 emotion
    拼进「心里挺X的」/「现在有点X」句式，所以预设文案必须满足：
@@ -70,7 +70,11 @@ const buildCategories = (scenarios, activeCategoryId, expandedCategories) => CAT
     icon: category.icon,
     name: category.name,
     description: category.description,
-    items: items,
+    /* 序号在 JS 预算成两位字符串：场景数可能超过 9（主管可自由建场景），
+       WXML 里拼 "0" + index 会显示成 "010"。 */
+    items: items.map((item, index) => Object.assign({}, item, {
+      indexLabel: String(index + 1).padStart(2, '0')
+    })),
     totalCount: items.length,
     completedCount: items.filter(item => item.bestScore !== null && item.bestScore !== undefined).length,
     expanded: expandedCategories ? (expandedCategories[category.id] === true) : false
@@ -86,6 +90,9 @@ Page({
     expandedCategories: {},
     trainingMode: 'customer_service',
     roleBlocked: false,
+    /* 场景加载失败标记：只弹 toast 的话页面会空成「没有场景可练」，
+       学员分不清「加载失败」和「真的没题」，也没有自救入口。 */
+    scenariosFailed: false,
     currentRole: '',
     /* 横幅展示的是「最紧急的那个待办计划」摘要，无待办时为 null */
     planNotice: null,
@@ -175,8 +182,9 @@ Page({
           : formatDifficulty(item);
         return Object.assign({}, item, difficulty, {
           category: inferCategory(item),
-          patientAge: `${item.patientProfile.age}岁`,
-          patientConcern: item.patientProfile.description,
+          /* 画像缺失时不能整批炸掉：一条脏数据会让整个场景列表变成「加载失败」 */
+          patientAge: item.patientProfile && item.patientProfile.age ? `${item.patientProfile.age}岁` : '',
+          patientConcern: (item.patientProfile && item.patientProfile.description) || '',
           patientEmotion: isRoleplay ? '由你自由提问' : '需通过对话了解',
           passScore: item.passScore || 60,
           bestScore: item.bestScore !== undefined ? item.bestScore : null,
@@ -192,16 +200,23 @@ Page({
 
       if (isRoleplay) {
         // 患者模拟模式：不构建分类，只保存场景数据（用于创建会话）
-        this.setData({ scenarios, categories: [], expandedId: '' });
+        this.setData({ scenarios, categories: [], expandedId: '', scenariosFailed: false });
       } else {
         const expandedCategories = this.data.expandedCategories || {};
         const categories = buildCategories(scenarios, this.data.activeCategoryId, expandedCategories);
-        this.setData({ scenarios, categories, expandedId: '' });
+        this.setData({ scenarios, categories, expandedId: '', scenariosFailed: false });
       }
     }).catch(error => {
       if (requestVersion !== this.scenarioRequestVersion || requestedMode !== this.data.trainingMode) return;
+      this.setData({ scenariosFailed: true, scenarios: [], categories: [] });
       wx.showToast({ title: error.message || '场景加载失败', icon: 'none' });
     });
+  },
+
+  /* 场景加载失败后的自救入口 */
+  retryScenarios() {
+    this.setData({ scenariosFailed: false });
+    this.loadScenarios();
   },
 
   toggleCategory(e) {
@@ -259,15 +274,10 @@ Page({
       wx.showToast({ title: '请先描述你想模拟的场景', icon: 'none' });
       return;
     }
-    // 使用第一个 roleplay 场景创建会话（作为通用模板）
-    const scenarios = this.data.scenarios;
-    if (!scenarios.length) {
-      wx.showToast({ title: '场景数据未加载，请稍后重试', icon: 'none' });
-      return;
-    }
-    const scenarioId = scenarios[0].id;
+    // 固定用隐藏模板场景建会话，描述随会话入库并注入模型 prompt，
+    // 学习要点与复盘都会围绕学员描述的场景生成。
     wx.showLoading({ title: '创建会话中…' });
-    api.createRoleplaySession(scenarioId).then(data => {
+    api.createRoleplaySession(FREE_ROLEPLAY_TEMPLATE_ID, description).then(data => {
       wx.hideLoading();
       this.goRoleplay(data.session.id, description);
     }).catch(error => {
@@ -369,6 +379,14 @@ Page({
   confirmProfileAndStart() {
     const id = this.data.profileModalScenarioId;
     const draft = this.data.profileDraft || {};
+    // 年龄校验：填了就必须是 1-120 的整数，否则影响 AI 患者扮演质量
+    if (draft.age) {
+      const age = parseInt(draft.age, 10);
+      if (isNaN(age) || age < 1 || age > 120) {
+        wx.showToast({ title: '年龄需在 1-120 之间', icon: 'none' });
+        return;
+      }
+    }
     const stored = {};
     ['age', 'gender', 'description', 'emotion'].forEach(field => {
       const value = draft[field] ? String(draft[field]).trim() : '';

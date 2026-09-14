@@ -106,19 +106,42 @@ int main() {
 
     const auto created = database.createSession(kLearnerId, "post-treatment-discomfort");
     const auto active_session_id = created["session"]["id"].get<std::string>();
-    for (int hint_number = 1; hint_number <= 3; ++hint_number) {
-      const auto hint = database.requestTrainingHint(kLearnerId, active_session_id);
-      require(hint["hint"]["number"].get<int>() == hint_number, "training hint number was not incremented");
-      require(!hint["hint"]["content"].get<std::string>().empty(), "training hint content was empty");
+    /* 提示限额是「总 3 条 + 每轮 1 条」：会话刚开始轮次为 0，还没有可针对的患者发言。
+       存储层只认 round 键，round=0 同样进不去，所以「先回复患者才有提示」由服务层
+       的 HINT_ROUND_NOT_READY 与这里的事务口径共同保证。下面直接推进轮次测限额，
+       不驱动真实模型调用。 */
+    constexpr int kHintRounds[] = {1, 2, 3};
+    for (int index = 0; index < 3; ++index) {
+      const auto round = kHintRounds[index];
+      const auto hint = database.requestTrainingHint(
+          kLearnerId, active_session_id, round, std::string("feature hint ") + std::to_string(round), 1, 3);
+      require(hint["hint"]["number"].get<int>() == index + 1, "training hint number was not incremented");
+      require(hint["hint"]["round"].get<int>() == round, "training hint did not record its round");
+      require(hint["hintRemaining"].get<int>() == 2 - index, "training hint remaining total was wrong");
+      require(hint["hintRemainingThisRound"].get<int>() == 0,
+              "training hint did not report itself spent for the round");
+      /* 同一轮第二次必须被拒——这是「每轮 1 条」的核心保证。 */
+      try {
+        (void)database.requestTrainingHint(kLearnerId, active_session_id, round, "second hint", 1, 3);
+        throw std::runtime_error("a second hint in the same round was accepted");
+      } catch (const ApiError& error) {
+        require(error.code == "HINT_ROUND_LIMIT_REACHED", "unexpected second-hint error");
+      }
     }
     try {
-      (void)database.requestTrainingHint(kLearnerId, active_session_id);
+      (void)database.requestTrainingHint(kLearnerId, active_session_id, 4, "fourth hint", 1, 3);
       throw std::runtime_error("fourth training hint was accepted");
     } catch (const ApiError& error) {
       require(error.code == "HINT_LIMIT_REACHED", "unexpected fourth-hint error");
     }
-    require(database.getSession(kLearnerId, active_session_id)["hints"].size() == 3,
-            "stored training hints were not returned with the session");
+    const auto hinted_session = database.getSession(kLearnerId, active_session_id);
+    require(hinted_session["hints"].size() == 3, "stored training hints were not returned with the session");
+    require(hinted_session["hints"][0]["round"].get<int>() == 1,
+            "stored training hint did not carry its round");
+    require(hinted_session["hintRemaining"].get<int>() == 0, "session did not report the exhausted total");
+    /* 会话轮次仍是 0，所以本轮的额度必须是满的：提示额度跟着实际轮次走，不是全局封死。 */
+    require(hinted_session["hintRemainingThisRound"].get<int>() == 1,
+            "session did not report a fresh per-round hint allowance");
 
     const auto phrases = database.listLearningPhrases(kLearnerId, "", "", "", false, 20);
     require(!phrases["items"].empty() && phrases["items"][0]["phraseKey"] == "feature-phrase",

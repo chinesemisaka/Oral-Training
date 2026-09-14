@@ -49,6 +49,7 @@ try {
   Invoke-Psql $emptySchema (Join-Path $migrations '010_training_plans.sql') ''
   Invoke-Psql $emptySchema (Join-Path $migrations '011_supervisor_team.sql') ''
   Invoke-Psql $emptySchema (Join-Path $migrations '012_message_emotion.sql') ''
+  Invoke-Psql $emptySchema (Join-Path $migrations '013_hint_per_round.sql') ''
   Invoke-Psql $emptySchema '' @'
 DO $$ BEGIN
   IF to_regclass('message_repair_archive') IS NULL OR to_regclass('ai_jobs') IS NULL OR
@@ -65,6 +66,26 @@ DO $$ BEGIN
   ) THEN
     RAISE EXCEPTION 'message emotion column was not created';
   END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'session_hints' AND column_name = 'round' AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION 'session_hints.round was not created as NOT NULL';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'session_hints_session_id_round_key' AND conrelid = 'session_hints'::regclass
+  ) THEN
+    RAISE EXCEPTION 'session_hints lost its per-round uniqueness key';
+  END IF;
+  -- hint_number 必须已经放开 1..3：提示序号是全场第几条，与轮次无关，
+  -- 旧的上限会让第 4 轮之后的轮次唯一键永远插不进去。
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'session_hints_hint_number_check' AND conrelid = 'session_hints'::regclass
+  ) THEN
+    RAISE EXCEPTION 'session_hints still caps hint_number at 3';
+  END IF;
 END $$;
 '@
 
@@ -79,11 +100,12 @@ END $$;
   Invoke-Psql $historySchema (Join-Path $migrations '010_training_plans.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '011_supervisor_team.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '012_message_emotion.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '013_hint_per_round.sql') ''
   Invoke-Psql $historySchema '' @'
 INSERT INTO learner_mistake_progress(user_id, session_id, mistake_key, mastered_at)
 VALUES ('demo-user-001', 'test-max-rounds', 'fixture-mistake', NOW());
-INSERT INTO session_hints(id, session_id, hint_number, content)
-VALUES ('fixture-hint', 'test-max-rounds', 1, 'Confirm the concern before explaining the clinical assessment boundary.');
+INSERT INTO session_hints(id, session_id, hint_number, round, content)
+VALUES ('fixture-hint', 'test-max-rounds', 1, 1, 'Confirm the concern before explaining the clinical assessment boundary.');
 INSERT INTO learner_checkins(user_id, checkin_date, points)
 VALUES ('demo-user-001', DATE '2026-01-02', 10);
 INSERT INTO learner_phrase_favorites(user_id, session_id, phrase_key)
@@ -117,6 +139,13 @@ DO $$ BEGIN
 END $$;
 '@
 
+  # Legacy rows written before 013 have no round.  They must be bound to a real
+  # round of their own session, not silently dropped or duplicated -- and the
+  # (session_id, round) key has to survive the backfill.
+  Invoke-Psql $historySchema '' @'
+INSERT INTO session_hints(id, session_id, hint_number, content)
+VALUES ('fixture-legacy-hint', 'test-max-rounds', 1, 'Legacy hint without a round column value.');
+'@
   Invoke-Psql $historySchema (Join-Path $migrations '003_reliability.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '004_identity.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '005_learner_insights.sql') ''
@@ -127,6 +156,7 @@ END $$;
   Invoke-Psql $historySchema (Join-Path $migrations '010_training_plans.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '011_supervisor_team.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '012_message_emotion.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '013_hint_per_round.sql') ''
   Invoke-Psql $historySchema '' @'
 DO $$ BEGIN
   IF NOT EXISTS (
@@ -138,9 +168,25 @@ DO $$ BEGIN
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM session_hints
-    WHERE id = 'fixture-hint' AND session_id = 'test-max-rounds' AND hint_number = 1
+    WHERE id = 'fixture-hint' AND session_id = 'test-max-rounds'
+      AND hint_number = 1 AND round = 1
   ) THEN
     RAISE EXCEPTION 'training hint was not preserved on migration rerun';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM session_hints
+    WHERE id = 'fixture-legacy-hint' AND session_id = 'test-max-rounds' AND round IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'legacy hint was not backfilled with a round';
+  END IF;
+  IF (SELECT COUNT(*) FROM session_hints WHERE session_id = 'test-max-rounds') <> 2 THEN
+    RAISE EXCEPTION 'hint backfill changed the number of stored hints';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'session_hints_session_id_round_key' AND conrelid = 'session_hints'::regclass
+  ) THEN
+    RAISE EXCEPTION 'per-round hint uniqueness key was lost on migration rerun';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM learner_checkins
@@ -168,6 +214,7 @@ ON CONFLICT (id) DO NOTHING;
 '@
   Invoke-Psql $historySchema (Join-Path $migrations '011_supervisor_team.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '012_message_emotion.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '013_hint_per_round.sql') ''
   Invoke-Psql $historySchema '' @'
 DO $$ BEGIN
   IF to_regclass('supervisor_team_members') IS NULL THEN

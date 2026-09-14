@@ -153,13 +153,27 @@ const run = async () => {
 
   /* ---------- 4. 结果页起止区间（同日折叠） ---------- */
   {
+    /* 注意层级：pollReport 读的是 report.evaluation（外层是任务状态，内层才是评分），
+       旧桩把评分字段平铺在顶层，导致这条分支实际从未被驱动过。 */
     const report = {
-      status: 'ready', totalScore: 85,
-      dimensionScores: {
-        empathy: 80, knowledgeAccuracy: 85, needsDiscovery: 75,
-        serviceEtiquette: 90, medicalCompliance: 88
-      },
-      strengths: [], improvements: [], violations: [], roundComments: [], recommendedPhrases: []
+      status: 'ready',
+      evaluation: {
+        totalScore: 85,
+        dimensionScores: {
+          empathy: 80, knowledgeAccuracy: 85, needsDiscovery: 75,
+          serviceEtiquette: 90, medicalCompliance: 88
+        },
+        strengths: [], improvements: [], recommendedPhrases: [],
+        violations: [
+          { id: 'v1', type: 'a', deduction: 5, originalQuote: 'q1', reason: 'r1', recommendedRewrite: 'w1' },
+          { id: 'v2', type: 'b', deduction: 5, originalQuote: 'q2', reason: 'r2', recommendedRewrite: 'w2' },
+          { id: 'v3', type: 'c', deduction: 5, originalQuote: 'q3', reason: 'r3', recommendedRewrite: 'w3' }
+        ],
+        roundComments: [
+          { round: 1, userMessage: 'u1', comment: 'c1', recommendedRewrite: 'w1' },
+          { round: 2, userMessage: 'u2', comment: 'c2', recommendedRewrite: 'w2' }
+        ]
+      }
     };
     const page = loadPage('pages/result/result.js', {
       getSession: () => Promise.resolve({
@@ -172,6 +186,34 @@ const run = async () => {
     page.loadInitialData();
     await tick();
     expect('result/range text', page.data.session && page.data.session.rangeText, '09-12 21:28 — 21:40');
+    /* 折叠派生：默认只显示首条。WXML 不支持函数调用，可见列表必须在 JS 预算；
+       若退回 {{list.slice(0,1)}} 这类写法，以下断言会红。 */
+    expect('result/violations folded', page.data.visibleViolations.length, 1);
+    expect('result/roundComments folded', page.data.visibleRoundComments.length, 1);
+    page.toggleViolations();
+    page.toggleRoundComments();
+    expect('result/violations expanded', page.data.visibleViolations.length, 3);
+    expect('result/roundComments expanded', page.data.visibleRoundComments.length, 2);
+    page.toggleViolations();
+    expect('result/violations re-folded', page.data.visibleViolations.length, 1);
+  }
+
+  /* ---------- 4b. 训练页：场景加载失败必须留痕（不能空成「没有场景可练」） ---------- */
+  {
+    const page = loadPage('pages/index/index.js', {
+      getCurrentUser: () => ({ role: 'learner' }),
+      getScenarios: () => Promise.reject(new Error('boom')),
+      getRoleplayScenarios: () => Promise.resolve({ items: [] }),
+      getRoleplaySessions: () => Promise.resolve({ items: [] }),
+      getLearnerTrainingPlans: () => Promise.resolve({ plans: [] })
+    });
+    page.onShow();
+    await tick();
+    expect('index/scenarios failed flag', page.data.scenariosFailed, true);
+    expect('index/scenarios cleared on failure', page.data.scenarios.length, 0);
+    page.retryScenarios();
+    await tick();
+    expect('index/scenarios failed flag survives retry', page.data.scenariosFailed, true);
   }
 
   /* ---------- 5. 复盘页起止区间 ---------- */

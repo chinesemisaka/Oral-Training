@@ -32,7 +32,8 @@ Page({
     growthSeries: [],
     scenarioFilters: [],
     selectedScenarioId: 'all',
-    filteredTrend: []
+    filteredTrend: [],
+    inspectItems: []
   },
 
   memberId: '',
@@ -93,6 +94,14 @@ Page({
     });
     const scenarioFilters = [{ id: 'all', name: '全部场景' }].concat(Array.from(scenarioMap.values()));
 
+    /* 抽查列表（含进行中会话）：进入抽查页才拉取完整对话，本页只列条目 */
+    const inspectItems = (data.inspectSessions || []).map(item => Object.assign({}, item, {
+      statusText: item.status === 'in_progress' ? '进行中'
+        : item.status === 'completed' ? '已完成' : '已放弃',
+      roundText: `${item.currentRound}/${item.maxRounds} 轮`,
+      scoreText: item.totalScore === null || item.totalScore === undefined ? '—' : `${fmt1(item.totalScore)} 分`
+    }));
+
     const detail = Object.assign({}, data, {
       member: Object.assign({}, data.member, {
         initial: (data.member.displayName || '学').slice(0, 1)
@@ -112,10 +121,19 @@ Page({
       growthLabels,
       growthSeries,
       scenarioFilters,
+      inspectItems,
       selectedScenarioId: 'all',
       filteredTrend: trend
     }, () => {
       this.setData({ loading: false });
+    });
+  },
+
+  openInspect(e) {
+    const sessionId = e.currentTarget.dataset.id;
+    if (!sessionId) return;
+    wx.navigateTo({
+      url: `/pages/session-inspect/session-inspect?memberId=${encodeURIComponent(this.memberId)}&sessionId=${encodeURIComponent(sessionId)}`
     });
   },
 

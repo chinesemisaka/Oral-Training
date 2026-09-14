@@ -126,6 +126,12 @@
         <text class="wb-snapshot-item">达标率 {{workbench.snapshot.passRateText}}</text>
       </view>
 
+      <!-- 场景管理入口：新建 / 编辑 / 上下架训练场景 -->
+      <view class="wb-candidate" bindtap="openScenarioAdmin" hover-class="wb-row-hover">
+        <text class="wb-candidate-text">训练场景管理（新建 / 编辑 / 上下架）</text>
+        <text class="wb-candidate-link">去管理 ›</text>
+      </view>
+
       <view class="wb-card card wb-idle" wx:if="{{!workbench.hasAction && !workbenchFailed}}">
         <text class="wb-idle-title">当前没有需要处理的待办</text>
         <text class="wb-idle-desc">团队训练节奏正常，也没有进行中的培训计划。可在「培训」tab 发布计划，或在「数据」tab 查看团队分析。</text>

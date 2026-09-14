@@ -7,7 +7,7 @@
       <view class="hero-content">
         <text class="hero-eyebrow">主管数据看板</text>
         <text class="hero-title">团队训练概览</text>
-        <text class="hero-desc">覆盖团队洞察、成员管理与数据报表；仅呈现聚合指标，不含原始对话内容。</text>
+        <text class="hero-desc">覆盖团队洞察、成员管理与数据报表；仅呈现聚合指标，不含原始对话内容。分数为 AI 辅助评估（演示口径），建议作为训练参考，不作为考核依据。</text>
         <view class="hero-time-row" wx:if="{{activeTab === 'overview'}}">
           <text wx:for="{{timeFilters}}" wx:key="id" class="hero-time {{timeRange === item.id ? 'selected' : ''}}" bindtap="selectTimeRange" data-id="{{item.id}}">{{item.name}}</text>
         </view>
@@ -53,7 +53,7 @@
       </view>
 
       <!-- 1.4 场景通过率分布 + 薄弱场景预警 -->
-      <view class="section-title-row"><text class="section-title">场景通过率分布</text><text class="section-caption">达标线 60 分</text></view>
+      <view class="section-title-row"><text class="section-title">场景通过率分布</text><text class="section-caption">达标线 60 分 · AI 辅助评估</text></view>
       <view class="chart-card card">
         <view class="scene-stat" wx:for="{{supervisor.scenarioStats}}" wx:key="scenarioId">
           <view class="scene-stat-head">
@@ -115,7 +115,7 @@
           <text class="filter-chip {{memberFilter === item.id ? 'selected' : ''}}" wx:for="{{memberFilters}}" wx:key="id" bindtap="selectMemberFilter" data-id="{{item.id}}">{{item.name}}</text>
         </view>
         <text class="filter-summary">{{memberCountText}}</text>
-        <text class="filter-note">待辅导判定：连续 7 天未训练，或平均分低于 60 分。</text>
+        <text class="filter-note">待辅导判定：连续 7 天未训练，或平均分低于 60 分。场景管理入口已移至首页工作台。</text>
       </view>
 
       <view class="member-card card" wx:for="{{members}}" wx:key="id" bindtap="openMember" data-id="{{item.id}}" hover-class="member-card-hover">
@@ -193,6 +193,12 @@
         </view>
       </block>
     </block>
+  </block>
+
+  <block wx:elif="{{isAdmin && supervisorFailed}}">
+    <!-- 主管看板加载失败：三路取数全失败时若不给出口，页面只剩一行免责声明，
+         主管会读成「页面坏了 / 我没有权限」。 -->
+    <empty-state title="团队数据加载失败" text="网络波动导致团队数据没能取回，训练记录都保存在服务器上、不受影响。点击重新加载即可。" actionText="重新加载" bind:action="retrySupervisor"></empty-state>
   </block>
 
   <block wx:elif="{{!isAdmin}}">

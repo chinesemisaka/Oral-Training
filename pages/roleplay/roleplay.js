@@ -1,6 +1,12 @@
 const api = require('../../utils/api.js');
 const datetime = require('../../utils/datetime.js');
 
+/* 轮询指数退避：1s → 2s → 4s → 封顶 8s，30 秒总窗不变（与 training 页一致）。 */
+const POLL_BASE_DELAY = 1000;
+const POLL_MAX_DELAY = 8000;
+
+const nextPollDelay = delay => Math.min(delay * 2, POLL_MAX_DELAY);
+
 Page({
   data: {
     session: null,
@@ -13,6 +19,7 @@ Page({
     sending: false,
     finishing: false,
     pendingClientMessageId: '',
+    failedMessage: null,
     scrollToView: '',
     isFreeMode: false,
     freeDescription: ''
@@ -67,7 +74,17 @@ Page({
       this.setData(nextData, () => {
         if (detail.pendingMessage && detail.pendingMessage.replyStatus === 'generating') {
           this.pollPendingReply(detail.pendingMessage.clientMessageId,
-            detail.pendingMessage.content, Date.now());
+            detail.pendingMessage.content, Date.now(), POLL_BASE_DELAY);
+        }
+        // 回到页面时上一轮已失败：恢复失败气泡
+        if (detail.pendingMessage && detail.pendingMessage.replyStatus === 'failed') {
+          this.setData({
+            failedMessage: {
+              clientMessageId: detail.pendingMessage.clientMessageId,
+              content: detail.pendingMessage.content,
+              reason: '回复生成失败，请重试'
+            }
+          });
         }
       });
     }).catch(error => wx.showToast({ title: error.message || '患者模拟加载失败', icon: 'none' }));
@@ -93,9 +110,9 @@ Page({
       return;
     }
     const clientMessageId = this.data.pendingClientMessageId || `roleplay-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-    this.setData({ sending: true, inputValue: content, scrollToView: 'message-bottom' });
+    this.setData({ sending: true, inputValue: content, scrollToView: 'message-bottom', failedMessage: null });
     api.sendRoleplayMessage(this.sessionId, clientMessageId, content).then(data => {
-      this.setData({ pendingClientMessageId: '', inputValue: '', sending: false });
+      this.setData({ pendingClientMessageId: '', inputValue: '', sending: false, failedMessage: null });
       if (data.session.shouldFinish) {
         this.setData({ finishing: true });
         wx.redirectTo({ url: `/pages/roleplay-result/roleplay-result?sessionId=${this.sessionId}` });
@@ -105,17 +122,36 @@ Page({
     }).catch(error => {
       this.setData({ pendingClientMessageId: clientMessageId, inputValue: content });
       if (error.code === 'ROLEPLAY_RESPONSE_PENDING') {
-        this.pollPendingReply(clientMessageId, content, Date.now());
+        this.pollPendingReply(clientMessageId, content, Date.now(), POLL_BASE_DELAY);
         return;
       }
-      this.setData({ sending: false });
+      // 失败渲染成气泡 + 重试按钮：重试复用同一 client_message_id（后端幂等）
+      this.setData({
+        sending: false,
+        failedMessage: {
+          clientMessageId,
+          content,
+          reason: error.message || '回复生成失败，请重试'
+        }
+      });
       this.loadSession();
-      wx.showToast({ title: error.message || '标准客服回复生成失败，可再次发送重试', icon: 'none' });
     });
   },
 
-  pollPendingReply(clientMessageId, content, startedAt) {
+  retryFailed() {
+    const failed = this.data.failedMessage;
+    if (!failed || this.data.sending || this.data.finishing) return;
+    this.setData({
+      failedMessage: null,
+      pendingClientMessageId: failed.clientMessageId,
+      inputValue: failed.content
+    });
+    this.sendMessage();
+  },
+
+  pollPendingReply(clientMessageId, content, startedAt, delay) {
     if (this.pendingPollTimer) clearTimeout(this.pendingPollTimer);
+    const wait = delay || POLL_BASE_DELAY;
     this.setData({ sending: true, pendingClientMessageId: clientMessageId, inputValue: content });
     api.getRoleplaySession(this.sessionId).then(detail => {
       const pending = detail.pendingMessage || null;
@@ -136,29 +172,37 @@ Page({
         return;
       }
       if (!pending) {
-        this.setData({ sending: false, pendingClientMessageId: '', inputValue: '' });
+        this.setData({ sending: false, pendingClientMessageId: '', inputValue: '', failedMessage: null });
         return;
       }
       if (pending.replyStatus === 'failed') {
-        this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
-        wx.showToast({ title: '回复生成失败，可使用原问题安全重试', icon: 'none' });
+        this.setData({
+          sending: false,
+          pendingClientMessageId: clientMessageId,
+          inputValue: content,
+          failedMessage: {
+            clientMessageId,
+            content,
+            reason: '回复生成失败，请重试'
+          }
+        });
         return;
       }
       if (Date.now() - startedAt >= 30000) {
         this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
-        wx.showToast({ title: '回复仍在生成，原问题已保留', icon: 'none' });
+        wx.showToast({ title: '回复仍在生成，原问题已保留，可稍后回来查看', icon: 'none' });
         return;
       }
       this.pendingPollTimer = setTimeout(
-        () => this.pollPendingReply(clientMessageId, content, startedAt), 1000);
+        () => this.pollPendingReply(clientMessageId, content, startedAt, nextPollDelay(wait)), wait);
     }).catch(() => {
       if (Date.now() - startedAt >= 30000) {
         this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
-        wx.showToast({ title: '网络异常，原问题已保留', icon: 'none' });
+        wx.showToast({ title: '网络异常，进度已保存，原问题已保留', icon: 'none' });
         return;
       }
       this.pendingPollTimer = setTimeout(
-        () => this.pollPendingReply(clientMessageId, content, startedAt), 1000);
+        () => this.pollPendingReply(clientMessageId, content, startedAt, nextPollDelay(wait)), wait);
     });
   },
 

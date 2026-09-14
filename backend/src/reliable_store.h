@@ -80,6 +80,7 @@ class ReliableDatabase {
         WHERE user_id = $1 AND scenario_id = s.id AND status = 'in_progress'
         ORDER BY updated_at DESC LIMIT 1
       ) active ON TRUE
+      WHERE s.is_active AND NOT s.is_template
       ORDER BY s.sort_order
     )", user_id);
     json items = json::array();
@@ -113,6 +114,7 @@ class ReliableDatabase {
     const auto rows = tx.exec(R"(
       SELECT id, name, category, difficulty
       FROM scenarios
+      WHERE is_active AND NOT is_template
       ORDER BY sort_order
     )");
     json items = json::array();
@@ -122,6 +124,257 @@ class ReliableDatabase {
                        {"difficulty", row["difficulty"].c_str()}});
     }
     return {{"items", items}};
+  }
+
+  // ── 场景管理（主管端内容运营） ────────────────────────────────────────
+  // JSONB 列宽容解析：NULL / 坏 JSON 一律落回空容器，绝不让历史脏数据炸掉管理页。
+  static json parseColumn(const pqxx::row& row, const char* name, bool as_array = false) {
+    if (row[name].is_null()) return as_array ? json::array() : json::object();
+    const auto parsed = json::parse(row[name].c_str(), nullptr, false);
+    if (as_array) return parsed.is_array() ? parsed : json::array();
+    return parsed.is_object() ? parsed : json::object();
+  }
+
+  // 字符串数组白名单校验：空串/超长/超条数都显式 400，而不是静默丢弃让主管以为保存成功。
+  static json stringArrayOf(const json& object, const char* key, size_t max_items,
+                            size_t max_chars, const char* label) {
+    json items = json::array();
+    if (!object.contains(key) || !object[key].is_array()) return items;
+    for (const auto& item : object[key]) {
+      if (!item.is_string()) continue;
+      const auto text = trim(item.get<std::string>());
+      if (text.empty() || utf8Length(text) > max_chars) {
+        throw ApiError(400, "INVALID_ARGUMENT",
+                       std::string(label) + "每条需 1-" + std::to_string(max_chars) + " 个字");
+      }
+      if (items.size() >= max_items) {
+        throw ApiError(400, "INVALID_ARGUMENT",
+                       std::string(label) + "最多 " + std::to_string(max_items) + " 条");
+      }
+      items.push_back(text);
+    }
+    return items;
+  }
+
+  /* 校验 + 归一化场景字段：只接受白名单键，任何未知输入直接丢弃而不是透传数据库。
+     传入的 merged 必须是「已存在的行 + 请求体覆盖」后的完整字段集——校验永远面对
+     全量字段，这样 PUT {"isActive":false} 这种轻量请求也能走同一条校验路径。 */
+  static json validateScenarioPayload(const json& merged) {
+    json out = json::object();
+    const auto id = jsonString(merged, "id");
+    if (id.size() < 2 || id.size() > 60 ||
+        id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") != std::string::npos) {
+      throw ApiError(400, "INVALID_ARGUMENT", "场景 id 只能是小写字母、数字和连字符（2-60 位）");
+    }
+    out["id"] = id;
+    const auto name = trim(jsonString(merged, "name"));
+    if (utf8Length(name) < 2 || utf8Length(name) > 30) {
+      throw ApiError(400, "INVALID_ARGUMENT", "场景名称需 2-30 个字");
+    }
+    out["name"] = name;
+    const auto category = jsonString(merged, "category");
+    if (!isSceneCategory(category)) throw ApiError(400, "INVALID_ARGUMENT", "场景分类无效");
+    out["category"] = category;
+    const auto summary = trim(jsonString(merged, "summary"));
+    if (utf8Length(summary) < 2 || utf8Length(summary) > 60) {
+      throw ApiError(400, "INVALID_ARGUMENT", "场景简介需 2-60 个字");
+    }
+    out["summary"] = summary;
+    const auto difficulty = jsonString(merged, "difficulty");
+    if (difficulty != "basic" && difficulty != "advanced") {
+      throw ApiError(400, "INVALID_ARGUMENT", "难度只能是 basic 或 advanced");
+    }
+    out["difficulty"] = difficulty;
+    json focus = json::array();
+    if (merged.contains("focus") && merged["focus"].is_array()) {
+      for (const auto& item : merged["focus"]) {
+        if (!item.is_string()) continue;
+        const auto text = trim(item.get<std::string>());
+        if (text.empty() || utf8Length(text) > 20) {
+          throw ApiError(400, "INVALID_ARGUMENT", "训练重点每项需 1-20 个字");
+        }
+        if (focus.size() >= 6) throw ApiError(400, "INVALID_ARGUMENT", "训练重点最多 6 项");
+        focus.push_back(text);
+      }
+    }
+    if (focus.empty()) throw ApiError(400, "INVALID_ARGUMENT", "请至少填写 1 项训练重点");
+    out["focus"] = focus;
+    // 患者画像：结构对齐 001 种子数据（age/gender/description），gender 用 unknown 表示未指定。
+    const auto& raw_profile = merged.contains("patientProfile") && merged["patientProfile"].is_object()
+        ? merged["patientProfile"] : json::object();
+    const auto age = jsonInt(raw_profile, "age", 0);
+    if (age < 1 || age > 120) throw ApiError(400, "INVALID_ARGUMENT", "患者年龄需 1-120");
+    const auto gender = jsonString(raw_profile, "gender", "unknown");
+    if (gender != "unknown" && gender != "男" && gender != "女") {
+      throw ApiError(400, "INVALID_ARGUMENT", "患者性别只能是 男 / 女 / unknown");
+    }
+    const auto description = trim(jsonString(raw_profile, "description"));
+    if (utf8Length(description) < 2 || utf8Length(description) > 60) {
+      throw ApiError(400, "INVALID_ARGUMENT", "患者描述需 2-60 个字");
+    }
+    out["patientProfile"] = {{"age", age}, {"gender", gender}, {"description", description}};
+    // hidden_config：开场白 / 隐藏顾虑 / 初始状态 / 行为规则。instructions 是患者剧本的
+    // 核心，占位文案引导写成「若客服……应……」的条件式（本次对练改进的教训）。
+    const auto& raw_hidden = merged.contains("hiddenConfig") && merged["hiddenConfig"].is_object()
+        ? merged["hiddenConfig"] : json::object();
+    const auto opening = trim(jsonString(raw_hidden, "opening"));
+    if (utf8Length(opening) < 5 || utf8Length(opening) > 200) {
+      throw ApiError(400, "INVALID_ARGUMENT", "患者开场白需 5-200 个字");
+    }
+    json hidden_items = stringArrayOf(raw_hidden, "hidden", 5, 60, "隐藏顾虑");
+    if (hidden_items.empty()) throw ApiError(400, "INVALID_ARGUMENT", "请至少填写 1 条隐藏顾虑");
+    const auto& raw_state = raw_hidden.contains("initialState") && raw_hidden["initialState"].is_object()
+        ? raw_hidden["initialState"] : json::object();
+    const auto emotion = jsonString(raw_state, "emotion", "平静");
+    if (emotion != "平静" && emotion != "犹豫" && emotion != "焦虑" && emotion != "缓和") {
+      throw ApiError(400, "INVALID_ARGUMENT", "初始情绪只能是 平静/犹豫/焦虑/缓和");
+    }
+    const auto emotion_level = jsonInt(raw_state, "emotionLevel", 0);
+    if (emotion_level < -2 || emotion_level > 2) {
+      throw ApiError(400, "INVALID_ARGUMENT", "情绪强度需在 -2 到 2 之间");
+    }
+    const auto trust_level = jsonInt(raw_state, "trustLevel", 50);
+    if (trust_level < 0 || trust_level > 100) {
+      throw ApiError(400, "INVALID_ARGUMENT", "初始信任度需 0-100");
+    }
+    const auto instructions = trim(jsonString(raw_hidden, "instructions"));
+    if (utf8Length(instructions) < 5 || utf8Length(instructions) > 400) {
+      throw ApiError(400, "INVALID_ARGUMENT",
+                     "患者行为规则需 5-400 个字，建议写成「若客服……应……」的条件式");
+    }
+    out["hiddenConfig"] = {{"opening", opening}, {"hidden", hidden_items},
+                           {"initialState", {{"emotion", emotion},
+                                             {"emotionLevel", emotion_level},
+                                             {"trustLevel", trust_level}}},
+                           {"instructions", instructions}};
+    const auto& raw_roleplay = merged.contains("roleplayConfig") && merged["roleplayConfig"].is_object()
+        ? merged["roleplayConfig"] : json::object();
+    out["roleplayConfig"] = {
+        {"suggestedQuestions", stringArrayOf(raw_roleplay, "suggestedQuestions", 6, 60, "快捷提问")},
+        {"serviceGuidance", stringArrayOf(raw_roleplay, "serviceGuidance", 6, 100, "服务要点")}};
+    const auto max_rounds = jsonInt(merged, "maxRounds", 10);
+    if (max_rounds < 1 || max_rounds > 10) throw ApiError(400, "INVALID_ARGUMENT", "轮数需 1-10");
+    out["maxRounds"] = max_rounds;
+    const auto sort_order = jsonInt(merged, "sortOrder", 0);
+    if (sort_order < 1 || sort_order > 999) throw ApiError(400, "INVALID_ARGUMENT", "排序号需 1-999");
+    out["sortOrder"] = sort_order;
+    out["isActive"] = merged.value("isActive", true);
+    return out;
+  }
+
+  // 管理目录：返回全量字段（含 hidden_config / roleplay_config），含已下架场景
+  // 以便重新上架；is_template 场景（自由模拟载体）不对外管理，直接过滤。
+  json supervisorScenarioCatalog() const {
+    pqxx::connection connection(database_url_);
+    pqxx::read_transaction tx(connection);
+    const auto rows = tx.exec(R"(
+      SELECT id, name, category, summary, difficulty, focus, patient_profile,
+        hidden_config, roleplay_config, max_rounds, sort_order, is_active, is_template
+      FROM scenarios
+      WHERE NOT is_template
+      ORDER BY sort_order
+    )");
+    json items = json::array();
+    for (const auto& row : rows) {
+      items.push_back({{"id", row["id"].c_str()}, {"name", row["name"].c_str()},
+                       {"category", row["category"].c_str()}, {"summary", row["summary"].c_str()},
+                       {"difficulty", row["difficulty"].c_str()},
+                       {"focus", parseColumn(row, "focus", true)},
+                       {"patientProfile", parseColumn(row, "patient_profile")},
+                       {"hiddenConfig", parseColumn(row, "hidden_config")},
+                       {"roleplayConfig", parseColumn(row, "roleplay_config")},
+                       {"maxRounds", row["max_rounds"].as<int>()},
+                       {"sortOrder", row["sort_order"].as<int>()},
+                       {"isActive", row["is_active"].as<bool>()}});
+    }
+    return {{"items", items}};
+  }
+
+  json createScenario(const json& payload) const {
+    // 场景 id 选填：留空时自动生成（主管不需要理解英文标识的内部含义）。
+    // 手工填写仍走白名单校验；生成值 sc-<毫秒时间戳> 必然满足 id 规则。
+    json body = payload;
+    const auto requested_id = body.contains("id") && body["id"].is_string()
+        ? trim(body["id"].get<std::string>()) : std::string();
+    if (requested_id.empty()) {
+      body["id"] = "sc-" + std::to_string(
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::system_clock::now().time_since_epoch()).count());
+    }
+    const auto data = validateScenarioPayload(body);
+    pqxx::connection connection(database_url_);
+    pqxx::work tx(connection);
+    if (!tx.exec_params("SELECT 1 FROM scenarios WHERE id = $1",
+                        data["id"].get<std::string>()).empty()) {
+      throw ApiError(409, "SCENARIO_EXISTS", "场景 id 已存在");
+    }
+    if (!tx.exec_params("SELECT 1 FROM scenarios WHERE sort_order = $1",
+                        data["sortOrder"].get<int>()).empty()) {
+      throw ApiError(409, "SORT_ORDER_TAKEN", "排序号已被其他场景占用");
+    }
+    tx.exec_params(R"(
+      INSERT INTO scenarios(id, name, category, summary, difficulty, focus, patient_profile,
+        hidden_config, roleplay_config, max_rounds, sort_order, is_active, is_template)
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, FALSE)
+    )", data["id"].get<std::string>(), data["name"].get<std::string>(),
+        data["category"].get<std::string>(), data["summary"].get<std::string>(),
+        data["difficulty"].get<std::string>(), data["focus"].dump(),
+        data["patientProfile"].dump(), data["hiddenConfig"].dump(),
+        data["roleplayConfig"].dump(), data["maxRounds"].get<int>(),
+        data["sortOrder"].get<int>(), data["isActive"].get<bool>());
+    tx.commit();
+    return {{"id", data["id"].get<std::string>()}, {"created", true}};
+  }
+
+  /* 更新场景：请求体里出现的键覆盖既有值，未出现的键保留原值——
+     这样「只下架」（PUT {"isActive":false}）与完整编辑走同一个接口。
+     id 与 is_template 不可改（前者被 sessions 外键引用，后者由迁移管理）。 */
+  json updateScenario(const std::string& scenario_id, const json& payload) const {
+    if (scenario_id.empty() || scenario_id.size() > 60) {
+      throw ApiError(400, "INVALID_ARGUMENT", "场景标识无效");
+    }
+    pqxx::connection connection(database_url_);
+    pqxx::work tx(connection);
+    const auto rows = tx.exec_params(R"(
+      SELECT id, name, category, summary, difficulty, focus, patient_profile, hidden_config,
+        roleplay_config, max_rounds, sort_order, is_active
+      FROM scenarios WHERE id = $1 FOR UPDATE
+    )", scenario_id);
+    if (rows.empty()) throw ApiError(404, "SCENARIO_NOT_FOUND", "场景不存在");
+    json merged = {{"id", scenario_id},
+                   {"name", rows[0]["name"].c_str()},
+                   {"category", rows[0]["category"].c_str()},
+                   {"summary", rows[0]["summary"].c_str()},
+                   {"difficulty", rows[0]["difficulty"].c_str()},
+                   {"focus", parseColumn(rows[0], "focus", true)},
+                   {"patientProfile", parseColumn(rows[0], "patient_profile")},
+                   {"hiddenConfig", parseColumn(rows[0], "hidden_config")},
+                   {"roleplayConfig", parseColumn(rows[0], "roleplay_config")},
+                   {"maxRounds", rows[0]["max_rounds"].as<int>()},
+                   {"sortOrder", rows[0]["sort_order"].as<int>()},
+                   {"isActive", rows[0]["is_active"].as<bool>()}};
+    for (auto it = payload.begin(); it != payload.end(); ++it) {
+      if (it.key() == "id" || it.key() == "isTemplate") continue;
+      merged[it.key()] = it.value();
+    }
+    const auto data = validateScenarioPayload(merged);
+    if (data["sortOrder"].get<int>() != rows[0]["sort_order"].as<int>() &&
+        !tx.exec_params("SELECT 1 FROM scenarios WHERE sort_order = $1 AND id <> $2",
+                        data["sortOrder"].get<int>(), scenario_id).empty()) {
+      throw ApiError(409, "SORT_ORDER_TAKEN", "排序号已被其他场景占用");
+    }
+    tx.exec_params(R"(
+      UPDATE scenarios SET name = $2, category = $3, summary = $4, difficulty = $5,
+        focus = $6::jsonb, patient_profile = $7::jsonb, hidden_config = $8::jsonb,
+        roleplay_config = $9::jsonb, max_rounds = $10, sort_order = $11, is_active = $12
+      WHERE id = $1
+    )", scenario_id, data["name"].get<std::string>(), data["category"].get<std::string>(),
+        data["summary"].get<std::string>(), data["difficulty"].get<std::string>(),
+        data["focus"].dump(), data["patientProfile"].dump(), data["hiddenConfig"].dump(),
+        data["roleplayConfig"].dump(), data["maxRounds"].get<int>(),
+        data["sortOrder"].get<int>(), data["isActive"].get<bool>());
+    tx.commit();
+    return {{"id", scenario_id}, {"updated", true}, {"isActive", data["isActive"].get<bool>()}};
   }
 
   static bool profileField(const json& custom_profile, const char* key, std::string& out) {
@@ -338,50 +591,85 @@ class ReliableDatabase {
                          {"replyStatus", pending_rows[0]["reply_status"].c_str()}};
     }
     const auto hint_rows = tx.exec_params(R"(
-      SELECT id, hint_number, content,
+      SELECT id, hint_number, round, content,
         to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD"T"HH24:MI:SS') || '+08:00' AS created_at
       FROM session_hints WHERE session_id = $1 ORDER BY hint_number
     )", session_id);
     json hints = json::array();
+    int hint_used_this_round = 0;
+    const auto current_round = session["currentRound"].get<int>();
     for (const auto& row : hint_rows) {
+      const auto hint_round = row["round"].as<int>();
+      if (hint_round == current_round) ++hint_used_this_round;
       hints.push_back({{"id", row["id"].c_str()}, {"number", row["hint_number"].as<int>()},
-                       {"content", row["content"].c_str()}, {"createdAt", row["created_at"].c_str()}});
+                       {"round", hint_round}, {"content", row["content"].c_str()},
+                       {"createdAt", row["created_at"].c_str()}});
     }
+    const auto hint_total_limit = 3;
+    const auto hint_round_limit = 1;
+    // 患者当前内部状态透出给前端：对练舱画像条用它显示信任档位。
+    // patient_state NOT NULL；读法照旧用 jsonString/jsonInt 兜底，防旧数据缺键。
+    const auto state_rows = tx.exec_params(
+        "SELECT patient_state FROM sessions WHERE id = $1", session_id);
+    const auto patient_state = state_rows.empty()
+        ? json::object() : json::parse(state_rows[0]["patient_state"].c_str());
+    const json patient_state_out = {
+        {"emotion", jsonString(patient_state, "emotion", "平静")},
+        {"emotionLevel", jsonInt(patient_state, "emotionLevel", 0)},
+        {"trustLevel", jsonInt(patient_state, "trustLevel", 50)},
+        {"riskTriggered", patient_state.value("riskTriggered", false)},
+    };
     return {{"session", session}, {"messages", messages}, {"pendingMessage", pending_message},
-            {"hints", hints}, {"hintLimit", 3},
-            {"hintRemaining", std::max(0, 3 - static_cast<int>(hints.size()))}};
+            {"patientState", patient_state_out},
+            {"hints", hints}, {"hintLimit", hint_total_limit},
+            {"hintRemaining", std::max(0, hint_total_limit - static_cast<int>(hints.size()))},
+            {"hintRound", current_round}, {"hintRoundLimit", hint_round_limit},
+            {"hintUsedThisRound", hint_used_this_round},
+            {"hintRemainingThisRound", std::max(0, hint_round_limit - hint_used_this_round)}};
   }
 
-  json requestTrainingHint(const std::string& user_id, const std::string& session_id) const {
+  /* 提示落库：总 3 条、每轮 1 条，两个上限都在本事务内裁定。
+     round 由调用方给出（= 会话当前轮次），不在这里重新读——提示要针对的那一轮
+     必须在模型看到它时就被固定下来，中途玩家发新消息不该让提示漂到下一轮。 */
+  json requestTrainingHint(const std::string& user_id, const std::string& session_id, int round,
+                           const std::string& content, int round_limit, int total_limit) const {
     if (session_id.empty() || session_id.size() > 120) {
       throw ApiError(400, "INVALID_ARGUMENT", "训练会话标识无效");
     }
     pqxx::connection connection(database_url_);
     pqxx::work tx(connection);
     const auto session_rows = tx.exec_params(R"(
-      SELECT s.status, s.current_round, s.scenario_id
-      FROM sessions s WHERE s.id = $1 AND s.user_id = $2 FOR UPDATE
+      SELECT s.status, s.current_round FROM sessions s
+      WHERE s.id = $1 AND s.user_id = $2 FOR UPDATE
     )", session_id, user_id);
     if (session_rows.empty()) throw ApiError(404, "SESSION_NOT_FOUND", "训练会话不存在");
     if (std::string(session_rows[0]["status"].c_str()) != "in_progress") {
       throw ApiError(409, "SESSION_FINISHED", "已结束的训练不能继续获取提示");
     }
     const auto used_rows = tx.exec_params(
-        "SELECT COUNT(*) AS used FROM session_hints WHERE session_id = $1", session_id);
-    const auto used = used_rows[0]["used"].as<int>();
-    if (used >= 3) throw ApiError(409, "HINT_LIMIT_REACHED", "本次训练的提示已用完");
-    const auto hint_number = used + 1;
-    const auto content = trainingHintFor(
-        session_rows[0]["scenario_id"].c_str(), session_rows[0]["current_round"].as<int>(), hint_number);
+        "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE round = $2) AS in_round"
+        " FROM session_hints WHERE session_id = $1", session_id, round);
+    const auto used_total = used_rows[0]["total"].as<int>();
+    const auto used_this_round = used_rows[0]["in_round"].as<int>();
+    // 先判「本轮」：同时触顶时更该告诉学员「这一轮已经用过了」，而不是「三张牌打完了」。
+    if (used_this_round > 0) {
+      throw ApiError(409, "HINT_ROUND_LIMIT_REACHED", "本轮已经获取过提示，回复患者后可在下一轮继续获取");
+    }
+    if (used_total >= total_limit) {
+      throw ApiError(409, "HINT_LIMIT_REACHED", "本次训练的三条提示已经用完");
+    }
+    const auto hint_number = used_total + 1;
     const auto inserted = tx.exec_params(R"(
-      INSERT INTO session_hints(id, session_id, hint_number, content)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO session_hints(id, session_id, hint_number, round, content)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD"T"HH24:MI:SS') || '+08:00' AS created_at
-    )", makeId("hint"), session_id, hint_number, content);
+    )", makeId("hint"), session_id, hint_number, round, content);
     tx.commit();
-    return {{"hint", {{"number", hint_number}, {"content", content},
+    return {{"hint", {{"number", hint_number}, {"round", round}, {"content", content},
                       {"createdAt", inserted[0]["created_at"].c_str()}}},
-            {"hintLimit", 3}, {"hintRemaining", 3 - hint_number}};
+            {"hintLimit", total_limit}, {"hintRemaining", total_limit - hint_number},
+            {"hintRound", round}, {"hintRoundLimit", round_limit},
+            {"hintUsedThisRound", 1}, {"hintRemainingThisRound", 0}};
   }
 
   json getSessionInternal(const std::string& session_id) const {
@@ -1520,6 +1808,26 @@ class ReliableDatabase {
     }
     const auto passed = stats["passed_sessions"].as<int>();
     const auto reported_completed = stats["completed_sessions"].as<int>();
+    // 抽查入口需要的最近会话（含进行中）：与 recentSessions（仅已完成已评分）分开，
+    // 避免动到 member-detail 已消费的字段结构。
+    const auto inspect_rows = tx.exec_params(R"(
+      SELECT s.id, s.scenario_name, s.status, s.current_round, s.max_rounds, s.total_score,
+        to_char(s.updated_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI') AS updated_text
+      FROM sessions s
+      WHERE s.user_id = $1 AND s.status <> 'abandoned'
+      ORDER BY s.updated_at DESC LIMIT 10
+    )", member_id);
+    json inspect_sessions = json::array();
+    for (const auto& row : inspect_rows) {
+      inspect_sessions.push_back({{"id", row["id"].c_str()},
+                                  {"scenarioName", row["scenario_name"].c_str()},
+                                  {"status", row["status"].c_str()},
+                                  {"currentRound", row["current_round"].as<int>()},
+                                  {"maxRounds", row["max_rounds"].as<int>()},
+                                  {"totalScore", row["total_score"].is_null()
+                                      ? json(nullptr) : json(row["total_score"].as<int>())},
+                                  {"updatedAtText", row["updated_text"].c_str()}});
+    }
     return {{"member", {{"id", user_rows[0]["id"].c_str()},
                            {"displayName", user_rows[0]["display_name"].c_str()},
                            {"joinedAt", user_rows[0]["joined_at"].c_str()}}},
@@ -1528,7 +1836,75 @@ class ReliableDatabase {
             {"passRate", reported_completed == 0 ? 0.0
                 : std::round(static_cast<double>(passed) / reported_completed * 1000.0) / 10.0},
             {"dimensionAverages", averages}, {"weaknesses", dimensionWeaknesses(averages)},
-            {"trend", trend}, {"recentSessions", recent}};
+            {"trend", trend}, {"recentSessions", recent},
+            {"inspectSessions", inspect_sessions}};
+  }
+
+  // ── 训练抽查（主管只读） ─────────────────────────────────────────────
+  // 返回完整对话 + 评分 + 轻规则敷衍分析（不引入模型，SQL/C++ 聚合即可）。
+  // 阈值刻意保守：轮数不足 3 不判定，避免一两轮的正常短回复被误标。
+  json supervisorMemberSession(const std::string& supervisor_id, const std::string& member_id,
+                               const std::string& session_id) const {
+    if (member_id.empty() || member_id.size() > 120 ||
+        session_id.empty() || session_id.size() > 120) {
+      throw ApiError(400, "INVALID_ARGUMENT", "成员或会话标识无效");
+    }
+    pqxx::connection connection(database_url_);
+    pqxx::read_transaction tx(connection);
+    // 双重 404 防探测：非本团队成员 / 非该成员的会话，与「不存在」同一错误。
+    const auto member_rows = tx.exec_params(R"(
+      SELECT 1 FROM users u
+      WHERE u.id = $1 AND u.role = 'learner' AND u.status = 'active'
+        AND EXISTS (SELECT 1 FROM supervisor_team_members tm
+                    WHERE tm.learner_id = u.id AND tm.supervisor_id = $2)
+    )", member_id, supervisor_id);
+    if (member_rows.empty()) throw ApiError(404, "MEMBER_NOT_FOUND", "成员不存在");
+    const auto session = getSessionRow(tx, session_id, member_id);
+    const auto rows = tx.exec_params(R"(
+      SELECT id, role, content, round, emotion,
+        to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD"T"HH24:MI:SS') || '+08:00' AS created_at
+      FROM messages WHERE session_id = $1 ORDER BY round, created_at
+    )", session_id);
+    json messages = json::array();
+    for (const auto& row : rows) messages.push_back(messageJson(row));
+    // 疑似敷衍分析：只看学员消息（role='user'）的长度、重复率、回复间隔。
+    const auto stat_rows = tx.exec_params(R"(
+      WITH user_msgs AS (
+        SELECT content, created_at,
+          LAG(created_at) OVER (ORDER BY created_at) AS prev_created_at
+        FROM messages
+        WHERE session_id = $1 AND role = 'user'
+      )
+      SELECT COUNT(*) AS rounds,
+        COALESCE(ROUND(AVG(char_length(content))::numeric, 1), 0) AS avg_length,
+        COUNT(DISTINCT content) AS distinct_count,
+        COALESCE(AVG(EXTRACT(EPOCH FROM (created_at - prev_created_at))), 0) AS avg_gap_seconds
+      FROM user_msgs
+    )", session_id);
+    const auto& stats = stat_rows[0];
+    const auto rounds = stats["rounds"].as<int>();
+    const auto avg_length = stats["avg_length"].as<double>();
+    const auto distinct_count = stats["distinct_count"].as<int>();
+    const auto avg_gap = stats["avg_gap_seconds"].as<double>();
+    const auto repeat_ratio = rounds == 0 ? 0.0
+        : std::round((1.0 - static_cast<double>(distinct_count) / rounds) * 100.0) / 100.0;
+    json flags = json::array();
+    if (rounds >= 3 && avg_length < 8.0) flags.push_back("平均每条回复不足 8 个字");
+    if (rounds >= 3 && repeat_ratio >= 0.34) flags.push_back("重复内容占比过高");
+    if (rounds >= 3 && avg_gap > 0 && avg_gap < 3.0) flags.push_back("回复间隔过短（秒级连发）");
+    json report = json::object();
+    const auto report_rows = tx.exec_params(
+        "SELECT status, report FROM evaluations WHERE session_id = $1", session_id);
+    if (!report_rows.empty() && !report_rows[0]["report"].is_null()) {
+      report = json::parse(report_rows[0]["report"].c_str(), nullptr, false);
+      if (!report.is_object()) report = json::object();
+      report["evaluationStatus"] = report_rows[0]["status"].c_str();
+    }
+    return {{"session", session}, {"messages", messages}, {"report", report},
+            {"suspicion", {{"suspected", !flags.empty()}, {"flags", flags},
+                           {"rounds", rounds}, {"avgLength", avg_length},
+                           {"repeatRatio", repeat_ratio},
+                           {"avgGapSeconds", rounds >= 2 ? json(avg_gap) : json(nullptr)}}}};
   }
 
   // ── 培训运营（文档 3.2 第三模块） ─────────────────────────────────────
@@ -1767,6 +2143,54 @@ class ReliableDatabase {
     tx.commit();
     return {{"planId", plan_id}, {"pendingLearners", pending},
             {"pendingCount", static_cast<int>(pending.size())}};
+  }
+
+  /* 报表导出数据源：主管名下全部计划 × 团队成员一行一条。
+     进度口径与 trainingPlanDetail 完全一致（同一 LATERAL 聚合），
+     包含已到期计划——导出本就用于离线归档，历史行有价值。 */
+  json exportPlanMemberRows(const std::string& supervisor_id) const {
+    pqxx::connection connection(database_url_);
+    pqxx::read_transaction tx(connection);
+    const auto rows = tx.exec_params(R"(
+      SELECT p.title AS plan_title,
+        to_char(p.due_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS due_date,
+        (p.due_at <= NOW()) AS expired,
+        COALESCE(NULLIF(u.display_name, ''), '未命名学员') AS display_name,
+        COALESCE(prog.completed_count, 0) AS completed_count,
+        p.required_count, p.required_pass_rate,
+        COALESCE(ROUND(prog.avg_score::numeric, 1), 0) AS avg_score
+      FROM training_plans p
+      JOIN training_assignments a ON a.plan_id = p.id
+      JOIN users u ON u.id = a.learner_id
+        AND u.status = 'active'
+        AND EXISTS (SELECT 1 FROM supervisor_team_members tm
+                    WHERE tm.learner_id = u.id AND tm.supervisor_id = $1)
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS completed_count, AVG(s.total_score) AS avg_score
+        FROM sessions s
+        WHERE s.user_id = a.learner_id
+          AND s.status = 'completed' AND s.evaluation_status = 'ready'
+          AND s.finished_at >= p.created_at AND s.finished_at <= p.due_at
+          AND (p.scenario_ids = '[]'::jsonb OR p.scenario_ids ? s.scenario_id)
+      ) prog ON TRUE
+      ORDER BY p.created_at DESC, lower(COALESCE(NULLIF(u.display_name, ''), u.id))
+    )", supervisor_id);
+    json items = json::array();
+    for (const auto& row : rows) {
+      const auto completed_count = row["completed_count"].as<int>();
+      const auto avg_score = row["avg_score"].as<double>();
+      items.push_back({{"planTitle", row["plan_title"].c_str()},
+                       {"dueDate", row["due_date"].c_str()},
+                       {"expired", row["expired"].as<bool>()},
+                       {"displayName", row["display_name"].c_str()},
+                       {"completedCount", completed_count},
+                       {"requiredCount", row["required_count"].as<int>()},
+                       {"avgScore", avg_score},
+                       {"requiredPassRate", row["required_pass_rate"].as<int>()},
+                       {"done", completed_count >= row["required_count"].as<int>() &&
+                                avg_score >= row["required_pass_rate"].as<int>()}});
+    }
+    return {{"items", items}};
   }
 
   json listLearnerTrainingPlans(const std::string& user_id) const {
@@ -2061,29 +2485,6 @@ class ReliableDatabase {
     return parsed.is_discarded() ? json::array() : parsed;
   }
 
-  static std::string trainingHintFor(const std::string& scenario_id, int current_round, int hint_number) {
-    (void)current_round;
-    const std::vector<std::string> generic = {
-        "先复述患者最在意的点，再提出一个开放式问题，避免急于给出结论。",
-        "涉及是否适合治疗、具体疗程或疼痛等判断时，明确需要由医生结合检查评估。",
-        "最后给出可执行的服务下一步，例如协助预约咨询、复诊或联系医生。",
-    };
-    const std::vector<std::string> price = {
-        "先确认患者比较报价时最在意的是材料、医生经验、服务安排还是费用透明度。",
-        "客观说明费用需要结合检查后的方案确认，不贬低其他机构，也不承诺固定价格。",
-        "可邀请患者了解咨询和报价流程，并说明可以协助安排合适的沟通时间。",
-    };
-    const std::vector<std::string> discomfort = {
-        "先回应患者的不安，再了解不适出现的时间、程度和变化，不要直接判断是否正常。",
-        "不要给出诊断、用药或结果保证；具体情况应由医生结合检查评估。",
-        "建议协助及时联系医生或安排复诊，并提醒患者按医疗机构的正式指引处理。",
-    };
-    const auto index = static_cast<size_t>(clampInt(hint_number, 1, 3) - 1);
-    if (scenario_id == "price-comparison") return price[index];
-    if (scenario_id == "post-treatment-discomfort") return discomfort[index];
-    return generic[index];
-  }
-
   static std::string supervisorTimeFilter(const std::string& requested_range, const std::string& column) {
     const auto range = requested_range.empty() ? "month" : requested_range;
     if (range == "all") return "";
@@ -2249,6 +2650,7 @@ class ReliableRoleplayDatabase {
         WHERE user_id = $1 AND scenario_id = s.id AND status = 'in_progress'
         ORDER BY updated_at DESC LIMIT 1
       ) active ON TRUE
+      WHERE s.is_active AND NOT s.is_template
       ORDER BY s.sort_order
     )", user_id);
     json items = json::array();
@@ -2280,7 +2682,10 @@ class ReliableRoleplayDatabase {
     return {{"items", items}};
   }
 
-  json createSession(const std::string& user_id, const std::string& scenario_id) const {
+  /* 自由模拟：createSession 的 free_description 只在模板场景会话里有值，
+     随后由 Service 层注入 standardServiceReply / roleplaySummary 的 prompt。 */
+  json createSession(const std::string& user_id, const std::string& scenario_id,
+                     const std::string& free_description = std::string()) const {
     pqxx::connection connection(database_url_);
     pqxx::work tx(connection);
     const auto scenario = tx.exec_params(
@@ -2297,9 +2702,10 @@ class ReliableRoleplayDatabase {
     const auto max_rounds = clampInt(scenario[0]["max_rounds"].as<int>(), 1, 10);
     tx.exec_params(R"(
       INSERT INTO roleplay_sessions
-        (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds)
-      VALUES ($1, $2, $3, $4, 'in_progress', 0, $5)
-    )", session_id, user_id, scenario_id, scenario[0]["name"].c_str(), max_rounds);
+        (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds, free_description)
+      VALUES ($1, $2, $3, $4, 'in_progress', 0, $5, NULLIF($6, ''))
+    )", session_id, user_id, scenario_id, scenario[0]["name"].c_str(), max_rounds,
+        free_description);
     const auto saved = getSessionRow(tx, session_id, user_id);
     tx.commit();
     return {{"session", saved}, {"messages", json::array()}};
@@ -2309,7 +2715,7 @@ class ReliableRoleplayDatabase {
     pqxx::connection connection(database_url_);
     pqxx::work tx(connection);
     const auto previous = tx.exec_params(R"(
-      SELECT scenario_id, status FROM roleplay_sessions
+      SELECT scenario_id, status, free_description FROM roleplay_sessions
       WHERE id = $1 AND user_id = $2 FOR UPDATE
     )", session_id, user_id);
     if (previous.empty()) {
@@ -2319,6 +2725,9 @@ class ReliableRoleplayDatabase {
       throw ApiError(409, "ROLEPLAY_SESSION_NOT_RESTARTABLE", "只有进行中的患者模拟可以重新开始");
     }
     const auto scenario_id = std::string(previous[0]["scenario_id"].c_str());
+    // 重新开始要沿用原会话的场景描述（自由模拟），否则新会话会丢掉场景设定。
+    const auto free_description = previous[0]["free_description"].is_null()
+        ? std::string() : std::string(previous[0]["free_description"].c_str());
     const auto scenario = tx.exec_params(
         "SELECT name, max_rounds FROM scenarios WHERE id = $1", scenario_id);
     tx.exec_params(
@@ -2327,10 +2736,10 @@ class ReliableRoleplayDatabase {
     const auto new_id = makeId("rpsess");
     tx.exec_params(R"(
       INSERT INTO roleplay_sessions
-        (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds)
-      VALUES ($1, $2, $3, $4, 'in_progress', 0, $5)
+        (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds, free_description)
+      VALUES ($1, $2, $3, $4, 'in_progress', 0, $5, NULLIF($6, ''))
     )", new_id, user_id, scenario_id, scenario[0]["name"].c_str(),
-        clampInt(scenario[0]["max_rounds"].as<int>(), 1, 10));
+        clampInt(scenario[0]["max_rounds"].as<int>(), 1, 10), free_description);
     const auto saved = getSessionRow(tx, new_id, user_id);
     tx.commit();
     return {{"session", saved}, {"messages", json::array()}};
@@ -2435,6 +2844,16 @@ class ReliableRoleplayDatabase {
                          {"patientProfile", json::parse(row["patient_profile"].c_str())},
                          {"maxRounds", row["max_rounds"].as<int>()}}},
             {"roleplay", guidance}};
+  }
+
+  /* 自由模拟会话里学员描述的场景原文；普通场景会话返回空串。 */
+  std::string getFreeDescription(const std::string& session_id) const {
+    pqxx::connection connection(database_url_);
+    pqxx::read_transaction tx(connection);
+    const auto rows = tx.exec_params(
+        "SELECT free_description FROM roleplay_sessions WHERE id = $1", session_id);
+    if (rows.empty() || rows[0]["free_description"].is_null()) return std::string();
+    return trim(std::string(rows[0]["free_description"].c_str()));
   }
 
   json getHistory(const std::string& session_id) const {

@@ -83,7 +83,7 @@ Content-Type: application/json
 | `GET` | `/sessions/{id}` | 会话、完整消息和待恢复输入 |
 | `POST` | `/sessions/{id}/restart` | 放弃进行中会话并创建新会话 |
 | `POST` | `/sessions/{id}/messages` | 提交客服输入并获取模拟患者回复 |
-| `POST` | `/sessions/{id}/hint` | 获取本次训练的合规沟通提示，最多 3 条 |
+| `POST` | `/sessions/{id}/hint` | 获取针对当前患者发言的实时提示；每场共 3 条，每轮最多 1 条 |
 | `POST` | `/sessions/{id}/finish` | 结束会话并可靠入队评分任务 |
 | `GET` | `/sessions/{id}/evaluation` | 获取 `not_started/generating/ready/failed` |
 | `POST` | `/sessions/{id}/evaluation/retry` | 仅对失败评分人工重试 |
@@ -239,7 +239,9 @@ Content-Type: application/json
 
 服务端先验证该 `sessionId/mistakeKey` 是当前用户已完成报告的真实派生项，再写入 `learner_mistake_progress`。取消掌握不会删除报告或错题来源，只会将 `mastered_at` 置空并保留更新时间。
 
-训练提示不调用模型；服务端将每条提示写入 `session_hints`，并在读取会话时返回。提示只给出沟通步骤与医疗合规边界，不给出诊断、用药、疗效、固定价格或疗程结论。话术收藏同样先验证 `sessionId/phraseKey` 来自当前用户的已完成报告，再写入偏好记录。
+提示调用模型生成，输入是场景公开信息、患者当前状态、完整对话、**患者当前这一轮的发言原话**和学员上一轮回答，因此每一轮的提示都随对话内容变化，不是固定话术。总量上限为每场 3 条、每轮最多 1 条，两个上限都在写入 `session_hints` 的事务内裁定：唯一键 `(session_id, round)` 保证同一轮不可能落库第二条。第 0 轮（尚未回复患者开场白）不允许取提示，先返回 409 `HINT_ROUND_NOT_READY`。模型输出经与评分建议同一套合规校验，命中未经验证的医疗或价格信息时替换为合规兜底话术。提示只给出沟通步骤与医疗合规边界，不给出诊断、用药、疗效、固定价格或疗程结论。话术收藏同样先验证 `sessionId/phraseKey` 来自当前用户的已完成报告，再写入偏好记录。
+
+读取会话时同时返回提示状态：`hintRemaining`（总剩余，初始 3）、`hintRound`（当前轮次）、`hintRoundLimit`（每轮上限 1）、`hintRemainingThisRound`（本轮还剩几条）。前端据此判断按钮可用性，无需自行推算。
 
 积分仅来自每日签到，固定为 +10；不提供训练奖励、兑换、排行榜或其他积分来源。
 
@@ -324,6 +326,8 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | 409 | `SESSION_IN_PROGRESS` / `ROLEPLAY_SESSION_IN_PROGRESS` | 同场景已有进行中会话 |
 | 409 | `EVALUATION_NOT_RETRYABLE` / `ROLEPLAY_SUMMARY_NOT_RETRYABLE` | 当前任务不可人工重试 |
 | 409 | `HINT_LIMIT_REACHED` | 本次训练的三条提示已经用完 |
+| 409 | `HINT_ROUND_LIMIT_REACHED` | 本轮已经获取过提示，回复患者后可在下一轮继续 |
+| 409 | `HINT_ROUND_NOT_READY` | 尚未回复患者，没有可针对的当前轮次 |
 | 422 | `MIN_ROUNDS_NOT_REACHED` | 尚未完成一轮 |
 | 429 | `RATE_LIMITED` | 用户/IP 速率超限 |
 | 503 | `MODEL_NOT_CONFIGURED` / `MODEL_AUTH_FAILED` | 模型配置不可用 |

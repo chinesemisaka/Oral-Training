@@ -39,6 +39,10 @@ const normalizeEvaluation = evaluation => Object.assign({}, evaluation, {
   }))
 });
 
+/* WXML 不能对数据路径调用函数（依赖追踪失效且不报错），
+   折叠时要显示的条目在 JS 里预算成字段。 */
+const foldList = (list, expanded) => (expanded ? (list || []) : (list || []).slice(0, 1));
+
 Page({
   data: {
     session: null,
@@ -53,7 +57,9 @@ Page({
     retryable: false,
     timedOut: false,
     violationsExpanded: false,
-    roundCommentsExpanded: false
+    roundCommentsExpanded: false,
+    visibleViolations: [],
+    visibleRoundComments: []
   },
 
   sessionId: '',
@@ -95,7 +101,9 @@ Page({
         const evaluation = normalizeEvaluation(report.evaluation);
         this.setData({ evaluation, dimensions: dimensionsFrom(evaluation.dimensionScores), loading: false,
           level: levelFrom(evaluation.totalScore), retryable: false, timedOut: false,
-          scorePercent: Math.max(0, Math.min(100, evaluation.totalScore)) });
+          scorePercent: Math.max(0, Math.min(100, evaluation.totalScore)),
+          visibleViolations: foldList(evaluation.violations, this.data.violationsExpanded),
+          visibleRoundComments: foldList(evaluation.roundComments, this.data.roundCommentsExpanded) });
         return;
       }
       if (report.status === 'failed') {
@@ -156,8 +164,23 @@ Page({
   viewHistory() { wx.navigateTo({ url: '/pages/report/report' }); },
   viewMistakes() { wx.navigateTo({ url: '/pages/mistakes/mistakes' }); },
 
-  toggleViolations() { this.setData({ violationsExpanded: !this.data.violationsExpanded }); },
-  toggleRoundComments() { this.setData({ roundCommentsExpanded: !this.data.roundCommentsExpanded }); },
+  toggleViolations() {
+    const violationsExpanded = !this.data.violationsExpanded;
+    const evaluation = this.data.evaluation;
+    this.setData({
+      violationsExpanded,
+      visibleViolations: foldList(evaluation && evaluation.violations, violationsExpanded)
+    });
+  },
+
+  toggleRoundComments() {
+    const roundCommentsExpanded = !this.data.roundCommentsExpanded;
+    const evaluation = this.data.evaluation;
+    this.setData({
+      roundCommentsExpanded,
+      visibleRoundComments: foldList(evaluation && evaluation.roundComments, roundCommentsExpanded)
+    });
+  },
 
   startNextScenario() {
     const scenario = this.data.nextScenario;
