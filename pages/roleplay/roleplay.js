@@ -89,6 +89,24 @@ Page({
     this.setData({ inputValue: e.currentTarget.dataset.prompt || '' });
   },
 
+  viewEvidence(e) {
+    const traceId = e.currentTarget.dataset.trace;
+    if (!traceId) return;
+    api.getRoleplayEvidence(this.sessionId, traceId).then(result => {
+      const evidence = result.evidence || {};
+      const facts = (evidence.facts || []).map(item => `• ${item.displayText}`);
+      const passages = (evidence.passages || []).map(item =>
+        `• ${item.title}：${item.body}`);
+      const missing = (evidence.missingFields || []).length
+        ? [`• 未提供字段：${evidence.missingFields.join('、')}`] : [];
+      wx.showModal({
+        title: '本轮回答依据',
+        content: facts.concat(passages, missing).join('\n') || '本轮没有命中可引用资料。',
+        showCancel: false
+      });
+    }).catch(error => wx.showToast({ title: error.message || '依据读取失败', icon: 'none' }));
+  },
+
   sendMessage(e) {
     if (this.data.sending || this.data.finishing) return;
     const fromInput = e && e.detail && e.detail.value ? e.detail.value : this.data.inputValue;

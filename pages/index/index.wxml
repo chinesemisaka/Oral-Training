@@ -12,6 +12,14 @@
 
   <view class="boundary-tip"><text class="boundary-icon">i</text><text>{{trainingMode === 'patient_simulation' ? '标准客服会展示答复思路与合规边界；不提供诊断、治疗承诺或未经确认的价格信息。' : '患者隐藏信息不会直接展示，训练中请通过提问逐步了解。'}}</text></view>
 
+  <view class="service-picker card" wx:if="{{trainingMode === 'patient_simulation'}}">
+    <text class="service-picker-label">本次训练服务</text>
+    <picker range="{{services}}" range-key="name" bindchange="onServiceChange">
+      <view class="service-picker-value">{{selectedService ? selectedService.name : '暂无已发布服务'}} ›</view>
+    </picker>
+    <text class="service-picker-meta" wx:if="{{selectedService}}">{{selectedService.priceDisplay}} · 版本 v{{selectedService.version}}</text>
+  </view>
+
   <scroll-view class="category-scroll" scroll-x="true" enable-flex="true">
     <view class="category-tabs">
       <text class="category-tab {{activeCategoryId === '' ? 'selected' : ''}}" bindtap="selectCategory" data-id="">全部场景</text>

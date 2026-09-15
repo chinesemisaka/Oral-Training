@@ -9,19 +9,21 @@ const DIMENSIONS = [
 ];
 
 const coachingSuggestions = dashboard => {
-  if (Number(dashboard.completedSessions || 0) <= 0) {
+  if (Number(dashboard.scoredSessions || 0) <= 0) {
     return [{
-      title: '暂无足够训练数据',
-      text: '完成训练并生成报告后，这里会根据机构聚合数据给出辅导建议。',
+      title: '暂无可评分训练数据',
+      text: '报告具备综合分后，这里会根据机构聚合数据给出辅导建议。',
       severity: 'normal'
     }];
   }
   const suggestions = [];
   const dimensions = dashboard.dimensionAverages || {};
-  const weakest = DIMENSIONS.reduce((current, item) => {
-    const score = Number(dimensions[item.key] || 0);
-    return !current || score < current.score ? Object.assign({}, item, { score }) : current;
-  }, null);
+  const weakest = DIMENSIONS.filter(item => dimensions[item.key] !== null &&
+    dimensions[item.key] !== undefined && Number.isFinite(Number(dimensions[item.key])))
+    .reduce((current, item) => {
+      const score = Number(dimensions[item.key]);
+      return !current || score < current.score ? Object.assign({}, item, { score }) : current;
+    }, null);
   if (weakest && weakest.score < 70) {
     suggestions.push({
       title: `优先关注：${weakest.name}`,
@@ -29,7 +31,8 @@ const coachingSuggestions = dashboard => {
       severity: weakest.score < 60 ? 'high' : 'medium'
     });
   }
-  const weakScene = (dashboard.scenarioStats || []).filter(item => item.total > 0)
+  const weakScene = (dashboard.scenarioStats || []).filter(item => item.scoredCount > 0 &&
+    item.passRate !== null && Number.isFinite(Number(item.passRate)))
     .reduce((current, item) => !current || item.passRate < current.passRate ? item : current, null);
   if (weakScene && weakScene.passRate < 70) {
     suggestions.push({
@@ -60,6 +63,10 @@ Page({
 
   onShow() { this.loadPage(); },
 
+  goKnowledgeAdmin() {
+    wx.navigateTo({ url: '/pages/knowledge-admin/knowledge-admin' });
+  },
+
   loadPage() {
     this.setData({ loading: true });
     api.ensureAuthenticated().then(() => {
@@ -81,17 +88,26 @@ Page({
     const requestedRange = this.data.timeRange;
     api.getSupervisorDashboard({ range: requestedRange }).then(supervisor => {
       if (requestVersion !== this.supervisorRequestVersion || requestedRange !== this.data.timeRange) return;
-      const dimensionAverages = DIMENSIONS.map(item => Object.assign({}, item, {
-        value: Number((supervisor.dimensionAverages || {})[item.key] || 0)
-      }));
+      const dimensionAverages = DIMENSIONS.map(item => {
+        const rawValue = (supervisor.dimensionAverages || {})[item.key];
+        const hasScore = rawValue !== null && rawValue !== undefined && Number.isFinite(Number(rawValue));
+        return Object.assign({}, item, {
+          value: hasScore ? api.formatScore(rawValue) : '暂无评分',
+          barWidth: hasScore ? Number(rawValue) : 0,
+          hasScore
+        });
+      });
       const maxSceneTotal = Math.max(1, ...(supervisor.scenarioStats || []).map(item => item.total));
       const scenarioStats = (supervisor.scenarioStats || []).map(item => Object.assign({}, item, {
         averageScore: api.formatScore(item.averageScore),
-        barWidth: Math.max(0, Math.min(100, item.passRate)),
+        passRateLabel: item.passRate === null ? '暂无评分' : `${item.passRate}%`,
+        barWidth: item.passRate === null ? 0 : Math.max(0, Math.min(100, item.passRate)),
         totalWidth: Math.max(4, item.total / maxSceneTotal * 100)
       }));
       const normalized = Object.assign({}, supervisor, {
-        averageScore: api.formatScore(supervisor.averageScore), dimensionAverages, scenarioStats
+        averageScore: api.formatScore(supervisor.averageScore),
+        passRateLabel: supervisor.passRate === null ? '暂无评分' : `${supervisor.passRate}%`,
+        dimensionAverages, scenarioStats
       });
       this.setData({
         supervisor: normalized,
@@ -118,12 +134,19 @@ Page({
           count: item.trainingCount,
           barWidth: item.trainingCount / maxCount * 100
         })),
-        dimensionAverages: DIMENSIONS.map(item => Object.assign({}, item, {
-          value: Number((data.dimensionAverages || {})[item.key] || 0)
-        })),
+        dimensionAverages: DIMENSIONS.map(item => {
+          const rawValue = (data.dimensionAverages || {})[item.key];
+          const hasScore = rawValue !== null && rawValue !== undefined && Number.isFinite(Number(rawValue));
+          return Object.assign({}, item, {
+            value: hasScore ? api.formatScore(rawValue) : '暂无评分',
+            barWidth: hasScore ? Number(rawValue) : 0,
+            hasScore
+          });
+        }),
         recentSessions: (data.recentSessions || []).map(item => Object.assign({}, item, {
           statusText: item.status === 'in_progress' ? '进行中' : item.status === 'abandoned' ? '已放弃'
-            : item.evaluationStatus === 'generating' ? '报告生成中' : item.evaluationStatus === 'failed' ? '报告失败' : '已完成'
+            : item.evaluationStatus === 'generating' ? '报告生成中' : item.evaluationStatus === 'failed' ? '报告失败'
+              : item.totalScore === null ? '知识依据不足' : '已完成'
         }))
       };
       this.setData({ personal, loading: false });

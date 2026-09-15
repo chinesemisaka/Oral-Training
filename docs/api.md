@@ -1,6 +1,8 @@
 # 口腔客服智能陪练 API 契约
 
-版本：v3.2（训练体验、主管摘要与个人成长）
+版本：v3.5（RAG v2 报告兼容、知识管理与检索预览）
+
+> RAG v2 仍在分阶段开发。知识发布已生成中文检索块，管理端可预览确定性召回，角色互换已接入服务快照和回答依据；学员扮演客服的 AI 患者初始化与知识核验评分仍待实现。
 
 Base URL 为 `https://<host>/api`。本机开发可使用 `http://127.0.0.1:8080/api`；体验版和正式版必须使用 HTTPS。
 
@@ -68,9 +70,13 @@ Content-Type: application/json
   "modelConfigured":true,
   "workerRunning":true,
   "workerThreads":1,
+  "knowledgeWorkerThreads":1,
   "workersInDatabaseBackoff":0,
+  "knowledgeWorkersInDatabaseBackoff":0,
   "pendingJobs":0,
   "deadJobs":0,
+  "knowledgePendingJobs":0,
+  "knowledgeDeadJobs":0,
   "databasePool":{
     "maximum":12,
     "open":3,
@@ -198,8 +204,8 @@ Content-Type: application/json
 | `PUT` | `/learning/phrases/{sessionId}/{phraseKey}/favorite` | 收藏或取消收藏本人报告中的真实话术 |
 | `GET` | `/learning/mistakes` | 本人错题；支持 `scenarioId`、`includeMastered=true|false`、`limit`（1—50） |
 | `PUT` | `/learning/mistakes/{sessionId}/{mistakeKey}` | 标记或取消标记掌握状态 |
-| `GET` | `/learning/profile` | 本人完成次数、平均分、首末分差、五维均值、最近 12 条趋势、练习重点和错题掌握数 |
-| `GET` | `/learning/mine` | 本人签到积分、当月签到日历、连续天数、训练摘要和话术收藏数 |
+| `GET` | `/learning/profile` | 本人完成次数、`scoredCount/unscoredCount`、平均分、首末分差、逐维非空均值、最近 12 条有分趋势、练习重点和错题掌握数 |
+| `GET` | `/learning/mine` | 本人签到积分、当月签到日历、连续天数、含已评分/未评分计数的训练摘要和话术收藏数 |
 | `POST` | `/learning/checkins` | 每个中国时区自然日签到一次，固定奖励 +10 积分 |
 
 掌握状态请求：
@@ -232,6 +238,8 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 ### `GET /dashboard/summary`
 
 `scope` 为 `personal` 或 `institution`。学员收到个人统计和最近 5 条本人会话；管理员收到单机构聚合，`recentSessions` 为空，避免泄露个人会话。
+
+完成报告允许没有综合分。聚合响应以 `completedSessions` 统计所有已完成且报告为 `ready` 的训练，并同时返回 `scoredSessions` 与 `unscoredSessions`。平均分、达标率、最佳分和趋势仅使用 `totalScore` 非空的报告；没有已评分样本时平均分和达标率返回 JSON `null`。`dimensionAverages` 的每个维度独立排除该维度的 `null`，没有样本的维度返回 `null`。
 
 仅 `admin` 可以调用：
 
@@ -276,3 +284,144 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 ## 11. 兼容与安全边界
 
 现有成功响应数据结构和全部业务路径保持兼容。学员洞察字段在服务端对已规范化报告进行派生；DeepSeek 请求地址、请求参数、响应解析与模型调用内部重试逻辑未改变，评分 Prompt 仅新增累计违规与医疗合规分的一致性约束并记录为 `score-prompt-v3`。生产环境必须设置 `PRODUCTION=true`、`AUTH_MODE=wechat`、HTTPS `ALLOWED_ORIGIN`、`REQUIRE_HTTPS=true` 和非空 `TRUSTED_PROXY_IPS`，并在 HTTPS 反向代理后运行；运行时密钥上传会自动关闭。程序只信任列表内代理提供的 `X-Forwarded-For` 和 `X-Forwarded-Proto`，配置或代理头无效时采用拒绝策略。
+
+## 附录 A：RAG v2 分阶段契约
+
+本附录冻结 `contextVersion=2`、`schemaVersion=2` 的目标契约。旧客户端未提交 `serviceId` 时继续走 v1；服务端不得替旧请求随机选择服务。当前已实现 `/services`、按服务筛选的角色互换场景、角色互换 v2 会话/消息及其 evidence 读取；客服训练 v2 初始化与知识核验评分仍待后续阶段完成。
+
+### A.1 学员接口
+
+| 方法 | 路径 | 目标行为 |
+|---|---|---|
+| `GET` | `/services` | 返回当前可选的已发布服务摘要和适用场景 |
+| `GET` | `/services/{id}` | 返回服务公开字段，不返回管理备注或患者隐藏画像 |
+| `GET` | `/scenarios?serviceId=...` | 按服务返回兼容场景、本人续练会话和最佳分 |
+| `GET` | `/roleplay/scenarios?serviceId=...` | 按服务返回角色互换场景和本人续练会话 |
+| `POST` | `/sessions` | 接收 `serviceId`、`scenarioId`、`clientSessionId`，创建患者初始化任务 |
+| `GET` | `/sessions/{id}` | 扩展公开服务摘要、知识范围、患者公开画像与初始化状态 |
+| `POST` | `/sessions/{id}/initialization/retry` | 仅本人对失败的初始化显式重试 |
+| `POST` | `/sessions/{id}/restart` | 接收新的 `clientSessionId`，以当前发布版本开始新会话 |
+| `POST` | `/roleplay/sessions` | 接收服务、场景及客户端幂等 ID，锁定 RAG 上下文 |
+| `POST` | `/roleplay/sessions/{id}/restart` | 使用新幂等 ID 和当前服务版本重开 |
+| `POST` | 两类现有 `/messages` | 保留 `clientMessageId`，响应增加 `answerStatus` 和 `citations` |
+| `GET` | 两类现有报告/复盘接口 | 返回版本字段、知识核验或带依据复盘；角色互换不评分 |
+| `GET` | `/sessions/{id}/evidence/{traceId}` | 本人读取该客服训练会话已经公开的证据 |
+| `GET` | `/roleplay/sessions/{id}/evidence/{traceId}` | 本人读取该角色互换会话已经公开的证据 |
+
+创建客服训练 v2 的目标响应为 `202`：
+
+```json
+{
+  "code":0,
+  "message":"accepted",
+  "data":{
+    "sessionId":"session-001",
+    "contextVersion":2,
+    "serviceSummary":{"serviceId":"svc-001","revisionId":"srv-rev-001","name":"演示服务 A"},
+    "initialization":{"status":"pending","errorCode":null,"retryable":false}
+  }
+}
+```
+
+角色互换 v2 创建成功通常返回 `201`。相同 `clientSessionId` 和相同规范化请求重放返回原会话；相同键对应不同参数返回 `409 IDEMPOTENCY_CONFLICT`。规范化摘要至少覆盖用户身份、模式、`serviceId`、`scenarioId` 及会影响上下文的创建参数。
+
+初始化状态通过 `GET /sessions/{id}` 以 `pending / generating / failed / ready` 正常返回。`pending` 或 `generating` 时发送消息、结束或请求提示返回 `409 PATIENT_INITIALIZATION_PENDING`；失败时返回 `409 PATIENT_INITIALIZATION_FAILED`，不能回落到无证据的旧患者生成。
+
+带依据回复保留旧页面使用的 `reply`：
+
+```json
+{
+  "reply":"演示服务 A 为 3980 元起/颗；具体按资料所列条件确认。",
+  "answerStatus":"answered",
+  "citations":[{"traceId":"trace-001","evidenceId":"E1"}],
+  "learningPoints":[{"text":"报价需保留起价和计价单位。","evidenceIds":["E1"]}],
+  "complianceBoundary":"具体诊疗安排需要医生结合检查评估。",
+  "shouldEnd":false
+}
+```
+
+`answerStatus` 只能为 `answered / partial / unknown / conflicted`。资料明确未知、无命中和资料冲突属于正常业务结果并返回 `200`；数据库或检索故障返回可重试 `503`，不能伪装成“资料未知”。
+
+报告 v2 的最小可空示例：
+
+```json
+{
+  "schemaVersion":2,
+  "dimensionScores":{
+    "knowledgeAccuracy":null,
+    "medicalCompliance":90,
+    "empathy":85,
+    "needsDiscovery":80,
+    "serviceEtiquette":90
+  },
+  "totalScore":null,
+  "passed":null,
+  "knowledgeAssessment":{
+    "status":"insufficient_evidence",
+    "knowledgeAccuracy":null,
+    "assessableCount":0,
+    "unassessableCount":2,
+    "coverage":0,
+    "rubricVersion":"knowledge-rubric-v1"
+  },
+  "knowledgeChecks":[],
+  "knowledgeManifestHash":"sha256:..."
+}
+```
+
+`ready` 只表示报告生成完成，不保证 `totalScore` 非空。只有有总分的报告进入平均分、达标率分母、最佳分、趋势及高分成就；完成次数仍包括无综合分报告。
+
+### A.2 管理接口（R02—R04 主体已实现）
+
+| 方法 | 路径 | 目标行为 |
+|---|---|---|
+| `GET/POST` | `/admin/services` | 服务列表与新建服务草稿 |
+| `GET/PUT` | `/admin/services/{id}/draft` | 按 `draftVersion` 读取和保存服务草稿 |
+| `POST` | `/admin/services/{id}/publish` | 按草稿版本与幂等键原子发布 |
+| `POST` | `/admin/services/{id}/archive` | 停止新会话选择，不删除历史版本 |
+| `GET` | `/admin/services/{id}/revisions` | 读取不可变版本及字段差异 |
+| `GET/POST` | `/admin/knowledge` | 专业知识列表与新建条目 |
+| `GET/PUT` | `/admin/knowledge/{id}/draft` | 按 `draftVersion` 编辑知识草稿 |
+| `POST` | `/admin/knowledge/{id}/publish` | 发布不可变版本并生成 `zh-bigram-v1` 检索块 |
+| `POST` | `/admin/knowledge/{id}/archive` | 停止新上下文纳入该条目 |
+| `GET` | `/admin/knowledge/{id}/revisions` | 读取知识版本历史 |
+| `POST` | `/admin/knowledge/generation-jobs` | 创建模拟资料草稿生成任务，返回 `202` |
+| `GET` | `/admin/knowledge/generation-jobs/{id}` | 读取排队、执行、失败或草稿结果 |
+| `POST` | `/admin/knowledge/generation-jobs/{id}/retry` | 对失败任务显式重试 |
+| `POST` | `/admin/knowledge/preview` | 使用指定已保存草稿版本和问题执行临时检索预览 |
+
+全部管理端点逐个校验 `admin`。知识管理权限不授予学员对话、个人报告、话术或错题读取权限。生成任务只保存 `synthetic/unverified` 草稿，不能直接发布或自行标记 `reviewed`。
+
+服务创建提交 `{"payload": ServiceDraft}`；保存提交 `{"draftVersion":2,"payload":ServiceDraft}`。知识创建提交 `topic/scope/serviceId/title/body/metadata`，保存提交 `draftVersion/title/body/metadata`。服务与知识发布都必须携带 `Idempotency-Key` 请求头以及正文中的 `draftVersion`；同键同参返回原 revision，同键异参返回 `409 IDEMPOTENCY_CONFLICT`。
+
+金额使用整数分。已知价格必须保留类型、CNY、单位和适用条件；范围价格的下界不得大于上界。价格、单次时长、全程周期、复诊间隔和预约资料都可显式使用 `{"status":"unknown","reason":"..."}`，不得用零冒充未知。发布在一个事务内追加不可变 revision、切换 current pointer、更新场景关联并写审计，归档不删除历史版本。
+
+生成任务请求示例：
+
+```json
+{
+  "kind":"knowledge_draft",
+  "draftId":"knowledge-draft-001",
+  "brief":"生成一份仅用于演示训练的候选正文",
+  "count":1
+}
+```
+
+`count` 当前固定为 1。任务状态为 `pending/running/retry_wait/succeeded/dead`，响应包含 `generation`、`attempts`、`maxAttempts`、`promptVersion`、`modelVersion`、`resultApplied` 和错误字段。Worker 使用独立队列、租约与 attempt token；生成开始后如管理员保存了新草稿，旧结果只保存在 `result.candidate` 且 `resultApplied=false`，不会覆盖人工编辑。失败任务只能通过 retry 端点开始新 generation；重试会以当时的最新草稿重新构造模型输入。
+
+### A.3 新增错误码
+
+| HTTP | code | 含义 |
+|---:|---|---|
+| 409 | `SERVICE_NOT_AVAILABLE` | 服务未发布、已归档、已过期或不在当前运行范围 |
+| 409 | `SERVICE_SCENARIO_MISMATCH` | 服务与训练场景不兼容 |
+| 409 | `DRAFT_VERSION_CONFLICT` | 草稿已被其他编辑覆盖，客户端需重新加载 |
+| 409 | `GENERATION_JOB_STATE_CONFLICT` | 生成任务当前状态不允许重试 |
+| 409 | `GENERATION_EXHAUSTED` | 管理生成任务已达到 generation 上限 |
+| 409 | `PATIENT_INITIALIZATION_PENDING` | 患者画像或开场仍在生成 |
+| 409 | `PATIENT_INITIALIZATION_FAILED` | 患者初始化失败，需要显式重试 |
+| 503 | `KNOWLEDGE_NOT_READY` | 当前运行范围没有满足开练条件的已发布资料 |
+| 503 | `RAG_UNAVAILABLE` | RAG 被停用或检索基础设施不可用 |
+| 503 | `EVIDENCE_VALIDATION_FAILED` | 模型输出经过一次修复后仍不能由证据支持 |
+
+证据读取必须同时验证当前用户拥有会话、`traceId` 属于该会话且证据已被胜出消息或报告公开。任一条件不满足时统一返回无资源响应，避免枚举其他用户或失败尝试的 trace。

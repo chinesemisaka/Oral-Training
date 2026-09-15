@@ -5,7 +5,7 @@
 - 学员扮演客服，与 DeepSeek 模拟患者多轮对话，完成后生成五维报告。
 - 学员扮演患者，查看标准客服示范、学习要点和无分数复盘。
 
-当前版本已具备可靠消息幂等、可恢复 AI Worker、微信登录、单机构 `learner/admin` 权限、用户数据隔离、场景分类、合规训练提示、话术收藏、每日签到积分、主管聚合看板。积分只有每日签到来源；多机构租户、排行榜、兑换和团队任务运营不在本轮范围内。
+当前版本已具备可靠消息幂等、可恢复 AI Worker、微信登录、单机构 `learner/admin` 权限、用户数据隔离、服务/知识管理，以及角色互换模式的服务选择、会话版本快照、中文检索和回答依据展示。积分只有每日签到来源；多机构租户、排行榜、兑换和团队任务运营不在本轮范围内。
 
 > 仅用于模拟训练，不构成医疗建议。请勿输入真实患者姓名、电话、病历或其他隐私信息。
 
@@ -23,7 +23,7 @@ docs/api.md                      公共 API 契约
 
 ## 初始化数据库
 
-先备份历史数据库，并只读执行 `backend/migrations/preflight_reliability.sql` 记录重复轮次和异常状态。按顺序执行全部迁移；`003` 会归档重复消息并补可靠任务，`004` 会把历史记录保留在演示用户下，`005` 会按完整生成尝试重新配对历史问答并修复缺失的报告/任务状态。迁移过程不会调用模型；执行 `005` 至 `009` 期间必须保持后端停止，全部迁移完成后再启动。`009` 补齐旧报告总分，并恢复 `005` 误排队但未发生问答修复的归档报告；不会覆盖已重新生成的报告。
+先备份历史数据库，并只读执行 `backend/migrations/preflight_reliability.sql` 记录重复轮次和异常状态。按顺序执行全部迁移；迁移过程不会调用模型。执行 `005` 至 `011` 期间必须保持后端停止，全部迁移完成后再启动。`010` 增加服务与知识目录，`011` 增加角色互换 RAG 会话快照、证据 trace 与引用字段。
 
 ```powershell
 $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
@@ -36,6 +36,8 @@ $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\007_training_experience.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\008_supervisor_growth.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\009_legacy_report_totals.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\010_knowledge_catalog.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\011_roleplay_rag_mvp.sql
 ```
 
 ## 构建与启动后端
@@ -84,13 +86,14 @@ ALLOWED_ORIGIN=https://your-gateway.example
 REQUIRE_HTTPS=true
 TRUSTED_PROXY_IPS=127.0.0.1,::1
 AI_WORKER_CONCURRENCY=1
+KNOWLEDGE_WORKER_CONCURRENCY=1
 DATABASE_POOL_SIZE=12
 DATABASE_POOL_WAIT_MS=3000
 ```
 
 后端应放在 HTTPS 反向代理之后。`TRUSTED_PROXY_IPS` 必须填写实际连接后端的代理 IP；只有这些地址提供的 `X-Forwarded-For` 和 `X-Forwarded-Proto` 会被信任。代理应覆盖 `X-Forwarded-Proto`，并正确追加或覆盖 `X-Forwarded-For`。生产配置缺失、布尔值/整数拼写错误、使用 demo 登录或关闭 HTTPS 时，程序会拒绝启动。不要把数据库、模型密钥、微信密钥或 bearer token 写进前端或仓库。
 
-API、身份服务和 Worker 共享惰性数据库连接池。连接总数受 `DATABASE_POOL_SIZE` 限制；等待超过 `DATABASE_POOL_WAIT_MS` 的请求返回 HTTP 503 `DATABASE_BUSY`。连接池大小必须至少比 Worker 并发数多 2，避免后台任务占满 API 所需连接。
+API、身份服务、报告 Worker 和独立的知识草稿 Worker 共享惰性数据库连接池。连接总数受 `DATABASE_POOL_SIZE` 限制；等待超过 `DATABASE_POOL_WAIT_MS` 的请求返回 HTTP 503 `DATABASE_BUSY`。连接池大小必须至少比两个 Worker 池的并发数之和多 2，避免后台任务占满 API 所需连接。
 
 ## 验证
 

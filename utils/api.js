@@ -18,7 +18,7 @@ const rawRequest = (path, options = {}) => new Promise((resolve, reject) => {
     method: options.method || 'GET',
     data: options.data,
     timeout: options.timeout === undefined ? DEFAULT_REQUEST_TIMEOUT : options.timeout,
-    header: Object.assign({ 'content-type': 'application/json' }, options.token
+    header: Object.assign({ 'content-type': 'application/json' }, options.header || {}, options.token
       ? { Authorization: `Bearer ${options.token}` }
       : {}),
     success: response => {
@@ -95,8 +95,9 @@ const query = values => Object.keys(values)
   .join('&');
 
 const formatScore = value => {
+  if (value === null || value === undefined || value === '') return '暂无评分';
   const score = Number(value);
-  return Number.isFinite(score) ? Number(score.toFixed(1)) : 0;
+  return Number.isFinite(score) ? Number(score.toFixed(1)) : '暂无评分';
 };
 
 module.exports = {
@@ -122,9 +123,14 @@ module.exports = {
   getEvaluation: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/evaluation`),
   retryEvaluation: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/evaluation/retry`, { method: 'POST', data: {} }),
   getSessions: params => request(`/sessions?${query(params || {})}`),
-  getRoleplayScenarios: () => request('/roleplay/scenarios'),
-  createRoleplaySession: scenarioId => request('/roleplay/sessions', { method: 'POST', data: { scenarioId } }),
-  restartRoleplaySession: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/restart`, { method: 'POST', data: {} }),
+  getServices: () => request('/services'),
+  getRoleplayScenarios: serviceId => request(`/roleplay/scenarios?${query({ serviceId: serviceId || '' })}`),
+  createRoleplaySession: (scenarioId, serviceId, clientSessionId) => request('/roleplay/sessions', {
+    method: 'POST', data: { scenarioId, serviceId, clientSessionId }
+  }),
+  restartRoleplaySession: (sessionId, clientSessionId) => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/restart`, {
+    method: 'POST', data: { clientSessionId }
+  }),
   getRoleplaySession: sessionId => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}`),
   sendRoleplayMessage: (sessionId, clientMessageId, content) => request(`/roleplay/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST', data: { clientMessageId, content }, timeout: MODEL_REQUEST_TIMEOUT
@@ -149,5 +155,57 @@ module.exports = {
   getLearningProfile: () => request('/learning/profile'),
   getLearningMine: () => request('/learning/mine'),
   checkIn: () => request('/learning/checkins', { method: 'POST', data: {} }),
-  getSupervisorDashboard: params => request(`/supervisor/dashboard?${query(params || {})}`)
+  getSupervisorDashboard: params => request(`/supervisor/dashboard?${query(params || {})}`),
+  getAdminServices: () => request('/admin/services'),
+  createAdminService: payload => request('/admin/services', {
+    method: 'POST', data: { payload }
+  }),
+  getRoleplayEvidence: (sessionId, traceId) => request(
+    `/roleplay/sessions/${encodeURIComponent(sessionId)}/evidence/${encodeURIComponent(traceId)}`
+  ),
+  getAdminServiceDraft: serviceId => request(`/admin/services/${encodeURIComponent(serviceId)}/draft`),
+  saveAdminServiceDraft: (serviceId, draftVersion, payload) => request(
+    `/admin/services/${encodeURIComponent(serviceId)}/draft`,
+    { method: 'PUT', data: { draftVersion, payload } }
+  ),
+  publishAdminService: (serviceId, draftVersion, idempotencyKey) => request(
+    `/admin/services/${encodeURIComponent(serviceId)}/publish`,
+    { method: 'POST', data: { draftVersion }, header: { 'Idempotency-Key': idempotencyKey } }
+  ),
+  archiveAdminService: serviceId => request(
+    `/admin/services/${encodeURIComponent(serviceId)}/archive`, { method: 'POST', data: {} }
+  ),
+  getAdminServiceRevisions: serviceId => request(
+    `/admin/services/${encodeURIComponent(serviceId)}/revisions`
+  ),
+  getAdminKnowledge: () => request('/admin/knowledge'),
+  createAdminKnowledge: payload => request('/admin/knowledge', { method: 'POST', data: payload }),
+  getAdminKnowledgeDraft: entryId => request(`/admin/knowledge/${encodeURIComponent(entryId)}/draft`),
+  saveAdminKnowledgeDraft: (entryId, payload) => request(
+    `/admin/knowledge/${encodeURIComponent(entryId)}/draft`,
+    { method: 'PUT', data: payload }
+  ),
+  publishAdminKnowledge: (entryId, draftVersion, idempotencyKey) => request(
+    `/admin/knowledge/${encodeURIComponent(entryId)}/publish`,
+    { method: 'POST', data: { draftVersion }, header: { 'Idempotency-Key': idempotencyKey } }
+  ),
+  archiveAdminKnowledge: entryId => request(
+    `/admin/knowledge/${encodeURIComponent(entryId)}/archive`, { method: 'POST', data: {} }
+  ),
+  getAdminKnowledgeRevisions: entryId => request(
+    `/admin/knowledge/${encodeURIComponent(entryId)}/revisions`
+  ),
+  createKnowledgeGenerationJob: payload => request('/admin/knowledge/generation-jobs', {
+    method: 'POST', data: payload, header: { 'Idempotency-Key': payload.idempotencyKey }
+  }),
+  getKnowledgeGenerationJob: jobId => request(
+    `/admin/knowledge/generation-jobs/${encodeURIComponent(jobId)}`
+  ),
+  retryKnowledgeGenerationJob: jobId => request(
+    `/admin/knowledge/generation-jobs/${encodeURIComponent(jobId)}/retry`,
+    { method: 'POST', data: {} }
+  ),
+  previewAdminKnowledge: payload => request('/admin/knowledge/preview', {
+    method: 'POST', data: payload
+  })
 };

@@ -1,12 +1,13 @@
 const api = require('../../utils/api.js');
 
 const dimensionsFrom = score => [
-  { key: 'empathy', name: '同理心', score: score.empathy || 0, color: '#667eea' },
-  { key: 'knowledgeAccuracy', name: '知识准确性', score: score.knowledgeAccuracy || 0, color: '#52a67a' },
-  { key: 'needsDiscovery', name: '需求挖掘', score: score.needsDiscovery || 0, color: '#f0a34b' },
-  { key: 'serviceEtiquette', name: '服务礼仪', score: score.serviceEtiquette || 0, color: '#6b9de8' },
-  { key: 'medicalCompliance', name: '医疗合规', score: score.medicalCompliance || 0, color: '#8b75c9' }
-];
+  { key: 'empathy', name: '同理心', value: score.empathy, color: '#667eea' },
+  { key: 'knowledgeAccuracy', name: '知识准确性', value: score.knowledgeAccuracy, color: '#52a67a' },
+  { key: 'needsDiscovery', name: '需求挖掘', value: score.needsDiscovery, color: '#f0a34b' },
+  { key: 'serviceEtiquette', name: '服务礼仪', value: score.serviceEtiquette, color: '#6b9de8' },
+  { key: 'medicalCompliance', name: '医疗合规', value: score.medicalCompliance, color: '#8b75c9' }
+].filter(item => item.value !== null && item.value !== undefined && Number.isFinite(Number(item.value)))
+  .map(item => Object.assign({}, item, { score: Number(item.value) }));
 
 Page({
   data: {
@@ -52,7 +53,9 @@ Page({
     request.then(data => {
       if (requestVersion !== this.historyRequestVersion || requestedMode !== this.data.historyMode) return;
       const sessions = data.items.map(item => Object.assign({}, item, {
-        statusText: item.status === 'in_progress' ? '进行中' : item.status === 'completed' ? '已完成' : '已放弃',
+        statusText: item.status === 'in_progress' ? '进行中' : item.status === 'abandoned' ? '已放弃'
+          : item.evaluationStatus === 'generating' ? '报告生成中' : item.evaluationStatus === 'failed' ? '报告失败'
+            : item.totalScore === null ? '知识依据不足' : '已完成',
         statusClass: item.status,
         actionText: item.status === 'in_progress'
           ? (isRoleplay ? '继续模拟' : '继续训练')

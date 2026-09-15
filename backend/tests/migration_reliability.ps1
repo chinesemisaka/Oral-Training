@@ -46,6 +46,7 @@ try {
   Invoke-Psql $emptySchema (Join-Path $migrations '007_training_experience.sql') ''
   Invoke-Psql $emptySchema (Join-Path $migrations '008_supervisor_growth.sql') ''
   Invoke-Psql $emptySchema (Join-Path $migrations '009_legacy_report_totals.sql') ''
+  Invoke-Psql $emptySchema (Join-Path $migrations '010_knowledge_catalog.sql') ''
   Invoke-Psql $emptySchema '' @'
 DO $$ BEGIN
   IF to_regclass('message_repair_archive') IS NULL OR to_regclass('ai_jobs') IS NULL OR
@@ -53,7 +54,11 @@ DO $$ BEGIN
      to_regclass('message_pair_repair_audit') IS NULL OR
      to_regclass('generation_state_repair_archive') IS NULL OR
      to_regclass('learner_mistake_progress') IS NULL OR to_regclass('session_hints') IS NULL OR
-     to_regclass('learner_checkins') IS NULL OR to_regclass('learner_phrase_favorites') IS NULL THEN
+     to_regclass('learner_checkins') IS NULL OR to_regclass('learner_phrase_favorites') IS NULL OR
+     to_regclass('clinic_services') IS NULL OR to_regclass('service_revisions') IS NULL OR
+     to_regclass('knowledge_entries') IS NULL OR to_regclass('knowledge_revisions') IS NULL OR
+     to_regclass('knowledge_chunks') IS NULL OR to_regclass('knowledge_admin_jobs') IS NULL OR
+     to_regclass('knowledge_audit_events') IS NULL THEN
     RAISE EXCEPTION 'empty database migration did not create required tables';
   END IF;
 END $$;
@@ -65,6 +70,7 @@ END $$;
   Invoke-Psql $historySchema (Join-Path $migrations '006_learner_insights.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '007_training_experience.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '008_supervisor_growth.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '010_knowledge_catalog.sql') ''
   Invoke-Psql $historySchema '' @'
 INSERT INTO learner_mistake_progress(user_id, session_id, mistake_key, mastered_at)
 VALUES ('demo-user-001', 'test-max-rounds', 'fixture-mistake', NOW());
@@ -165,6 +171,7 @@ END $$;
   Invoke-Psql $historySchema (Join-Path $migrations '006_learner_insights.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '007_training_experience.sql') ''
   Invoke-Psql $historySchema (Join-Path $migrations '008_supervisor_growth.sql') ''
+  Invoke-Psql $historySchema (Join-Path $migrations '010_knowledge_catalog.sql') ''
   Invoke-Psql $historySchema '' @'
 DO $$ BEGIN
   IF NOT EXISTS (

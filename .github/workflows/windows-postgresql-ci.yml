@@ -61,6 +61,9 @@ jobs:
         shell: pwsh
         run: |
           & .\backend\tests\migration_reliability.ps1 -DatabaseUrl $env:DATABASE_URL -PsqlPath $env:PSQL_PATH
+          & .\backend\tests\knowledge_catalog_migration.ps1 -DatabaseUrl $env:DATABASE_URL -PsqlPath $env:PSQL_PATH
+          & .\backend\tests\knowledge_store_database.ps1 -DatabaseUrl $env:DATABASE_URL -PsqlPath $env:PSQL_PATH
+          & .\backend\tests\knowledge_admin_api.ps1 -DatabaseUrl $env:DATABASE_URL -PsqlPath $env:PSQL_PATH
 
       - name: Run no-model API, state-machine and session-concurrency tests
         shell: pwsh
@@ -75,7 +78,9 @@ jobs:
             '006_learner_insights.sql',
             '007_training_experience.sql',
             '008_supervisor_growth.sql',
-            '009_legacy_report_totals.sql'
+            '009_legacy_report_totals.sql',
+            '010_knowledge_catalog.sql',
+            '011_roleplay_rag_mvp.sql'
           )
           foreach ($migration in $migrationFiles) {
             & $env:PSQL_PATH --dbname=$env:DATABASE_URL -v ON_ERROR_STOP=1 -X -f ".\backend\migrations\$migration"

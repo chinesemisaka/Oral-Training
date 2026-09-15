@@ -11,7 +11,10 @@
     "pages/mine/mine",
     "pages/phrases/phrases",
     "pages/mistakes/mistakes",
-    "pages/profile/profile"
+    "pages/profile/profile",
+    "pages/knowledge-admin/knowledge-admin",
+    "pages/service-editor/service-editor",
+    "pages/knowledge-editor/knowledge-editor"
   ],
   "window": {
     "navigationBarBackgroundColor": "#667eea",

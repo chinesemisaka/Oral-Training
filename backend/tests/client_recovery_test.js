@@ -5,6 +5,7 @@ const {
   DEFAULT_REQUEST_TIMEOUT,
   MODEL_REQUEST_TIMEOUT
 } = require('../../utils/request-policy.js');
+const { formatScore } = require('../../utils/api.js');
 
 assert.strictEqual(resultStateAction('ready', 'completed'), 'ready');
 assert.strictEqual(resultStateAction('failed', 'completed'), 'failed');
@@ -16,6 +17,10 @@ assert.strictEqual(resultStateAction('unknown', 'completed'), 'poll');
 assert.strictEqual(DEFAULT_REQUEST_TIMEOUT, 30000);
 assert.strictEqual(MODEL_REQUEST_TIMEOUT, 120000);
 assert.ok(MODEL_REQUEST_TIMEOUT > DEFAULT_REQUEST_TIMEOUT);
+assert.strictEqual(formatScore(null), '暂无评分');
+assert.strictEqual(formatScore(undefined), '暂无评分');
+assert.strictEqual(formatScore(''), '暂无评分');
+assert.strictEqual(formatScore(70.04), 70);
 
 const loadPage = relativePath => {
   let definition = null;
@@ -57,10 +62,12 @@ for (const [pagePath, expectedUrl] of missingSessionCases) {
 
 const verifyRequestTimeouts = async () => {
   const observedTimeouts = [];
+  const observedHeaders = [];
   global.wx = {
     getStorageSync: () => 'test-token',
     request: options => {
       observedTimeouts.push(options.timeout);
+      observedHeaders.push(options.header);
       const healthRequest = options.url.endsWith('/health');
       options.success({
         statusCode: healthRequest ? 503 : 200,
@@ -74,12 +81,21 @@ const verifyRequestTimeouts = async () => {
   await api.getScenarios();
   await api.sendMessage('session-1', 'message-1', '测试消息');
   await api.sendRoleplayMessage('session-2', 'message-2', '测试问题');
+  await api.publishAdminService('service-1', 2, 'publish-idempotency-1');
+  await api.createKnowledgeGenerationJob({
+    kind: 'service_draft', draftId: 'draft-1', brief: '', count: 1,
+    idempotencyKey: 'generation-idempotency-1'
+  });
   assert.deepStrictEqual(observedTimeouts, [
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_REQUEST_TIMEOUT,
     MODEL_REQUEST_TIMEOUT,
-    MODEL_REQUEST_TIMEOUT
+    MODEL_REQUEST_TIMEOUT,
+    DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_REQUEST_TIMEOUT
   ]);
+  assert.strictEqual(observedHeaders[4]['Idempotency-Key'], 'publish-idempotency-1');
+  assert.strictEqual(observedHeaders[5]['Idempotency-Key'], 'generation-idempotency-1');
 
   let evaluationPolls = 0;
   let evaluationRepairs = 0;
@@ -124,6 +140,29 @@ const verifyRequestTimeouts = async () => {
   assert.strictEqual(summaryPolls, 2);
 };
 
+const verifyKnowledgeEditors = () => {
+  global.wx = {};
+  const servicePage = instantiatePage(loadPage('pages/service-editor/service-editor.js'));
+  servicePage.data.form.name = '模拟服务';
+  const servicePayload = servicePage.buildPayload();
+  assert.strictEqual(servicePayload.dataOrigin, 'synthetic');
+  assert.deepStrictEqual(servicePayload.price, { status: 'unknown', reason: '尚未录入' });
+  assert.strictEqual(servicePayload.appointment.status, 'unknown');
+  servicePage.pollTimer = setTimeout(() => {}, 10000);
+  servicePage.onHide();
+  assert.strictEqual(servicePage.pollTimer, null);
+
+  const knowledgePage = instantiatePage(loadPage('pages/knowledge-editor/knowledge-editor.js'));
+  const metadata = knowledgePage.metadata();
+  assert.strictEqual(metadata.origin, 'synthetic');
+  assert.strictEqual(metadata.verification, 'unverified');
+  assert.strictEqual(metadata.trainingScope, 'demo');
+  assert.strictEqual(metadata.sourceUrl, null);
+  knowledgePage.pollTimer = setTimeout(() => {}, 10000);
+  knowledgePage.onUnload();
+  assert.strictEqual(knowledgePage.pollTimer, null);
+};
+
 const verifyHistorySummaryRefresh = async () => {
   const api = require('../../utils/api.js');
   for (const status of ['generating', 'failed', 'not_started']) {
@@ -152,7 +191,7 @@ const verifyHistorySummaryRefresh = async () => {
   }
 };
 
-verifyRequestTimeouts().then(verifyHistorySummaryRefresh).then(() => {
+verifyRequestTimeouts().then(verifyHistorySummaryRefresh).then(verifyKnowledgeEditors).then(() => {
   console.log('client recovery tests passed');
 }).catch(error => {
   console.error(error);

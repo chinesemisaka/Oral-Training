@@ -10,11 +10,12 @@
     <view class="stats-grid">
       <view class="stat-card card"><text class="stat-value">{{profile.overall.totalCompleted}}</text><text class="stat-label">完成训练</text></view>
       <view class="stat-card card"><text class="stat-value">{{profile.overall.averageScore}}</text><text class="stat-label">平均得分</text></view>
-      <view class="stat-card card"><text class="stat-value {{profile.overall.scoreDelta > 0 ? 'positive' : ''}}">{{profile.overall.scoreDelta > 0 ? '+' : ''}}{{profile.overall.scoreDelta}}</text><text class="stat-label">首末变化</text></view>
+      <view class="stat-card card"><text class="stat-value {{profile.overall.scoreDeltaPositive ? 'positive' : ''}}">{{profile.overall.scoreDeltaLabel}}</text><text class="stat-label">首末变化</text></view>
     </view>
 
-    <view class="section-heading"><view><text class="section-title">能力画像</text><text class="section-caption">五维得分取已完成报告的平均值</text></view></view>
-    <view class="dimension-card card">
+    <view class="section-heading"><view><text class="section-title">能力画像</text><text class="section-caption">各维度仅统计具备该项评分的报告</text></view></view>
+    <view class="empty-card card" wx:if="{{dimensions.length === 0}}"><text>暂无具备评分的能力维度。</text></view>
+    <view class="dimension-card card" wx:else>
       <view class="dimension-row" wx:for="{{dimensions}}" wx:key="key">
         <view class="dimension-head"><text>{{item.name}}</text><text style="color: {{item.color}};">{{item.score}}</text></view>
         <view class="score-bar"><view class="score-fill" style="width: {{item.score}}%; background: {{item.color}};"></view></view>

@@ -567,4 +567,89 @@ docs/rag-development-plan.md 的第 1—4 节、对应任务与最近交接记�
 - 下一任务与接手必读：
 ~~~
 
+### R00 — 基线复核、契约冻结与可测试接口
+
+- 状态：已验收（R00 不含数据库变更；现有数据库测试因未配置测试库记为 Skipped）
+- 基线与提交：`codex/RAG@8f9d643`；工作区原有未跟踪目录 `tmp/` 保持不动；尚未提交
+- 前置任务证据：无；设计基线 `3174405` 之后仅合入 RAG 设计/计划文档，生产 RAG 功能仍未实现
+- 实际修改文件：`backend/src/rag_types.h`、`backend/src/model_gateway.h`、`backend/src/main.cpp`、`backend/tests/rag_contract_test.cpp`、`backend/CMakeLists.txt`、`docs/api.md`、本文
+- API/schema 变化：仅在 `docs/api.md` 附录登记待实现 RAG v2 契约；冻结 `contextVersion=2`、`schemaVersion=2`、DTO 枚举、提示词版本、错误码和幂等摘要结构；未注册新路由、未写 v2 数据
+- 迁移与配置：确认最新迁移为 `009_legacy_report_totals.sql`，后续从 `010` 开始；本任务无迁移、无新运行配置
+- 注入点：新增 `IModelGateway`，`Service` 默认仍构造原 `ModelGateway`，测试可注入 fake；四类现有模型方法、请求参数、Prompt、解析和底层重试未改
+- 实际测试（2026-09-14）：MSVC Release 构建通过；CTest 6 项中 5 Passed、`database_feature` 因未配置测试数据库 Skipped；新增 `rag_contract` Passed；`static_checks.ps1` Passed（19 个 JS、40 个 JSON）；`git diff --check` 通过；本机 `psql` 18.4
+- 已知限制：R01 前仍不支持 v2/null 报告读取；`reliable_store.h` 的任务类型二选一分发须在 R09 改成显式枚举；CI PostgreSQL 14 兼容性需在迁移实现时验证
+- 下一可执行任务：R01 报告读取、null 展示与聚合兼容；验收后才能生产任何 v2 报告
+
+### R01 — 报告读取、null 展示与聚合兼容
+
+- 状态：已验收
+- 基线与提交：承接 R00 工作区；尚未提交
+- 前置任务证据：R00 DTO、模型注入接口、契约测试及待实现 API 附录均已通过 MSVC/CTest
+- 实际修改文件：`backend/src/main.cpp`、`backend/src/reliable_store.h`、`backend/tests/report_validation_test.cpp`、`backend/tests/database_feature_test.cpp`、`backend/tests/client_recovery_test.js`、`utils/api.js`、`pages/result`、`pages/report`、`pages/profile`、`pages/admin`、`pages/mine`、`docs/api.md`、本文
+- API/schema 变化：报告读取按 `schemaVersion` 分流；聚合增加 `scoredSessions/unscoredSessions` 或 `scoredCount/unscoredCount`；无已评分样本时平均分、达标率及无样本维度返回 JSON null
+- 兼容行为：缺省版本仍按 v1 修复；v2 `insufficient_evidence` 的合法 null 总分保持 ready、同步 SQL NULL，重复读取不入队；R01 不生产 v2 报告
+- 统计行为：总分平均、达标率、最佳分、趋势仅使用非空总分；维度均值使用各维度自己的非空样本数；完成次数保留全部 ready 报告
+- 页面行为：null 显示“暂无评分”或“知识依据不足”，不补算 v2 综合分，不画缺失维度的零分点，不从空分生成薄弱项
+- 实际测试（2026-09-15）：MSVC Release 构建通过；CTest 5 Passed、0 Failed、默认环境下 `database_feature` Skipped；使用 `backend/.env` 中经测试程序安全校验为 test/ci 范围的数据库单独运行 `database_feature_test.exe` Passed；混合 80/null/60 均分 70、2 已评分/1 未评分、逐维非空均值及重复读取不入队均已覆盖；静态检查和 `git diff --check` 通过
+- 已知限制：R12 前不会写入 v2 报告；微信开发者工具的视觉验收留在 R13，总分/达标率新字段需保持文档兼容
+- 下一可执行任务：R02 目录与不可变版本存储
+
+### R02 — 目录与不可变版本存储
+
+- 状态：已验收
+- 基线与提交：承接 R00—R01 工作区；尚未提交
+- 前置任务证据：R00 的 DTO/模型注入契约与 R01 的 v2/null 读取链路均已通过 MSVC/CTest
+- 实际修改文件：`backend/migrations/010_knowledge_catalog.sql`、`backend/src/knowledge_store.h`、`backend/src/knowledge_store.cpp`、`backend/tests/knowledge_store_test.cpp`、`backend/tests/knowledge_store_database_test.cpp`、`backend/tests/knowledge_catalog_migration.ps1`、`backend/tests/knowledge_store_database.ps1`、`backend/tests/migration_reliability.ps1`、`backend/CMakeLists.txt`、Windows PostgreSQL CI、本文
+- API / DTO / 数据库变化：新增服务、服务草稿/不可变版本/场景关联、知识条目、知识草稿/不可变版本/检索块、管理生成任务、发布幂等请求和审计事件表；新增 `KnowledgeStore`，支持 admin 作用域下的创建、乐观保存、幂等发布、归档和版本读取
+- 数据约束：金额使用整数分，价格范围、单位/条件、有效期、时长、预约与 unknown 均由服务端校验；synthetic 内容只能是 unverified，不能伪造来源或 reviewed；公开投影移除内部字段并由结构化价格字段渲染说明
+- 事务与审计：发布对服务/草稿主行加锁，在同一事务中追加 revision、切换 current pointer、更新场景关联、登记幂等结果并写审计；发布失败整体回滚；已发布 revision 由数据库触发器禁止更新或删除
+- 实际测试（2026-09-15）：MSVC Release 构建通过；CTest 7 项中 6 Passed、默认 `database_feature` Skipped；`knowledge_store` Passed；在名称含 test/ci 且每次创建一次性 schema 的 PostgreSQL 18 环境中，`knowledge_catalog_migration.ps1` 和 `knowledge_store_database.ps1` Passed；覆盖空库、历史库、迁移重跑、并发保存一个成功一个 409、learner 403、同键发布重放/异参冲突、外键失败不产生半版本、revision 不可变、归档保留历史与审计
+- 已知限制：完整 `migration_reliability.ps1` 在本机 PostgreSQL 18 的既有 005 历史 fixture 上触发 `generation_state_repair_archive.source_row` 非空约束，失败点早于 010 且未修改已发布迁移；010 已由独立空库/历史/重跑脚本验证，CI PostgreSQL 14 仍作为最终兼容入口
+- 下一可执行任务：R03 管理 API 与可靠模拟草稿生成；R05/R07 完成前 preview 按计划保持关闭，不能用无证据模型回答代替
+
+### R03 — 管理 API 与可靠模拟草稿生成
+
+- 状态：阶段 2 主体已验收；按本任务完成条件，可信 preview 仍须在 R05/R07 后补齐，R03 最终状态保持进行中
+- 基线与提交：承接 R00—R02 工作区；尚未提交
+- 前置任务证据：R02 的 010 迁移、不可变 revision、乐观草稿保存、幂等发布及一次性 schema 数据库测试均已通过
+- 实际修改文件：`backend/src/main.cpp`、`backend/src/model_gateway.h`、`backend/src/knowledge_admin_queue.h/.cpp`、`backend/migrations/010_knowledge_catalog.sql`、`backend/tests/knowledge_store_database_test.cpp`、`backend/tests/knowledge_admin_api.ps1`、`backend/CMakeLists.txt`、`.github/workflows/windows-postgresql-ci.yml`、`backend/.env.example`、`backend/README.md`、`README.md`、`docs/api.md`、本文
+- API 变化：实现设计 §10.2 的服务、知识、版本、发布、归档和生成任务端点；发布和生成创建接受 `Idempotency-Key`；preview 已注册但在 R05/R07 前明确返回 `409 PREVIEW_NOT_AVAILABLE`，没有用自由模型问答冒充预览
+- 生成可靠性：使用独立 `knowledge_admin_jobs` 队列和独立 Worker，并记录 `base_draft_version/generation/attempt_token/prompt_version/model_version/result_applied`；支持 claim、租约续期、过期重领、自动重试、dead 与显式新 generation；人工保存会清除 draft 的 generation 归属，旧结果只保留为候选而不覆盖
+- 模型边界：新增 `service-draft-v1` 与 `knowledge-draft-v1` 草稿方法，复用唯一 DeepSeek 网关和既有底层请求/解析重试器；只允许 schema 合法的 `synthetic/unverified/demo` 候选，虚假 source title/URL/locator、manual origin 或 reviewed/verified 均被服务端拒绝；模型不能直接发布
+- 配置：新增 `KNOWLEDGE_WORKER_CONCURRENCY`，默认 1、限制 1—2；连接池下限改为两个 Worker 池并发之和加 2；健康检查增加知识 Worker、待处理/失败任务及数据库退避状态
+- 实际测试（2026-09-15）：MSVC Release 构建 Passed；CTest 6 Passed、默认数据库测试 Skipped；一次性 schema 的 `knowledge_store_database.ps1` Passed，覆盖任务幂等、旧生成不覆盖人工编辑、失败可见、重试刷新最新输入、租约失效 attempt 不可写及新 attempt 重领；`knowledge_admin_api.ps1` Passed，覆盖 learner 403、服务 CRUD、旧草稿 409、发布重放、知识发布、生成 202/轮询及 preview 明确关闭
+- 未覆盖风险：依照计划未运行真实模型；空响应、截断与非法候选由相同校验/重试路径覆盖但真实输出质量留到 R14 受控联调；R05/R07 前不能完成可信 preview
+- 下一可执行任务：R05 中文切块、索引和确定性检索；R07 后回补 preview 并将 R03 标记为最终已验收
+
+### R04 — 知识管理页面组
+
+- 状态：阶段 2 主体已验收；可信 preview 与微信开发者工具视觉验收未完成，R04 最终状态保持进行中
+- 基线与提交：承接 R00—R03 工作区；尚未提交
+- 实际修改文件：`pages/knowledge-admin/*`、`pages/service-editor/*`、`pages/knowledge-editor/*`、`pages/admin/admin.js/.wxml/.wxss`、`pages/mine/mine.js/.wxml/.wxss`、`app.json`、`utils/api.js`、`backend/tests/client_recovery_test.js`、本文
+- 页面行为：管理首页提供服务、知识和最近生成任务三分区；管理员可从“我的”或主管看板进入；普通用户无入口且后端仍逐接口 403；服务表单分开价格、包含/不含、单次时长、全程周期、复诊间隔和预约说明，所有未知值均显式填写原因
+- 并发与恢复：保存携带 `draftVersion`；409 时保留当前输入并由管理员选择是否重新加载；生成任务显示排队/执行/等待重试/完成/失败，hide/unload 停止轮询，重入根据 draft 的 `generationId` 恢复；旧候选未应用时给出明确提示
+- 发布与历史：发布前确认 synthetic 标识、价格单位/条件/有效期或知识适用范围；版本列表只读并展示 hash/正文摘要；归档说明不会删除历史；preview 按后端显式提示尚不可用
+- 实际测试（2026-09-15）：`static_checks.ps1` Passed（22 个 JS、43 个 JSON）；`client_recovery_test.js` 覆盖管理 API 幂等请求头、unknown 不被转成零值、固定 synthetic/unverified/demo 元数据及页面退出停止轮询；`git diff --check` Passed；真实 HTTP 管理闭环由 `knowledge_admin_api.ps1` Passed
+- 未覆盖风险：当前机器未安装微信开发者工具，未执行模拟器/真机视觉与交互验收；真实模型生成按钮未做受控联调；R05/R07 前 preview 只显示明确不可用信息
+- 下一可执行任务：R05；完成 R07 后回补并验收 preview，再在 R13 使用微信开发者工具覆盖生成 → 编辑 → 预览 → 发布 → 版本对照 → 归档完整流程
+
 首次开发从 R00 开始；不需要重新询问已在设计中确认的单诊所、模拟资料、DeepSeek、会话画像和知识核验边界。
+
+### R05 — 确定性检索与中文索引（MVP 主体）
+
+- 状态：MVP 主体已实现；正式 Recall@6 固定集评测留到 R13
+- 实际修改文件：`backend/src/rag_retriever.h/.cpp`、`backend/src/knowledge_store.cpp`、`backend/tests/rag_retriever_test.cpp`、`backend/tests/knowledge_admin_api.ps1`、管理端知识预览页面、`docs/api.md`
+- 已实现：Unicode/全角规整、中文双字片段、固定同义词、稳定 ASCII 词项、450 字切块与 60 字重叠；知识发布在同一事务写 `knowledge_chunks/search_vector`；查询先锁定 revision manifest，再按 scope/service/topic 过滤并稳定取前 6；价格、包含项目、单次/全程时长、复诊和预约走服务 revision 精确字段路径
+- 预览：管理端可输入问题，对指定已保存草稿版本执行临时检索并展示命中原文，不调用自由模型、不污染正式索引
+- 验证（2026-09-15）：MSVC Release 构建 Passed；`rag_retriever_test` Passed；知识数据库测试 Passed，发布路径成功写检索块；PostgreSQL 18 空库 001—011 迁移 Passed；CTest 7 Passed、1 数据库特性测试因默认无 URL Skipped；`git diff --check` Passed
+- 未覆盖：尚未准备 80 条人工标注召回集，未宣称 Recall@6 ≥90%；未运行真实模型
+
+### R06—R08、R10 — 角色互换最小 RAG 闭环
+
+- 状态：最小 MVP 已实现；各任务的完整验收项仍在后续阶段继续
+- 数据库/API：新增 `011_roleplay_rag_mvp.sql`，角色互换会话保存 service/revision/clientSessionId/contextVersion；`training_contexts` 固定知识 manifest；`rag_traces` 与消息 citations/answerStatus 原子公开；新增 `GET /services` 和本人 evidence 读取
+- 对话：v2 会话每轮使用锁定 service revision 和 manifest 检索；DeepSeek 只选择 evidenceId，价格、时长、项目范围和未知字段由服务端渲染；旧无 serviceId 会话继续 v1 契约
+- 页面：患者模拟先选已发布服务，仅展示兼容场景；标准客服消息可展开本轮依据；服务摘要保留版本与正确的价格单位/起价条件
+- 最小冒烟（2026-09-15）：隔离 PostgreSQL 18 + 本地后端验证服务发布后学员可选、`3980 元起/颗` 未丢失限定词、创建会话返回 `contextVersion=2` 并锁定正确 service revision、同 `clientSessionId` 重放返回原会话
+- 未覆盖：本机未配置 DeepSeek Key，未做真实模型消息；角色互换 summary 尚未复用 evidence；客服训练的 AI 患者初始化、评分 v2 和两模式完整上线仍分别属于 R09、R11—R12；微信开发者工具视觉验收未运行
+- 下一步：用受控 DeepSeek Key 做 1 次角色互换消息联调；随后按最短产品路径实现 R09 患者初始化，再补 R11—R12 知识核验评分

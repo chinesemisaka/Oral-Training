@@ -25,7 +25,10 @@ Page({
     visibleCategories: [],
     activeCategoryId: '',
     expandedId: '',
-    trainingMode: 'customer_service'
+    trainingMode: 'customer_service',
+    services: [],
+    selectedServiceId: '',
+    selectedService: null
   },
 
   onShow() { this.loadScenarios(); },
@@ -35,10 +38,25 @@ Page({
     const requestVersion = this.scenarioRequestVersion;
     const requestedMode = this.data.trainingMode;
     const isRoleplay = requestedMode === 'patient_simulation';
-    const request = isRoleplay ? api.getRoleplayScenarios() : api.getScenarios();
-    request.then(data => {
+    const serviceRequest = isRoleplay ? api.getServices() : Promise.resolve({ items: [] });
+    serviceRequest.then(serviceData => {
+      if (requestVersion !== this.scenarioRequestVersion || requestedMode !== this.data.trainingMode) return null;
+      const services = serviceData.items || [];
+      const selectedService = services.find(item => item.id === this.data.selectedServiceId) || services[0] || null;
+      if (isRoleplay) this.setData({
+        services,
+        selectedServiceId: selectedService ? selectedService.id : '',
+        selectedService
+      });
+      return isRoleplay ? api.getRoleplayScenarios(selectedService ? selectedService.id : '') : api.getScenarios();
+    }).then(data => {
+      if (!data) return;
       if (requestVersion !== this.scenarioRequestVersion || requestedMode !== this.data.trainingMode) return;
-      const scenarios = data.items.map(item => Object.assign({}, item, {
+      const compatibleIds = isRoleplay && this.data.selectedService
+        ? this.data.selectedService.scenarioIds || [] : [];
+      const sourceItems = isRoleplay && this.data.selectedService
+        ? data.items.filter(item => compatibleIds.includes(item.id)) : data.items;
+      const scenarios = sourceItems.map(item => Object.assign({}, item, {
         category: inferCategory(item),
         difficulty: item.difficulty === 'advanced' ? '进阶' : '基础',
         patientAge: `${item.patientProfile.age}岁`,
@@ -59,6 +77,15 @@ Page({
       if (requestVersion !== this.scenarioRequestVersion || requestedMode !== this.data.trainingMode) return;
       wx.showToast({ title: error.message || '场景加载失败', icon: 'none' });
     });
+  },
+
+  onServiceChange(e) {
+    const selectedService = this.data.services[Number(e.detail.value)] || null;
+    this.setData({
+      selectedServiceId: selectedService ? selectedService.id : '',
+      selectedService,
+      scenarios: [], categories: [], visibleCategories: [], expandedId: ''
+    }, () => this.loadScenarios());
   },
 
   switchMode(e) {
@@ -106,7 +133,13 @@ Page({
       this.goRoleplay(scenario.activeSession.id, prompt);
       return;
     }
-    api.createRoleplaySession(scenario.id).then(data => this.goRoleplay(data.session.id, prompt))
+    if (!this.data.selectedServiceId) {
+      wx.showToast({ title: '请先选择已发布服务', icon: 'none' });
+      return;
+    }
+    const clientSessionId = `roleplay-session-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    api.createRoleplaySession(scenario.id, this.data.selectedServiceId, clientSessionId)
+      .then(data => this.goRoleplay(data.session.id, prompt))
       .catch(error => wx.showToast({ title: error.message, icon: 'none' }));
   },
 
@@ -122,7 +155,7 @@ Page({
         const scenario = this.data.scenarios.find(item => item.id === id);
         if (!scenario || !scenario.activeSession) return;
         const request = isRoleplay
-          ? api.restartRoleplaySession(scenario.activeSession.id)
+          ? api.restartRoleplaySession(scenario.activeSession.id, `roleplay-restart-${Date.now()}-${Math.floor(Math.random() * 100000)}`)
           : api.restartSession(scenario.activeSession.id);
         request.then(data => {
           if (isRoleplay) this.goRoleplay(data.session.id, '');
