@@ -53,3 +53,6 @@
 .leave-link { padding: 12rpx 8rpx 0; color: var(--text-secondary); font-size: 22rpx; }
 .finish-button { width: 300rpx; height: 64rpx; line-height: 64rpx; padding: 0; border: 1rpx solid var(--color-border); border-radius: 32rpx; color: var(--color-primary); background: var(--color-primary-light); font-size: 26rpx; text-align: center; font-weight: 600; }
 .finish-button.is-disabled { color: var(--text-muted); border-color: var(--color-border); background: var(--color-bg); }
+
+/* ── 从 master 并入：下列选择器的类名在 app.wxss 与本页 wxss 里都不存在，追加不会覆盖任何既有规则 ──*/
+.evidence-link { display: block; margin-top: 10rpx; color: #526bc2; font-size: 21rpx; }

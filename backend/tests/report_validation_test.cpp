@@ -61,15 +61,41 @@ int main() {
       "knowledgeAccuracy", "medicalCompliance", "empathy", "needsDiscovery", "serviceEtiquette",
   };
   json dimension_totals = json::object();
-  for (const auto& key : dimension_keys) dimension_totals[key] = 0.0;
-  accumulateDimensionScores(dimension_totals,
+  json dimension_counts = json::object();
+  for (const auto& key : dimension_keys) {
+    dimension_totals[key] = 0.0;
+    dimension_counts[key] = 0;
+  }
+  accumulateDimensionScores(dimension_totals, dimension_counts,
                             {{"dimensionScores", {{"knowledgeAccuracy", 80}, {"medicalCompliance", 90},
                                                    {"empathy", 75}, {"needsDiscovery", 70},
                                                    {"serviceEtiquette", 85}}}},
                             dimension_keys);
+  accumulateDimensionScores(dimension_totals, dimension_counts,
+                            {{"schemaVersion", 2},
+                             {"dimensionScores", {{"knowledgeAccuracy", nullptr},
+                                                   {"medicalCompliance", 70}}}},
+                            dimension_keys);
+  const auto dimension_averages = dimensionAverages(
+      dimension_totals, dimension_counts, dimension_keys);
   if (dimension_totals["knowledgeAccuracy"].get<double>() != 80.0 ||
-      dimension_totals["medicalCompliance"].get<double>() != 90.0) {
-    std::cerr << "dimension scores were not accumulated numerically\n";
+      dimension_totals["medicalCompliance"].get<double>() != 160.0 ||
+      dimension_counts["knowledgeAccuracy"].get<int>() != 1 ||
+      dimension_counts["medicalCompliance"].get<int>() != 2 ||
+      dimension_averages["knowledgeAccuracy"] != 80.0 ||
+      dimension_averages["medicalCompliance"] != 80.0 ||
+      !dimension_averages["serviceEtiquette"].is_number()) {
+    std::cerr << "nullable dimension scores were not averaged per dimension\n";
+    return 1;
+  }
+  const json unscored_v2 = {
+      {"schemaVersion", 2}, {"totalScore", nullptr}, {"passed", nullptr},
+      {"knowledgeAssessment", {{"status", "insufficient_evidence"}}},
+  };
+  if (!isV2InsufficientEvidenceReport(unscored_v2) ||
+      reportSchemaVersion(unscored_v2) != 2 || reportSchemaVersion(json::object()) != 1 ||
+      isV2InsufficientEvidenceReport({{"schemaVersion", 2}, {"totalScore", nullptr}})) {
+    std::cerr << "v2 insufficient-evidence report detection failed\n";
     return 1;
   }
 
@@ -162,6 +188,91 @@ int main() {
     return 1;
   }
 
+  if (normalized["recommendedPhrases"].size() != 1 ||
+      normalized["recommendedPhrases"][0]["patientSays"] != messages[0]["content"] ||
+      normalized["recommendedPhrases"][0]["csReply"] !=
+          normalized["roundComments"][0]["recommendedRewrite"]) {
+    std::cerr << "report-derived phrase insight was not grounded correctly\n";
+    return 1;
+  }
+  if (normalized["learningMistakes"].size() != 1 ||
+      normalized["learningMistakes"][0]["kind"] != "improvement" ||
+      normalized["learningMistakes"][0]["originalQuote"] != messages[1]["content"]) {
+    std::cerr << "report-derived learning mistake was not created correctly\n";
+    return 1;
+  }
+
+  const auto expect_invalid_report = [](const json& report, const json& history) {
+    try {
+      (void)normalizeReport(report, history);
+      return false;
+    } catch (const ApiError& error) {
+      return error.code == "MODEL_INVALID_RESPONSE" ||
+             error.code == "MODEL_SCORE_INVALID";
+    }
+  };
+  auto missing_dimension_report = safe_report;
+  missing_dimension_report["dimensionScores"].erase("empathy");
+  auto invalid_dimension_report = safe_report;
+  invalid_dimension_report["dimensionScores"]["empathy"] = "75";
+  auto missing_array_report = safe_report;
+  missing_array_report.erase("improvements");
+  auto missing_summary_report = safe_report;
+  missing_summary_report.erase("summary");
+  auto empty_strengths_report = safe_report;
+  empty_strengths_report["strengths"] = json::array();
+  auto missing_violations_report = safe_report;
+  missing_violations_report.erase("violations");
+  auto invalid_strength_round = safe_report;
+  invalid_strength_round["strengths"][0]["round"] = 2;
+  auto invalid_improvement_round = safe_report;
+  invalid_improvement_round["improvements"][0]["round"] = 2;
+  const json two_round_messages = json::array({
+      messages[0], messages[1],
+      {{"role", "patient"}, {"content", "那我下一步怎么做？"}, {"round", 1}},
+      {{"role", "user"}, {"content", "我可以先协助安排医生面诊。"}, {"round", 2}},
+  });
+  if (!expect_invalid_report(missing_dimension_report, messages) ||
+      !expect_invalid_report(invalid_dimension_report, messages) ||
+      !expect_invalid_report(missing_array_report, messages) ||
+      !expect_invalid_report(missing_summary_report, messages) ||
+      !expect_invalid_report(empty_strengths_report, messages) ||
+      !expect_invalid_report(missing_violations_report, messages) ||
+      !expect_invalid_report(invalid_strength_round, messages) ||
+      !expect_invalid_report(invalid_improvement_round, messages) ||
+      !expect_invalid_report(safe_report, two_round_messages)) {
+    std::cerr << "incomplete report schema or invalid round reference was accepted\n";
+    return 1;
+  }
+
+  std::atomic<int> heartbeat_renewals{0};
+  {
+    LeaseHeartbeat heartbeat(
+        [&heartbeat_renewals] {
+          heartbeat_renewals.fetch_add(1);
+          return true;
+        },
+        std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  if (heartbeat_renewals.load() < 2) {
+    std::cerr << "job lease heartbeat did not renew repeatedly\n";
+    return 1;
+  }
+  std::atomic<int> lost_renewals{0};
+  LeaseHeartbeat lost_heartbeat(
+      [&lost_renewals] {
+        lost_renewals.fetch_add(1);
+        return false;
+      },
+      std::chrono::milliseconds(10));
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  lost_heartbeat.stop();
+  if (!lost_heartbeat.leaseLost() || lost_renewals.load() != 1) {
+    std::cerr << "job lease heartbeat did not stop after ownership loss\n";
+    return 1;
+  }
+
   auto capped_deduction_report = safe_report;
   capped_deduction_report["dimensionScores"]["medicalCompliance"] = 60;
   capped_deduction_report["violations"] = json::array({
@@ -187,6 +298,26 @@ int main() {
   } catch (const ApiError& error) {
     if (error.code != "MODEL_SCORE_INCONSISTENT") throw;
   }
+
+  auto cumulative_deduction_report = safe_report;
+  cumulative_deduction_report["dimensionScores"]["medicalCompliance"] = 61;
+  cumulative_deduction_report["violations"] = json::array({
+      {{"round", 1}, {"originalQuote", "是否需要拔牙"}, {"type", "边界表达不充分"},
+       {"reason", "需要明确说明诊疗判断边界。"}, {"deduction", 15},
+       {"recommendedRewrite", "是否需要拔牙，要由医生结合检查结果评估。"}},
+      {{"round", 1}, {"originalQuote", "医生结合检查结果评估"}, {"type", "沟通信息不完整"},
+       {"reason", "还应说明可协助安排面诊。"}, {"deduction", 15},
+       {"recommendedRewrite", "是否需要拔牙，要由医生结合检查结果评估。"}},
+  });
+  try {
+    (void)normalizeReport(cumulative_deduction_report, messages);
+    std::cerr << "inconsistent cumulative violation score was accepted\n";
+    return 1;
+  } catch (const ApiError& error) {
+    if (error.code != "MODEL_SCORE_INCONSISTENT") throw;
+  }
+  cumulative_deduction_report["dimensionScores"]["medicalCompliance"] = 60;
+  (void)normalizeReport(cumulative_deduction_report, messages);
 
   auto unsafe_report = safe_report;
   unsafe_report["roundComments"][0]["recommendedRewrite"] = "一般需要1-2年，费用2-5万元。";

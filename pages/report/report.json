@@ -4,6 +4,7 @@
   "navigationBarTextStyle": "black",
   "enablePullDownRefresh": false,
   "usingComponents": {
-    "empty-state": "/components/empty-state/empty-state"
+    "empty-state": "/components/empty-state/empty-state",
+    "radar-chart": "/components/radar-chart/radar-chart"
   }
 }

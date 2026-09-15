@@ -113,7 +113,7 @@ AI_WORKER_CONCURRENCY=1
 
 ## 6. 初始化数据库（执行迁移）
 
-在 `backend/` 目录下，按顺序执行全部迁移。当前已到 `012`：
+在 `backend/` 目录下，按顺序执行全部迁移。当前已到 `019`：
 
 ```powershell
 $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
@@ -123,14 +123,21 @@ $env:PGCLIENTENCODING='UTF8'
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\002_roleplay.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\003_reliability.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\004_identity.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\005_learner_insights.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\006_training_experience.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\007_supervisor_growth.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\008_custom_patient_profile.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\009_recommendation_scenario.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\010_training_plans.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\011_supervisor_team.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\012_message_emotion.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\005_pair_and_state_repair.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\006_learner_insights.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\007_training_experience.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\008_supervisor_growth.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\009_legacy_report_totals.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\010_knowledge_catalog.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\011_roleplay_rag_mvp.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\012_custom_patient_profile.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\013_recommendation_scenario.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\014_training_plans.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\015_supervisor_team.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\016_message_emotion.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\017_hint_per_round.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\018_scenario_reaction_rules.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\019_roleplay_free_template.sql
 ```
 
 说明：

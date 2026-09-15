@@ -102,6 +102,30 @@
     </view>
   </view>
 
+  <!-- 服务维度（master 可选接入）：仅患者模拟模式、且后端返回非空服务列表时展示，
+       RAG 开关默认关闭 / 返回空列表时 services 为空，整段不渲染，界面与现在完全一致 -->
+  <block wx:if="{{trainingMode === 'patient_simulation' && services.length > 0 && !scenariosFailed}}">
+    <view class="service-picker card">
+      <text class="service-picker-label">本次模拟服务</text>
+      <picker range="{{services}}" range-key="name" bindchange="onServiceChange">
+        <view class="service-picker-value">{{selectedService ? selectedService.name : '请选择服务'}} ›</view>
+      </picker>
+      <text class="service-picker-meta" wx:if="{{selectedService}}">{{selectedService.priceDisplay}} · 版本 v{{selectedService.version}}</text>
+    </view>
+    <view>
+      <view class="scenario-card card" wx:for="{{roleplayScenarios}}" wx:key="id">
+        <text class="scenario-name">{{item.name}}</text>
+        <text class="scenario-summary">{{item.patientConcern}}</text>
+        <view class="score-row" wx:if="{{item.hasBestScore}}">
+          <text class="best-score">历史最佳：{{item.bestScoreText}}分</text>
+        </view>
+        <view class="scenario-actions">
+          <button class="primary-button scenario-button" bindtap="openTraining" data-id="{{item.id}}" data-mode="{{item.activeSession ? 'continue' : 'new'}}">{{item.actionText}}</button>
+        </view>
+      </view>
+    </view>
+  </block>
+
   <!-- ═══════════════════════════════════════ -->
   <!-- 客服训练模式：4 张可折叠分类卡 -->
   <!-- ═══════════════════════════════════════ -->
@@ -140,7 +164,7 @@
           <!-- 分数行 + 画像状态 -->
           <view class="score-row">
             <text class="pass-score">及格分：{{scenario.passScore || 60}}分</text>
-            <text class="best-score" wx:if="{{scenario.bestScore !== null && scenario.bestScore !== undefined}}">历史最佳：{{scenario.bestScore}}分</text>
+            <text class="best-score" wx:if="{{scenario.hasBestScore}}">历史最佳：{{scenario.bestScoreText}}分</text>
             <text class="profile-tag" wx:elif="{{!scenario.hasProfile}}">新场景</text>
           </view>
 

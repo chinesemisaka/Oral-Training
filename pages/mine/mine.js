@@ -70,9 +70,7 @@ Page({
       const user = api.getCurrentUser();
       const displayName = savedNickname || (user && user.displayName) || '主管';
       const memberCount = (memberData.members || []).length;
-      const avgScore = typeof dashboard.averageScore === 'number'
-        ? (Math.round(dashboard.averageScore * 10) / 10).toFixed(1)
-        : dashboard.averageScore || 0;
+      const avgScore = api.formatScore(dashboard.averageScore);
       this.setData({
         displayName,
         /* WXML 不能对数据路径调用函数（依赖追踪失效且不报错），头像首字在这里预算 */
@@ -143,8 +141,15 @@ Page({
       const streakDays = data.checkin.streakDays;
       let streakText = data.checkin.checkedToday ? '今天已打卡' : '今天还没打卡';
       if (streakDays > 0) streakText += ` · 已连续 ${streakDays} 天`;
+      /* 平均得分走单一来源 api.formatScore，不再自持取整逻辑 */
+      const mine = Object.assign({}, data, {
+        stats: Object.assign({}, data.stats, {
+          averageScore: api.formatScore(data.stats.averageScore),
+          passRateLabel: data.stats.passRate === null ? '暂无评分' : `${data.stats.passRate}%`
+        })
+      });
       this.setData({
-        mine: data,
+        mine,
         displayName,
         /* WXML 不能对数据路径调用函数，头像首字在这里预算 */
         avatarText: String(displayName || '').trim().slice(0, 1),

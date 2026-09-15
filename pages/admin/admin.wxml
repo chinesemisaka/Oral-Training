@@ -14,6 +14,15 @@
       </view>
     </view>
 
+    <!-- 知识与服务管理入口（master 独有，页面已注册在 app.json） -->
+    <view class="knowledge-entry card" bindtap="goKnowledgeAdmin">
+      <view>
+        <text>知识与服务管理</text>
+        <text>维护模拟服务、专业知识、发布版本与生成任务</text>
+      </view>
+      <text>›</text>
+    </view>
+
     <!-- 四个模块分段导航，与文档 3.2 一一对应 -->
     <view class="module-tabs">
       <view class="module-tab {{activeTab === item.id ? 'selected' : ''}}" wx:for="{{moduleTabs}}" wx:key="id" bindtap="switchModule" data-id="{{item.id}}">{{item.name}}</view>
@@ -62,11 +71,11 @@
               <text class="scene-weak-tag" wx:if="{{item.weak}}">需重点训练</text>
             </view>
             <view class="scene-stat-meta">
-              <text>平均 {{item.averageScoreText}} 分</text>
+              <text>平均 {{item.averageScoreText}}</text>
               <text class="scene-sep">·</text>
               <text>{{item.total}} 次</text>
               <text class="scene-sep">·</text>
-              <text class="{{item.passRate >= 60 ? 'pass-ok' : 'pass-warn'}}">达标 {{item.passRateText}}%</text>
+              <text class="{{item.passRate >= 60 ? 'pass-ok' : 'pass-warn'}}">达标 {{item.passRateText}}</text>
             </view>
           </view>
           <view class="scene-bar scene-bar-pass"><view class="scene-fill" style="width:{{item.passRate}}%;"></view></view>

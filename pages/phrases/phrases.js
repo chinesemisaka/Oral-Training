@@ -50,6 +50,8 @@ Page({
   },
 
   loadPhrases() {
+    this.phraseRequestVersion = (this.phraseRequestVersion || 0) + 1;
+    const requestVersion = this.phraseRequestVersion;
     this.setData({ loading: true });
     api.getLearningPhrases({
       search: this.data.keyword.trim(),
@@ -57,6 +59,7 @@ Page({
       favoritesOnly: this.data.favoritesOnly,
       limit: 50
     }).then(data => {
+      if (requestVersion !== this.phraseRequestVersion) return;
       const sceneCategories = data.sceneCategories || this.data.sceneCategories;
       this.setData({
         phrases: data.items || [],
@@ -65,6 +68,7 @@ Page({
         loading: false
       });
     }).catch(error => {
+      if (requestVersion !== this.phraseRequestVersion) return;
       this.setData({ loading: false });
       wx.showToast({ title: error.message || '话术加载失败', icon: 'none' });
     });

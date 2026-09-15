@@ -49,11 +49,26 @@ global.getCurrentPages = () => [];
 
 const apiPath = path.join(root, 'utils', 'api.js');
 
+/* 桩只负责「数据接口」；页面同时会用到的纯格式化工具（formatScore）直接取真实实现，
+   避免页面合法使用真实导出时被桩判成假失败。必须在任何桩写入 require.cache 之前取值。 */
+const PURE_API = (() => {
+  try { return require(apiPath); } catch (error) {
+    console.error('WARN: 无法 require 真实 utils/api.js：' + error.message);
+    return {};
+  }
+})();
+const pureDefaults = () => {
+  const base = {};
+  if (typeof PURE_API.formatScore === 'function') base.formatScore = PURE_API.formatScore;
+  return base;
+};
+
 /* 把 utils/api.js 换成桩再加载页面：页面里的 require 会命中这个缓存条目 */
 const loadPage = (relativePath, apiStub) => {
   delete require.cache[apiPath];
   require.cache[apiPath] = {
-    id: apiPath, filename: apiPath, loaded: true, exports: apiStub, children: [], paths: []
+    id: apiPath, filename: apiPath, loaded: true,
+    exports: Object.assign(pureDefaults(), apiStub), children: [], paths: []
   };
   const pagePath = path.join(root, relativePath);
   delete require.cache[pagePath];

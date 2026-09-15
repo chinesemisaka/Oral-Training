@@ -42,3 +42,24 @@
 .history-skeleton { margin-bottom: 18rpx; }
 .sk-row { height: 130rpx; margin-bottom: 18rpx; border-radius: 20rpx; background: linear-gradient(90deg, var(--color-primary-light) 25%, #E3E8FF 50%, var(--color-primary-light) 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.6s infinite; }
 @keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ── 从 master 并入：下列选择器的类名在 app.wxss 与本页 wxss 里都不存在，追加不会覆盖任何既有规则 ──*/
+.scenario-filter-scroll { margin: 14rpx -18rpx 0; white-space: nowrap; }
+.scenario-filter-row { display: inline-flex; gap: 10rpx; padding: 0 18rpx; }
+.history-mode-label { display: block; margin-top: 5rpx; color: #8d96bc; font-size: 19rpx; }
+.history-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 22rpx; }
+.history-links { display: flex; flex-direction: column; gap: 8rpx; }
+.conversation-link { color: #667eea; font-size: 22rpx; }
+.evaluation-link { color: #7584bd; font-size: 21rpx; }
+.conversation { padding: 18rpx 0 2rpx; margin-top: 20rpx; border-top: 1rpx solid #f0f0f3; }
+.conversation-role { color: #aaa; font-size: 19rpx; }
+.conversation-text { max-width: 88%; padding: 13rpx 16rpx; margin-top: 5rpx; border-radius: 12rpx; color: #555; background: #f6f6f8; font-size: 23rpx; line-height: 1.5; }
+.history-learning { max-width: 88%; padding: 10rpx 14rpx; margin-top: 6rpx; border-radius: 10rpx; color: #55716e; background: #eff9f7; font-size: 20rpx; line-height: 1.45; }
+.history-boundary { padding-top: 7rpx; margin-top: 7rpx; border-top: 1rpx solid #d7ebe7; color: #896c47; }
+.inline-evaluation { padding: 18rpx 0 2rpx; margin-top: 18rpx; border-top: 1rpx solid #eceef5; }
+.inline-loading { display: block; padding: 14rpx 0; color: #9298ad; font-size: 22rpx; text-align: center; }
+.inline-summary { display: block; padding: 0 10rpx; color: #556078; font-size: 23rpx; line-height: 1.6; }
+.inline-feedback { display: flex; gap: 14rpx; margin-top: 16rpx; }
+.inline-feedback view { flex: 1; padding: 14rpx; border-radius: 12rpx; background: #f8f9fd; }
+.inline-feedback text { display: block; margin-top: 6rpx; color: #778098; font-size: 20rpx; line-height: 1.45; }
+.inline-feedback .inline-label { margin-top: 0; font-size: 21rpx; font-weight: 700; }

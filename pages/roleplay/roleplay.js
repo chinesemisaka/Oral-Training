@@ -33,14 +33,26 @@ Page({
 
   onLoad(options) {
     this.sessionId = options.sessionId || '';
+    if (!this.sessionId) {
+      this.handleMissingSession();
+      return;
+    }
     this.initialPrompt = options.prompt ? decodeURIComponent(options.prompt) : '';
     const isFreeMode = !!this.initialPrompt;
     this.setData({ isFreeMode, freeDescription: this.initialPrompt });
     this.loadSession();
   },
 
+  handleMissingSession() {
+    wx.showModal({
+      title: '无法打开患者模拟',
+      content: '页面链接缺少会话信息，请从场景列表重新进入。',
+      showCancel: false,
+      success: () => wx.switchTab({ url: '/pages/index/index' })
+    });
+  },
+
   loadSession() {
-    if (!this.sessionId) return;
     Promise.all([api.getRoleplaySession(this.sessionId), api.getRoleplayScenarios()]).then(([detail, scenarioData]) => {
       if (detail.session.status === 'completed') {
         wx.redirectTo({ url: `/pages/roleplay-result/roleplay-result?sessionId=${this.sessionId}` });
@@ -95,6 +107,24 @@ Page({
   useSuggestion(e) {
     if (this.data.sending || this.data.finishing) return;
     this.setData({ inputValue: e.currentTarget.dataset.prompt || '' });
+  },
+
+  viewEvidence(e) {
+    const traceId = e.currentTarget.dataset.trace;
+    if (!traceId) return;
+    api.getRoleplayEvidence(this.sessionId, traceId).then(result => {
+      const evidence = result.evidence || {};
+      const facts = (evidence.facts || []).map(item => `• ${item.displayText}`);
+      const passages = (evidence.passages || []).map(item =>
+        `• ${item.title}：${item.body}`);
+      const missing = (evidence.missingFields || []).length
+        ? [`• 未提供字段：${evidence.missingFields.join('、')}`] : [];
+      wx.showModal({
+        title: '本轮回答依据',
+        content: facts.concat(passages, missing).join('\n') || '本轮没有命中可引用资料。',
+        showCancel: false
+      });
+    }).catch(error => wx.showToast({ title: error.message || '依据读取失败', icon: 'none' }));
   },
 
   sendMessage(e) {

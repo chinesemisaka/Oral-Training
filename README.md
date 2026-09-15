@@ -4,7 +4,7 @@
 
 > 仅用于开发测试。请勿提交真实密钥到仓库，也不要在演示数据中输入真实患者隐私信息。
 
----
+当前版本已具备可靠消息幂等、可恢复 AI Worker、微信登录、单机构 `learner/admin` 权限、用户数据隔离、服务/知识管理，以及角色互换模式的服务选择、会话版本快照、中文检索和回答依据展示。积分只有每日签到来源；多机构租户、排行榜、兑换和团队任务运营不在本轮范围内。
 
 ## 1. 运行架构
 
@@ -45,6 +45,8 @@ Crow API  ──▶  DeepSeek（模拟患者 / 评分）
 2. 确认安装目录，例如 `C:\Program Files\PostgreSQL\18\`。
 3. 安装完成后，把 `C:\Program Files\PostgreSQL\18\bin` 加入系统 `PATH`（或在使用时用绝对路径调用 `psql.exe`）。
 
+先备份历史数据库，并只读执行 `backend/migrations/preflight_reliability.sql` 记录重复轮次和异常状态。按顺序执行全部迁移；迁移过程不会调用模型。执行 `005` 至 `019` 期间必须保持后端停止，全部迁移完成后再启动。`010` 增加服务与知识目录，`011` 增加角色互换 RAG 会话快照、证据 trace 与引用字段。
+
 ### 3.2 创建数据库与用户
 
 打开 PowerShell，使用 PostgreSQL 超级用户（通常是 `postgres`）执行：
@@ -58,6 +60,27 @@ CREATE USER oral_training_app WITH PASSWORD 'your_db_password';
 CREATE DATABASE oral_training OWNER oral_training_app ENCODING 'UTF8';
 GRANT ALL PRIVILEGES ON DATABASE oral_training TO oral_training_app;
 \q
+
+$psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\001_initial.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\002_roleplay.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\003_reliability.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\004_identity.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\005_pair_and_state_repair.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\006_learner_insights.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\007_training_experience.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\008_supervisor_growth.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\009_legacy_report_totals.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\010_knowledge_catalog.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\011_roleplay_rag_mvp.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\012_custom_patient_profile.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\013_recommendation_scenario.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\014_training_plans.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\015_supervisor_team.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\016_message_emotion.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\017_hint_per_round.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\018_scenario_reaction_rules.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\019_roleplay_free_template.sql
 ```
 
 > 生产或共享环境请使用更安全的密码；本地测试可用 `oral_training_pass`。请不要把真实密码提交到仓库。
@@ -105,7 +128,35 @@ ALLOWED_ORIGIN=*
 REQUIRE_HTTPS=false
 RATE_LIMIT_PER_MINUTE=120
 AI_WORKER_CONCURRENCY=1
+KNOWLEDGE_WORKER_CONCURRENCY=1
+DATABASE_POOL_SIZE=12
+DATABASE_POOL_WAIT_MS=3000
 ```
+
+普通 API 请求超时保持 30 秒；两类逐轮模型消息接口单独使用 120 秒超时，以覆盖后端两次模型尝试。若请求仍中断，页面会按原 `clientMessageId` 查询并保留输入，不会重复计轮。报告或复盘收到 `not_started` 时会根据会话状态恢复任务、返回未完成会话或回到历史记录；页面链接缺少 `sessionId` 时会明确提示并安全导航。
+
+主管账号由受控的数据库运维流程把已验证用户设为 `admin`；小程序不提供任何自助提权入口。测试库保留了带 `Test` 前缀的主管和学员样本，便于查看主管聚合看板。
+
+## 生产最小配置
+
+```dotenv
+PRODUCTION=true
+AUTH_MODE=wechat
+WECHAT_APP_ID=<appid>
+WECHAT_APP_SECRET=<secret>
+ALLOW_RUNTIME_API_KEY=false
+ALLOWED_ORIGIN=https://your-gateway.example
+REQUIRE_HTTPS=true
+TRUSTED_PROXY_IPS=127.0.0.1,::1
+AI_WORKER_CONCURRENCY=1
+KNOWLEDGE_WORKER_CONCURRENCY=1
+DATABASE_POOL_SIZE=12
+DATABASE_POOL_WAIT_MS=3000
+```
+
+后端应放在 HTTPS 反向代理之后。`TRUSTED_PROXY_IPS` 必须填写实际连接后端的代理 IP；只有这些地址提供的 `X-Forwarded-For` 和 `X-Forwarded-Proto` 会被信任。代理应覆盖 `X-Forwarded-Proto`，并正确追加或覆盖 `X-Forwarded-For`。生产配置缺失、布尔值/整数拼写错误、使用 demo 登录或关闭 HTTPS 时，程序会拒绝启动。不要把数据库、模型密钥、微信密钥或 bearer token 写进前端或仓库。
+
+API、身份服务、报告 Worker 和独立的知识草稿 Worker 共享惰性数据库连接池。连接总数受 `DATABASE_POOL_SIZE` 限制；等待超过 `DATABASE_POOL_WAIT_MS` 的请求返回 HTTP 503 `DATABASE_BUSY`。连接池大小必须至少比两个 Worker 池的并发数之和多 2，避免后台任务占满 API 所需连接。
 
 > 没有 DeepSeek Key 时也可以先启动并做大部分界面测试，但「开始训练/生成报告/患者模拟」这类依赖模型的功能需要有效 Key。
 
@@ -113,7 +164,7 @@ AI_WORKER_CONCURRENCY=1
 
 ## 6. 初始化数据库（执行迁移）
 
-在 `backend/` 目录下，按顺序执行全部迁移。当前已到 `012`：
+在 `backend/` 目录下，按顺序执行全部迁移。当前已到 `019`：
 
 ```powershell
 $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
@@ -123,14 +174,21 @@ $env:PGCLIENTENCODING='UTF8'
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\002_roleplay.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\003_reliability.sql
 & $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\004_identity.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\005_learner_insights.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\006_training_experience.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\007_supervisor_growth.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\008_custom_patient_profile.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\009_recommendation_scenario.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\010_training_plans.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\011_supervisor_team.sql
-& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\012_message_emotion.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\005_pair_and_state_repair.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\006_learner_insights.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\007_training_experience.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\008_supervisor_growth.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\009_legacy_report_totals.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\010_knowledge_catalog.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\011_roleplay_rag_mvp.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\012_custom_patient_profile.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\013_recommendation_scenario.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\014_training_plans.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\015_supervisor_team.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\016_message_emotion.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\017_hint_per_round.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\018_scenario_reaction_rules.sql
+& $psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f migrations\019_roleplay_free_template.sql
 ```
 
 说明：
@@ -244,6 +302,24 @@ cmake --build build-msvc --config Release
 ctest --test-dir build-msvc -C Release --output-on-failure
 .\tests\static_checks.ps1
 .\tests\smoke.ps1            # 无模型 API 烟测
+
+# 迁移链路与并发回归（要求一次性测试库，库名须含 test 或 ci）
+.\tests\migration_reliability.ps1 -DatabaseUrl 'postgresql://.../oral_training_test'
+.\tests\session_concurrency.ps1  -DatabaseUrl 'postgresql://.../oral_training_test'
+.\tests\concurrency.ps1          -DatabaseUrl 'postgresql://.../oral_training_test'
+```
+
+在已迁移的测试库中，可额外验证训练提示、签到幂等、话术收藏、主管聚合看板与成员摘要：
+
+```powershell
+$env:ORAL_TRAINING_TEST_DATABASE_URL = 'postgresql://.../oral_training_test'
+& '.\backend\build-msvc\Release\database_feature_test.exe'
+```
+
+所有离线和无模型检查通过后，只运行一次受控真实模型烟测：
+
+```powershell
+.\tests\smoke.ps1 -WithModel
 ```
 
 > 迁移/并发测试要求一次性测试库（库名须含 `test` 或 `ci`），不要对正式 `oral_training` 库直接运行，以免清理数据。

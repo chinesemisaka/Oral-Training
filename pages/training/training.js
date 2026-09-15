@@ -86,7 +86,12 @@ Page({
 
   onLoad(options) {
     this.sessionId = options.sessionId || '';
-    // 读取本地存储的自定义画像
+    // master：缺 sessionId 直接弹窗回场景列表，而不是让后续请求炸在 getSession 上
+    if (!this.sessionId) {
+      this.handleMissingSession();
+      return;
+    }
+    // 读取本地存储的自定义画像（兜底，后端持久化为准）
     let customProfile = null;
     try {
       const stored = wx.getStorageSync(`customProfile_${this.sessionId}`);
@@ -112,8 +117,16 @@ Page({
     if (this.pendingPollTimer) clearTimeout(this.pendingPollTimer);
   },
 
+  handleMissingSession() {
+    wx.showModal({
+      title: '无法打开训练',
+      content: '页面链接缺少会话信息，请从场景列表重新进入。',
+      showCancel: false,
+      success: () => wx.switchTab({ url: '/pages/index/index' })
+    });
+  },
+
   loadSession() {
-    if (!this.sessionId) return;
     Promise.all([api.getSession(this.sessionId), api.getScenarios()]).then(([detail, scenarioData]) => {
       const scenario = scenarioData.items.find(item => item.id === detail.session.scenarioId);
       if (!scenario) throw new Error('训练场景不存在');
@@ -374,6 +387,11 @@ Page({
         });
       }
     });
+  },
+
+  /* master：发送/生成中禁止返回，避免会话状态半开。 */
+  leaveTraining() {
+    if (!this.data.sending && !this.data.finishing) wx.navigateBack();
   },
 
   scrollToBottom() { this.setData({ scrollToView: 'message-bottom' }); }

@@ -231,3 +231,10 @@
 .learner-scene-head { justify-content: space-between; gap: 14rpx; }
 .learner-scene-head > text:first-child { flex-shrink: 0; }
 .scene-fill-learner { background: var(--color-primary); }
+
+/* ── 从 master 并入：下列选择器的类名在 app.wxss 与本页 wxss 里都不存在，追加不会覆盖任何既有规则 ──*/
+.knowledge-entry { display: flex; align-items: center; justify-content: space-between; margin: 18rpx 0 24rpx; padding: 24rpx; color: #5966b3; }
+.knowledge-entry view text { display: block; }
+.knowledge-entry view text:first-child { font-size: 28rpx; font-weight: 700; }
+.knowledge-entry view text:last-child { margin-top: 8rpx; color: #8b91a8; font-size: 21rpx; }
+.knowledge-entry > text { font-size: 38rpx; }

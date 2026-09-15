@@ -153,3 +153,8 @@
 .scenario-actions { display: flex; flex-direction: column; align-items: stretch; margin-top: 22rpx; }
 .scenario-button { width: 100%; height: 76rpx; line-height: 1.2; font-size: 26rpx; }
 .restart-link { align-self: center; margin-top: 16rpx; color: var(--text-secondary); font-size: 22rpx; line-height: 1.5; text-align: center; }
+
+/* ── 从 master 并入：下列选择器的类名在 app.wxss 与本页 wxss 里都不存在，追加不会覆盖任何既有规则 ──*/
+.service-picker { margin: 18rpx 0; padding: 22rpx; }
+.service-picker-label,.service-picker-meta { display: block; color: #858ca0; font-size: 21rpx; }
+.service-picker-value { margin: 10rpx 0; color: #414a61; font-size: 28rpx; font-weight: 700; }

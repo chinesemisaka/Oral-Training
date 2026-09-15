@@ -58,6 +58,7 @@ Page({
       const mistakePercent = mistakes.total > 0
         ? Math.round((mistakes.mastered / mistakes.total) * 100)
         : 0;
+      // data.overall.scoreDelta 由后端下发，原样透传给 wxml（首末变化数值）
       this.setData({
         profile: data,
         dimensions,
@@ -78,5 +79,5 @@ Page({
 
   goTraining() { wx.switchTab({ url: '/pages/index/index' }); },
 
-  goHistory() { wx.navigateTo({ url: '/pages/report/report' }); }
+  goHistory() { wx.switchTab({ url: '/pages/report/report' }); }
 });

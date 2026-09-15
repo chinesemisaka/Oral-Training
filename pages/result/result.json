@@ -2,5 +2,7 @@
   "navigationBarTitleText": "训练结果",
   "navigationBarBackgroundColor": "#FFFFFF",
   "navigationBarTextStyle": "black",
-  "usingComponents": {}
+  "usingComponents": {
+    "radar-chart": "/components/radar-chart/radar-chart"
+  }
 }

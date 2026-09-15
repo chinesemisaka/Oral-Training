@@ -18,7 +18,10 @@ FetchContent_Declare(
   GIT_TAG asio-1-30-2
   GIT_SHALLOW TRUE
 )
-FetchContent_MakeAvailable(asio)
+FetchContent_GetProperties(asio)
+if(NOT asio_POPULATED)
+  FetchContent_Populate(asio)
+endif()
 set(ASIO_INCLUDE_DIR "${asio_SOURCE_DIR}/asio/include" CACHE PATH "Standalone Asio headers" FORCE)
 FetchContent_Declare(
   crow
@@ -40,14 +43,29 @@ FetchContent_Declare(
 )
 
 # The Windows development setup installs libpq with PostgreSQL 18.
-set(PostgreSQL_ROOT "D:/PostgreSQL" CACHE PATH "PostgreSQL installation root")
+set(PostgreSQL_ROOT "C:/Program Files/PostgreSQL/18" CACHE PATH "PostgreSQL installation root")
 find_package(PostgreSQL REQUIRED)
 
 FetchContent_MakeAvailable(crow nlohmann_json libpqxx)
 
-add_executable(oral_training_backend src/main.cpp)
+add_executable(oral_training_backend
+  src/main.cpp
+  src/knowledge_store.cpp
+  src/knowledge_admin_queue.cpp
+  src/rag_retriever.cpp
+)
 add_executable(report_validation_test tests/report_validation_test.cpp)
+add_executable(security_config_test tests/security_config_test.cpp)
 add_executable(database_feature_test tests/database_feature_test.cpp)
+add_executable(rag_contract_test tests/rag_contract_test.cpp)
+add_executable(rag_retriever_test tests/rag_retriever_test.cpp src/rag_retriever.cpp)
+add_executable(knowledge_store_test tests/knowledge_store_test.cpp src/knowledge_store.cpp src/rag_retriever.cpp)
+add_executable(knowledge_store_database_test
+  tests/knowledge_store_database_test.cpp
+  src/knowledge_store.cpp
+  src/knowledge_admin_queue.cpp
+  src/rag_retriever.cpp
+)
 
 set(ORAL_TRAINING_LIBRARIES
   Crow::Crow
@@ -61,16 +79,30 @@ set(ORAL_TRAINING_LIBRARIES
 
 target_link_libraries(oral_training_backend PRIVATE ${ORAL_TRAINING_LIBRARIES})
 target_link_libraries(report_validation_test PRIVATE ${ORAL_TRAINING_LIBRARIES})
+target_link_libraries(security_config_test PRIVATE ${ORAL_TRAINING_LIBRARIES})
 target_link_libraries(database_feature_test PRIVATE ${ORAL_TRAINING_LIBRARIES})
+target_link_libraries(rag_contract_test PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(rag_retriever_test PRIVATE ${ORAL_TRAINING_LIBRARIES})
+target_link_libraries(knowledge_store_test PRIVATE ${ORAL_TRAINING_LIBRARIES})
+target_link_libraries(knowledge_store_database_test PRIVATE ${ORAL_TRAINING_LIBRARIES})
 
 target_compile_definitions(oral_training_backend PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_definitions(report_validation_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(security_config_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_definitions(database_feature_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(rag_contract_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(knowledge_store_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(knowledge_store_database_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 enable_testing()
 add_test(NAME report_validation COMMAND report_validation_test)
+add_test(NAME security_config COMMAND security_config_test)
+add_test(NAME client_recovery COMMAND node ${CMAKE_CURRENT_SOURCE_DIR}/tests/client_recovery_test.js)
 add_test(NAME database_feature COMMAND database_feature_test)
 set_tests_properties(database_feature PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME rag_contract COMMAND rag_contract_test)
+add_test(NAME rag_retriever COMMAND rag_retriever_test)
+add_test(NAME knowledge_store COMMAND knowledge_store_test)
 add_test(
   NAME client_static_checks
   COMMAND powershell -NoProfile -ExecutionPolicy Bypass
@@ -80,8 +112,18 @@ add_test(
 if(MSVC)
   target_compile_options(oral_training_backend PRIVATE /utf-8)
   target_compile_options(report_validation_test PRIVATE /utf-8)
+  target_compile_options(security_config_test PRIVATE /utf-8)
   target_compile_options(database_feature_test PRIVATE /utf-8)
+  target_compile_options(rag_contract_test PRIVATE /utf-8)
+  target_compile_options(rag_retriever_test PRIVATE /utf-8)
+  target_compile_options(knowledge_store_test PRIVATE /utf-8)
+  target_compile_options(knowledge_store_database_test PRIVATE /utf-8)
   target_compile_definitions(oral_training_backend PRIVATE _WIN32_WINNT=0x0A00)
   target_compile_definitions(report_validation_test PRIVATE _WIN32_WINNT=0x0A00)
+  target_compile_definitions(security_config_test PRIVATE _WIN32_WINNT=0x0A00)
   target_compile_definitions(database_feature_test PRIVATE _WIN32_WINNT=0x0A00)
+  target_compile_definitions(rag_contract_test PRIVATE _WIN32_WINNT=0x0A00)
+  target_compile_definitions(rag_retriever_test PRIVATE _WIN32_WINNT=0x0A00)
+  target_compile_definitions(knowledge_store_test PRIVATE _WIN32_WINNT=0x0A00)
+  target_compile_definitions(knowledge_store_database_test PRIVATE _WIN32_WINNT=0x0A00)
 endif()

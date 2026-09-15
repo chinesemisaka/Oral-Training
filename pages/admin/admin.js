@@ -2,7 +2,6 @@ const api = require('../../utils/api.js');
 const datetime = require('../../utils/datetime.js');
 /* 数值格式化与主管端派生（辅导判定 / 等级 / 原因文案）都走单一来源，
    本页不再自持副本——否则首页工作台与这里会给出不一致的结论。 */
-const { fmt1 } = require('../../utils/plan.js');
 const {
   SEVERITY_TEXT,
   COACHING_IDLE_DAYS,
@@ -34,16 +33,19 @@ const coachingSuggestions = dashboard => {
   if (weakest && weakest.score < 70) {
     suggestions.push({
       title: `优先关注：${weakest.name}`,
-      text: `团队均值为 ${fmt1(weakest.score)} 分。建议安排围绕该能力的短场景复练，并在复盘中关注具体表达。`,
+      text: `团队均值为 ${api.formatScore(weakest.score)} 分。建议安排围绕该能力的短场景复练，并在复盘中关注具体表达。`,
       severity: weakest.score < 60 ? 'high' : 'medium'
     });
   }
-  const weakScene = (dashboard.scenarioStats || []).filter(item => item.total > 0)
+  /* 只在场景「确实有已评分会话」时才参与比较：passRate 为 null 表示该场景
+     还没有任何已评分报告，拿它参与比较会把「未评分」误判成「通过率最低」。 */
+  const weakScene = (dashboard.scenarioStats || [])
+    .filter(item => item.total > 0 && item.passRate !== null && item.passRate !== undefined)
     .reduce((current, item) => !current || item.passRate < current.passRate ? item : current, null);
   if (weakScene && weakScene.passRate < 70) {
     suggestions.push({
       title: `重点场景：${weakScene.scenarioName}`,
-      text: `该场景完成 ${weakScene.total} 次，通过率 ${fmt1(weakScene.passRate)}%。可优先组织该场景的针对性练习。`,
+      text: `该场景完成 ${weakScene.total} 次，通过率 ${api.formatScore(weakScene.passRate)}%。可优先组织该场景的针对性练习。`,
       severity: weakScene.passRate < 50 ? 'high' : 'medium'
     });
   }
@@ -66,7 +68,7 @@ const MEDALS = { 1: '①', 2: '②', 3: '③' };
 const normalizeLeaderboard = (entries, unit) => (entries || []).map(item => Object.assign({}, item, {
   rankText: MEDALS[item.rank] || String(item.rank),
   top: item.rank <= 3,
-  scoreText: `${fmt1(item.score)}${unit || ''}`
+  scoreText: `${api.formatScore(item.score)}${unit || ''}`
 }));
 
 /* 成员列表派生：搜索 → 筛选 → 排序，全部在前端完成（接口无这些参数，数据量 < 100） */
@@ -177,6 +179,11 @@ Page({
     this.loadPage();
   },
 
+  /* 知识与服务管理后台入口（master 独有，页面已注册在 app.json） */
+  goKnowledgeAdmin() {
+    wx.navigateTo({ url: '/pages/knowledge-admin/knowledge-admin' });
+  },
+
   loadPage() {
     this.setData({ loading: true });
     api.ensureAuthenticated().then(() => {
@@ -197,12 +204,19 @@ Page({
   },
 
   loadSupervisor() {
+    /* 请求版本号防竞态：连续切时间维度 / 反复进出页面时，
+       旧响应若晚回不得覆盖新数据（master 的口径，移植到本页骨架）。 */
+    this.supervisorRequestVersion = (this.supervisorRequestVersion || 0) + 1;
+    const requestVersion = this.supervisorRequestVersion;
+    const requestedRange = this.data.timeRange;
     Promise.all([
-      api.getSupervisorDashboard({ range: this.data.timeRange }),
+      api.getSupervisorDashboard({ range: requestedRange }),
       api.getSupervisorMembers({ limit: 100 })
     ]).then(([supervisor, memberData]) => {
+      if (requestVersion !== this.supervisorRequestVersion || requestedRange !== this.data.timeRange) return;
       this.applySupervisor(supervisor, memberData);
     }).catch(error => {
+      if (requestVersion !== this.supervisorRequestVersion || requestedRange !== this.data.timeRange) return;
       this.setData({ loading: false, supervisorFailed: true });
       wx.showToast({ title: error.message || '主管数据加载失败', icon: 'none' });
     });
@@ -220,15 +234,19 @@ Page({
     const dimensionAverages = DIMENSIONS.map(item => {
       const value = Number((supervisor.dimensionAverages || {})[item.key] || 0);
       const tier = scoreTier(value);
-      return Object.assign({}, item, { value, valueText: fmt1(value), tier });
+      return Object.assign({}, item, { value, valueText: api.formatScore(value), tier });
     });
     const maxSceneTotal = Math.max(1, ...(supervisor.scenarioStats || []).map(item => item.total));
+    /* 场景可能「有已完成会话但一条都没评分」：此时后端给 null，
+       展示层必须区分「暂无评分」和「0 分」，否则会把未评分场景标成需重点训练。 */
+    const scored = value => value !== null && value !== undefined;
     const scenarioStats = (supervisor.scenarioStats || []).map(item => Object.assign({}, item, {
-      barWidth: Math.max(0, Math.min(100, item.passRate)),
+      barWidth: Math.max(0, Math.min(100, Number(item.passRate) || 0)),
       totalWidth: Math.max(4, item.total / maxSceneTotal * 100),
-      averageScoreText: fmt1(item.averageScore),
-      passRateText: fmt1(item.passRate),
-      weak: Number(item.passRate) < 60
+      averageScoreText: scored(item.averageScore)
+        ? `${api.formatScore(item.averageScore)} 分` : '暂无评分',
+      passRateText: scored(item.passRate) ? `${api.formatScore(item.passRate)}%` : '暂无',
+      weak: scored(item.passRate) && Number(item.passRate) < 60
     }));
 
     const trendPoints = supervisor.trend || [];
@@ -254,8 +272,8 @@ Page({
     const rawMembers = (memberData.members || []).map(item => {
       const member = Object.assign({}, item, {
         initial: (item.displayName || '学').slice(0, 1),
-        averageScoreText: fmt1(item.averageScore),
-        passRateText: fmt1(item.passRate),
+        averageScoreText: api.formatScore(item.averageScore),
+        passRateText: api.formatScore(item.passRate),
         latestText: item.lastTrainingDate ? `最近训练：${item.lastTrainingDate}` : '暂未开始训练'
       });
       const needCoaching = isCoachingNeeded(member);
@@ -286,8 +304,10 @@ Page({
     const normalized = Object.assign({}, supervisor, {
       dimensionAverages,
       scenarioStats,
-      averageScoreText: fmt1(supervisor.averageScore),
-      passRateText: fmt1(supervisor.passRate)
+      averageScoreText: supervisor.averageScore === null || supervisor.averageScore === undefined
+        ? '暂无' : api.formatScore(supervisor.averageScore),
+      passRateText: supervisor.passRate === null || supervisor.passRate === undefined
+        ? '暂无' : `${api.formatScore(supervisor.passRate)}%`
     });
 
     /* 指标卡：学员数是全量口径，其余三项跟随时间维度 */
@@ -295,7 +315,7 @@ Page({
       { key: 'students', icon: '/static/image/data/students.png', value: supervisor.studentCount, label: '总学员数', hint: '全量活跃账户' },
       { key: 'sessions', icon: '/static/image/data/sessions.png', value: supervisor.totalSessions, label: '总训练次数', hint: `${rangeName}累计` },
       { key: 'score', icon: '/static/image/data/score.png', value: normalized.averageScoreText, label: '团队平均分', hint: '已完成报告的均值' },
-      { key: 'pass', icon: '/static/image/data/target.png', value: `${normalized.passRateText}%`, label: '团队通关率', hint: '综合分 ≥ 60 占比' }
+      { key: 'pass', icon: '/static/image/data/target.png', value: normalized.passRateText, label: '团队通关率', hint: '综合分 ≥ 60 占比' }
     ];
 
     this.setData({
@@ -342,18 +362,14 @@ Page({
       const personal = {
         totalCount: data.totalSessions,
         completedCount: data.completedSessions,
-        averageScore: typeof data.averageScore === 'number'
-          ? (Math.round(data.averageScore * 10) / 10).toFixed(1)
-          : data.averageScore,
+        averageScore: api.formatScore(data.averageScore),
         focalScoreRing: Math.max(0, Math.min(100, avgScore)),
         completionRate,
         sceneStats: (data.scenarioStats || []).map(item => ({
           id: item.scenarioId,
           name: item.scenarioName,
           count: item.trainingCount,
-          sceneAvg: typeof item.averageScore === 'number'
-            ? (Math.round(item.averageScore * 10) / 10).toFixed(1)
-            : null,
+          sceneAvg: api.formatScore(item.averageScore),
           barWidth: item.trainingCount / totalSceneCount * 100
         })),
         dimensionAverages,
@@ -470,7 +486,7 @@ Page({
       trendPoint: {
         date: labels[index] || '',
         count: Number(counts[index]) || 0,
-        scoreText: score === null || score === undefined ? '暂无评分' : `${fmt1(score)} 分`
+        scoreText: score === null || score === undefined ? '暂无评分' : `${api.formatScore(score)} 分`
       }
     });
   },

@@ -43,9 +43,16 @@ global.getCurrentPages = () => [];
 
 /* ---- 用桩替换 utils/api.js（必须在 require home.js 之前塞进 require.cache） ---- */
 const apiPath = require.resolve(path.join(root, 'utils', 'api.js'));
+/* 真实 api.js 的纯格式化工具：页面合法使用它们，桩不该判成失败。
+   取值必须在本文件下面改写 require.cache 之前完成。 */
+const realApi = (() => {
+  try { return require(apiPath); } catch (error) { return {}; }
+})();
 const apiStub = {
   getCurrentUser: () => ({ id: 'demo-user-001', role: 'admin', displayName: '机构主管' }),
   ensureAuthenticated: () => Promise.resolve(),
+  /* 首页 onShow 末尾的后端健康探测：决定是否展示模型密钥配置入口（master 侧功能） */
+  getHealth: () => Promise.resolve({ runtimeApiKeyAllowed: false }),
   getSupervisorDashboard: () => Promise.resolve({
     range: 'month', studentCount: 8, totalSessions: 42, completedSessions: 30,
     averageScore: 71.25, passRate: 76.5, scenarioStats: [], dimensionAverages: {}, trend: []
@@ -72,6 +79,7 @@ const apiStub = {
   }),
   getTeamCandidates: () => Promise.resolve({ candidates: [], total: 0, totalTeamMembers: 3, totalCandidates: 2 })
 };
+if (typeof realApi.formatScore === 'function') apiStub.formatScore = realApi.formatScore;
 const apiModule = new Module(apiPath, null);
 apiModule.filename = apiPath;
 apiModule.loaded = true;

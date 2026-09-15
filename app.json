@@ -23,7 +23,10 @@
     "pages/admin-training/admin-training",
     "pages/team-members/team-members",
     "pages/admin-scenarios/admin-scenarios",
-    "pages/session-inspect/session-inspect"
+    "pages/session-inspect/session-inspect",
+    "pages/knowledge-admin/knowledge-admin",
+    "pages/service-editor/service-editor",
+    "pages/knowledge-editor/knowledge-editor"
   ],
   "window": {
     "navigationBarBackgroundColor": "#FFFFFF",

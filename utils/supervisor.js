@@ -155,8 +155,12 @@ const buildSnapshot = (dashboard, range) => {
     rangeText: RANGE_TEXT[range] || RANGE_TEXT.month,
     studentCount: Number(data.studentCount) || 0,
     totalSessions: Number(data.totalSessions) || 0,
-    passRateText: `${fmt1(data.passRate)}%`,
-    averageScoreText: fmt1(data.averageScore)
+    /* 均分与及格率只统计「已评分」会话：后端在没有已评分报告时返回 null，
+       这里必须显示「暂无」——被 fmt1 兜底成 0 会被读成「团队 0 分」。 */
+    passRateText: data.passRate === null || data.passRate === undefined
+      ? '暂无' : `${fmt1(data.passRate)}%`,
+    averageScoreText: data.averageScore === null || data.averageScore === undefined
+      ? '暂无' : fmt1(data.averageScore)
   };
 };
 
