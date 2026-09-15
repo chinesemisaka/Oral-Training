@@ -369,7 +369,6 @@ Page({
           id: item.scenarioId,
           name: item.scenarioName,
           count: item.trainingCount,
-          sceneAvg: api.formatScore(item.averageScore),
           barWidth: item.trainingCount / totalSceneCount * 100
         })),
         dimensionAverages,

@@ -250,7 +250,7 @@
       <view class="scene-stat" wx:for="{{personal.sceneStats}}" wx:key="id">
         <view class="scene-stat-head learner-scene-head">
           <text>{{item.name}}</text>
-          <text class="scene-count"><text wx:if="{{item.sceneAvg}}">平均 {{item.sceneAvg}} 分 · </text>{{item.count}} 次</text>
+          <text class="scene-count">{{item.count}} 次</text>
         </view>
         <view class="scene-bar"><view class="scene-fill scene-fill-learner" style="width:{{item.barWidth}}%;"></view></view>
       </view>
