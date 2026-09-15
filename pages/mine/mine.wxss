@@ -35,3 +35,4 @@
 .tool-card view text:first-child { color: #515b72; font-size: 25rpx; font-weight: 700; }
 .tool-card view text:last-child { margin-top: 5rpx; color: #9da2b1; font-size: 20rpx; }
 .tool-arrow { color: #9ca3bc; font-size: 34rpx; }
+.admin-heading { margin-top: 30rpx; }

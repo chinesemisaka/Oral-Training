@@ -101,6 +101,72 @@ int main() {
     const auto empty_profile = database.learningProfile(kEmptyLearnerId);
     require(empty_profile["weaknesses"].empty(),
             "empty learning profile fabricated zero-score weaknesses");
+    {
+      const json scored_report = {
+          {"dimensionScores", {{"knowledgeAccuracy", 80}, {"medicalCompliance", 80},
+                               {"empathy", 80}, {"needsDiscovery", 80},
+                               {"serviceEtiquette", 80}}},
+      };
+      const json lower_report = {
+          {"dimensionScores", {{"knowledgeAccuracy", 60}, {"medicalCompliance", 60},
+                               {"empathy", 60}, {"needsDiscovery", 60},
+                               {"serviceEtiquette", 60}}},
+      };
+      const json unscored_v2_report = {
+          {"schemaVersion", 2}, {"totalScore", nullptr}, {"passed", nullptr},
+          {"dimensionScores", {{"knowledgeAccuracy", nullptr}, {"medicalCompliance", 90},
+                               {"empathy", 85}, {"needsDiscovery", 75},
+                               {"serviceEtiquette", 95}}},
+          {"knowledgeAssessment", {{"status", "insufficient_evidence"},
+                                    {"knowledgeAccuracy", nullptr}, {"assessableCount", 0},
+                                    {"unassessableCount", 2}, {"coverage", 0}}},
+      };
+      pqxx::connection connection(database_url);
+      pqxx::work tx(connection);
+      tx.exec_params(R"(
+        INSERT INTO sessions
+          (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds, patient_state,
+           started_at, updated_at, finished_at, evaluation_status, total_score)
+        VALUES ('feature-mixed-80', $1, 'implant-basic', 'Mixed 80', 'completed', 1, 10,
+                  '{}'::jsonb, NOW() - INTERVAL '3 days', NOW(), NOW() - INTERVAL '3 days', 'ready', 80),
+               ('feature-mixed-null', $1, 'implant-basic', 'Mixed null', 'completed', 1, 10,
+                  '{}'::jsonb, NOW() - INTERVAL '2 days', NOW(), NOW() - INTERVAL '2 days', 'ready', NULL),
+               ('feature-mixed-60', $1, 'implant-basic', 'Mixed 60', 'completed', 1, 10,
+                  '{}'::jsonb, NOW() - INTERVAL '1 day', NOW(), NOW() - INTERVAL '1 day', 'ready', 60)
+      )", kEmptyLearnerId);
+      tx.exec_params(R"(
+        INSERT INTO evaluations(session_id, status, report, model_version, prompt_version, generated_at)
+        VALUES ('feature-mixed-80', 'ready', $1::jsonb, 'fixture', 'fixture', NOW()),
+               ('feature-mixed-null', 'ready', $2::jsonb, 'fixture', 'score-rag-v1', NOW()),
+               ('feature-mixed-60', 'ready', $3::jsonb, 'fixture', 'fixture', NOW())
+      )", scored_report.dump(), unscored_v2_report.dump(), lower_report.dump());
+      tx.commit();
+    }
+    const auto mixed_dashboard = database.dashboard(kEmptyLearnerId, false);
+    require(mixed_dashboard["completedSessions"] == 3 && mixed_dashboard["scoredSessions"] == 2 &&
+                mixed_dashboard["unscoredSessions"] == 1 && mixed_dashboard["averageScore"] == 70,
+            "mixed v1/v2 dashboard did not exclude null total scores");
+    require(mixed_dashboard["dimensionAverages"]["knowledgeAccuracy"] == 70 &&
+                mixed_dashboard["dimensionAverages"]["medicalCompliance"] == 76.7,
+            "dimension averages did not use per-dimension non-null counts");
+    const auto mixed_profile = database.learningProfile(kEmptyLearnerId);
+    require(mixed_profile["overall"]["totalCompleted"] == 3 &&
+                mixed_profile["overall"]["scoredCount"] == 2 &&
+                mixed_profile["overall"]["unscoredCount"] == 1 &&
+                mixed_profile["overall"]["averageScore"] == 70 &&
+                mixed_profile["trend"].size() == 2,
+            "learning profile treated an unscored v2 report as zero");
+    for (int read = 0; read < 2; ++read) {
+      const auto result = database.getEvaluation(kEmptyLearnerId, "feature-mixed-null");
+      require(result["status"] == "ready" && result["evaluation"]["totalScore"].is_null(),
+              "v2 insufficient-evidence report did not remain ready and unscored");
+    }
+    {
+      pqxx::connection connection(database_url);
+      pqxx::read_transaction tx(connection);
+      require(tx.exec("SELECT 1 FROM ai_jobs WHERE target_id = 'feature-mixed-null'").empty(),
+              "reading a valid unscored v2 report enqueued a model job");
+    }
     const auto scenarios = database.listScenarios(kLearnerId);
     require(!scenarios["items"].empty() && scenarios["items"][0].contains("category"),
             "scenario categories were not returned");

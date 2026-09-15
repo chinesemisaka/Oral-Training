@@ -61,15 +61,41 @@ int main() {
       "knowledgeAccuracy", "medicalCompliance", "empathy", "needsDiscovery", "serviceEtiquette",
   };
   json dimension_totals = json::object();
-  for (const auto& key : dimension_keys) dimension_totals[key] = 0.0;
-  accumulateDimensionScores(dimension_totals,
+  json dimension_counts = json::object();
+  for (const auto& key : dimension_keys) {
+    dimension_totals[key] = 0.0;
+    dimension_counts[key] = 0;
+  }
+  accumulateDimensionScores(dimension_totals, dimension_counts,
                             {{"dimensionScores", {{"knowledgeAccuracy", 80}, {"medicalCompliance", 90},
                                                    {"empathy", 75}, {"needsDiscovery", 70},
                                                    {"serviceEtiquette", 85}}}},
                             dimension_keys);
+  accumulateDimensionScores(dimension_totals, dimension_counts,
+                            {{"schemaVersion", 2},
+                             {"dimensionScores", {{"knowledgeAccuracy", nullptr},
+                                                   {"medicalCompliance", 70}}}},
+                            dimension_keys);
+  const auto dimension_averages = dimensionAverages(
+      dimension_totals, dimension_counts, dimension_keys);
   if (dimension_totals["knowledgeAccuracy"].get<double>() != 80.0 ||
-      dimension_totals["medicalCompliance"].get<double>() != 90.0) {
-    std::cerr << "dimension scores were not accumulated numerically\n";
+      dimension_totals["medicalCompliance"].get<double>() != 160.0 ||
+      dimension_counts["knowledgeAccuracy"].get<int>() != 1 ||
+      dimension_counts["medicalCompliance"].get<int>() != 2 ||
+      dimension_averages["knowledgeAccuracy"] != 80.0 ||
+      dimension_averages["medicalCompliance"] != 80.0 ||
+      !dimension_averages["serviceEtiquette"].is_number()) {
+    std::cerr << "nullable dimension scores were not averaged per dimension\n";
+    return 1;
+  }
+  const json unscored_v2 = {
+      {"schemaVersion", 2}, {"totalScore", nullptr}, {"passed", nullptr},
+      {"knowledgeAssessment", {{"status", "insufficient_evidence"}}},
+  };
+  if (!isV2InsufficientEvidenceReport(unscored_v2) ||
+      reportSchemaVersion(unscored_v2) != 2 || reportSchemaVersion(json::object()) != 1 ||
+      isV2InsufficientEvidenceReport({{"schemaVersion", 2}, {"totalScore", nullptr}})) {
+    std::cerr << "v2 insufficient-evidence report detection failed\n";
     return 1;
   }
 

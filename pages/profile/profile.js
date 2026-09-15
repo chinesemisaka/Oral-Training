@@ -23,14 +23,20 @@ Page({
     this.setData({ loading: true });
     api.getLearningProfile().then(data => {
       const dimensionAverages = data.dimensionAverages || {};
-      const dimensions = DIMENSIONS.map(item => Object.assign({}, item, {
-        score: dimensionAverages[item.key] || 0
-      }));
+      const dimensions = DIMENSIONS.filter(item => dimensionAverages[item.key] !== null &&
+        dimensionAverages[item.key] !== undefined && Number.isFinite(Number(dimensionAverages[item.key])))
+        .map(item => Object.assign({}, item, { score: Number(dimensionAverages[item.key]) }));
       const trend = (data.trend || []).map(item => Object.assign({}, item, {
         scoreLabel: `${item.totalScore} 分`
       }));
+      const scoreDelta = data.overall.scoreDelta;
       const profile = Object.assign({}, data, {
-        overall: Object.assign({}, data.overall, { averageScore: api.formatScore(data.overall.averageScore) })
+        overall: Object.assign({}, data.overall, {
+          averageScore: api.formatScore(data.overall.averageScore),
+          scoreDeltaLabel: scoreDelta === null || scoreDelta === undefined
+            ? '暂无趋势' : `${scoreDelta > 0 ? '+' : ''}${scoreDelta}`,
+          scoreDeltaPositive: Number(scoreDelta) > 0
+        })
       });
       this.setData({
         profile,

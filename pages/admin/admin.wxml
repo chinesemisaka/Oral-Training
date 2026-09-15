@@ -8,19 +8,20 @@
   <view class="loading-card card" wx:if="{{loading}}"><text>正在汇总训练数据…</text></view>
 
   <block wx:elif="{{isAdmin && supervisor}}">
+    <view class="knowledge-entry card" bindtap="goKnowledgeAdmin"><view><text>知识与服务管理</text><text>维护模拟服务、专业知识、发布版本与生成任务</text></view><text>›</text></view>
     <view class="time-filter-row"><text wx:for="{{timeFilters}}" wx:key="id" class="time-filter {{timeRange === item.id ? 'selected' : ''}}" bindtap="selectTimeRange" data-id="{{item.id}}">{{item.name}}</text></view>
     <view class="summary-cards supervisor-summary">
       <view class="summary-card card"><text class="summary-value">{{supervisor.studentCount}}</text><text class="summary-label">学员数</text></view>
       <view class="summary-card card"><text class="summary-value">{{supervisor.totalSessions}}</text><text class="summary-label">训练次数</text></view>
       <view class="summary-card card"><text class="summary-value">{{supervisor.averageScore}}</text><text class="summary-label">平均得分</text></view>
-      <view class="summary-card card"><text class="summary-value">{{supervisor.passRate}}%</text><text class="summary-label">练习达标率</text></view>
+      <view class="summary-card card"><text class="summary-value">{{supervisor.passRateLabel}}</text><text class="summary-label">练习达标率</text></view>
     </view>
 
     <view class="section-title-row"><text class="section-title">五维聚合表现</text><text class="section-caption">已完成报告均值</text></view>
-    <view class="dimension-card card"><view class="dimension-row" wx:for="{{supervisor.dimensionAverages}}" wx:key="key"><view class="dimension-head"><text>{{item.name}}</text><text>{{item.value}}</text></view><view class="dimension-bar"><view class="dimension-fill" style="width: {{item.value}}%;"></view></view></view></view>
+    <view class="dimension-card card"><view class="dimension-row" wx:for="{{supervisor.dimensionAverages}}" wx:key="key"><view class="dimension-head"><text>{{item.name}}</text><text>{{item.value}}</text></view><view class="dimension-bar" wx:if="{{item.hasScore}}"><view class="dimension-fill" style="width: {{item.barWidth}}%;"></view></view></view></view>
 
     <view class="section-title-row"><text class="section-title">场景练习分布</text><text class="section-caption">达标线 60 分</text></view>
-    <view class="chart-card card"><view class="scene-stat" wx:for="{{supervisor.scenarioStats}}" wx:key="scenarioId"><view class="scene-stat-head"><text>{{item.scenarioName}}</text><text class="scene-count">{{item.total}} 次 · {{item.passRate}}%</text></view><view class="scene-bar"><view class="scene-fill" style="width: {{item.totalWidth}}%;"></view></view><text class="pass-note">平均 {{item.averageScore}} 分 · 通过率 {{item.passRate}}%</text></view></view>
+    <view class="chart-card card"><view class="scene-stat" wx:for="{{supervisor.scenarioStats}}" wx:key="scenarioId"><view class="scene-stat-head"><text>{{item.scenarioName}}</text><text class="scene-count">{{item.total}} 次 · {{item.scoredCount}} 次已评分</text></view><view class="scene-bar"><view class="scene-fill" style="width: {{item.totalWidth}}%;"></view></view><text class="pass-note">平均 {{item.averageScore}} · 通过率 {{item.passRateLabel}}</text></view></view>
 
     <view class="section-title-row"><text class="section-title">辅导建议</text><text class="section-caption">基于聚合数据</text></view>
     <view class="suggestion-card card {{item.severity}}" wx:for="{{suggestions}}" wx:key="title"><text class="suggestion-title">{{item.title}}</text><text class="suggestion-text">{{item.text}}</text></view>
@@ -32,7 +33,7 @@
     <view class="section-title-row"><text class="section-title">各场景训练次数</text></view>
     <view class="chart-card card"><view class="scene-stat" wx:for="{{personal.sceneStats}}" wx:key="id"><view class="scene-stat-head"><text>{{item.name}}</text><text class="scene-count">{{item.count}} 次</text></view><view class="scene-bar"><view class="scene-fill" style="width: {{item.barWidth}}%;"></view></view></view></view>
     <view class="section-title-row"><text class="section-title">五维平均得分</text><text class="section-caption">仅统计已完成训练</text></view>
-    <view class="dimension-card card"><view class="dimension-row" wx:for="{{personal.dimensionAverages}}" wx:key="key"><view class="dimension-head"><text>{{item.name}}</text><text>{{item.value}}</text></view><view class="dimension-bar"><view class="dimension-fill" style="width: {{item.value}}%;"></view></view></view></view>
+    <view class="dimension-card card"><view class="dimension-row" wx:for="{{personal.dimensionAverages}}" wx:key="key"><view class="dimension-head"><text>{{item.name}}</text><text>{{item.value}}</text></view><view class="dimension-bar" wx:if="{{item.hasScore}}"><view class="dimension-fill" style="width: {{item.barWidth}}%;"></view></view></view></view>
     <view class="section-title-row"><text class="section-title">最近训练</text></view>
     <view class="recent-card card"><view class="recent-row" wx:for="{{personal.recentSessions}}" wx:key="id"><view class="recent-copy"><text class="recent-name">{{item.scenarioName}}</text><text class="recent-time">{{item.updatedAt}} · {{item.currentRound}}轮</text></view><text class="recent-score" wx:if="{{item.totalScore !== null}}">{{item.totalScore}}分</text><text class="recent-status" wx:else>{{item.statusText}}</text></view><view class="no-recent" wx:if="{{personal.recentSessions.length === 0}}">完成一次训练后，这里会展示最近记录。</view></view>
   </block>

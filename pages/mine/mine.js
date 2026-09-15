@@ -19,6 +19,7 @@ const buildCalendar = checkin => {
 Page({
   data: {
     loading: true,
+    isAdmin: false,
     checkingIn: false,
     mine: null,
     calendarDays: [],
@@ -29,9 +30,10 @@ Page({
     api.ensureAuthenticated().then(() => {
       const user = api.getCurrentUser();
       if (user && user.role === 'admin') {
-        wx.switchTab({ url: '/pages/admin/admin' });
+        this.setData({ loading: false, isAdmin: true });
         return;
       }
+      this.setData({ isAdmin: false });
       this.loadMine();
     }).catch(error => {
       this.setData({ loading: false });
@@ -43,7 +45,10 @@ Page({
     this.setData({ loading: true });
     api.getLearningMine().then(data => {
       const mine = Object.assign({}, data, {
-        stats: Object.assign({}, data.stats, { averageScore: api.formatScore(data.stats.averageScore) })
+        stats: Object.assign({}, data.stats, {
+          averageScore: api.formatScore(data.stats.averageScore),
+          passRateLabel: data.stats.passRate === null ? '暂无评分' : `${data.stats.passRate}%`
+        })
       });
       this.setData({
         mine,
@@ -75,6 +80,8 @@ Page({
   },
 
   goProfile() { wx.navigateTo({ url: '/pages/profile/profile' }); },
+  goKnowledgeAdmin() { wx.navigateTo({ url: '/pages/knowledge-admin/knowledge-admin' }); },
+  goSupervisor() { wx.switchTab({ url: '/pages/admin/admin' }); },
   goMistakes() { wx.navigateTo({ url: '/pages/mistakes/mistakes' }); },
   goPhrases() { wx.navigateTo({ url: '/pages/phrases/phrases' }); },
   goFavorites() { wx.navigateTo({ url: '/pages/phrases/phrases?favorites=1' }); }

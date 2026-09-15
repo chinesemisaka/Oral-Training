@@ -13,6 +13,7 @@
       <view class="message-body">
         <text class="message-role">{{item.role === 'learner_patient' ? '模拟患者（我）' : '标准客服'}} · {{item.time}}</text>
         <view class="message-bubble"><text>{{item.content}}</text></view>
+        <text class="evidence-link" wx:if="{{item.role === 'standard_customer' && item.traceId}}" bindtap="viewEvidence" data-trace="{{item.traceId}}">查看依据（{{item.citations.length}}）</text>
         <view class="learning-card" wx:if="{{item.role === 'standard_customer'}}">
           <text class="learning-title">学习要点</text>
           <text class="learning-point" wx:for="{{item.learningPoints}}" wx:for-item="point" wx:key="*this">• {{point}}</text>

@@ -44,3 +44,7 @@
 .scenario-actions { display: flex; flex-direction: column; align-items: stretch; margin-top: 22rpx; }
 .scenario-button { width: 100%; height: 76rpx; line-height: 1.2; font-size: 27rpx; }
 .restart-link { align-self: center; margin-top: 16rpx; color: #9a9a9a; font-size: 23rpx; line-height: 1.5; text-align: center; }
+.service-picker { margin: 18rpx 0; padding: 22rpx; }
+.service-picker-label,.service-picker-meta { display: block; color: #858ca0; font-size: 21rpx; }
+.service-picker-value { margin: 10rpx 0; color: #414a61; font-size: 28rpx; font-weight: 700; }
+.service-picker-meta { color: #65708b; }

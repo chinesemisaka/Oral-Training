@@ -110,7 +110,7 @@ class ReliableDatabase {
     pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params(R"(
       SELECT s.id, s.name, s.category, s.summary, s.difficulty, s.focus, s.patient_profile, s.max_rounds,
-        COALESCE(best.best_score, 0) AS best_score,
+        best.best_score,
         active.id AS active_id, active.current_round AS active_current_round,
         active.max_rounds AS active_max_rounds, active.updated_at AS active_updated_at
       FROM scenarios s
@@ -133,7 +133,9 @@ class ReliableDatabase {
           {"summary", row["summary"].c_str()}, {"difficulty", row["difficulty"].c_str()},
           {"focus", json::parse(row["focus"].c_str())},
           {"patientProfile", json::parse(row["patient_profile"].c_str())},
-          {"maxRounds", row["max_rounds"].as<int>()}, {"bestScore", row["best_score"].as<int>()},
+          {"maxRounds", row["max_rounds"].as<int>()},
+          {"bestScore", row["best_score"].is_null()
+              ? json(nullptr) : json(row["best_score"].as<int>())},
           {"activeSession", nullptr},
       };
       if (!row["active_id"].is_null()) {
@@ -692,7 +694,10 @@ class ReliableDatabase {
     const auto totals = tx.exec(R"(
       SELECT COUNT(*) FILTER (WHERE status <> 'abandoned') AS total_sessions,
         COUNT(*) FILTER (WHERE status = 'completed' AND evaluation_status = 'ready') AS completed_sessions,
-        AVG(total_score) FILTER (WHERE status = 'completed' AND evaluation_status = 'ready') AS average_score
+        COUNT(*) FILTER (WHERE status = 'completed' AND evaluation_status = 'ready'
+          AND total_score IS NOT NULL) AS scored_sessions,
+        AVG(total_score) FILTER (WHERE status = 'completed' AND evaluation_status = 'ready'
+          AND total_score IS NOT NULL) AS average_score
       FROM sessions
     )" + filter)[0];
     const auto user_condition = institution_aggregate ? "" : " AND x.user_id = " + tx.quote(user_id);
@@ -708,14 +713,14 @@ class ReliableDatabase {
     const std::vector<std::string> keys = {
         "knowledgeAccuracy", "medicalCompliance", "empathy", "needsDiscovery", "serviceEtiquette"};
     json dimensions = json::object();
-    for (const auto& key : keys) dimensions[key] = 0.0;
-    for (const auto& row : reports) accumulateDimensionScores(
-        dimensions, json::parse(row["report"].c_str()), keys);
-    if (!reports.empty()) {
-      for (const auto& key : keys) {
-        dimensions[key] = std::round(dimensions[key].get<double>() / reports.size() * 10.0) / 10.0;
-      }
+    json dimension_counts = json::object();
+    for (const auto& key : keys) {
+      dimensions[key] = 0.0;
+      dimension_counts[key] = 0;
     }
+    for (const auto& row : reports) accumulateDimensionScores(
+        dimensions, dimension_counts, json::parse(row["report"].c_str()), keys);
+    dimensions = dimensionAverages(dimensions, dimension_counts, keys);
     json scenario_stats = json::array();
     for (const auto& row : scenarios) {
       scenario_stats.push_back({{"scenarioId", row["id"].c_str()},
@@ -731,11 +736,14 @@ class ReliableDatabase {
           " AND status <> 'abandoned' ORDER BY updated_at DESC LIMIT 5");
       for (const auto& row : recent_rows) recent.push_back(sessionJson(row));
     }
+    const auto completed = totals["completed_sessions"].as<int>();
+    const auto scored = totals["scored_sessions"].as<int>();
     return {{"scope", institution_aggregate ? "institution" : "personal"},
             {"totalSessions", totals["total_sessions"].as<int>()},
-            {"completedSessions", totals["completed_sessions"].as<int>()},
+            {"completedSessions", completed}, {"scoredSessions", scored},
+            {"unscoredSessions", completed - scored},
             {"averageScore", totals["average_score"].is_null()
-                ? 0.0 : totals["average_score"].as<double>()},
+                ? json(nullptr) : json(totals["average_score"].as<double>())},
             {"scenarioStats", scenario_stats}, {"dimensionAverages", dimensions},
             {"recentSessions", recent}};
   }
@@ -952,32 +960,38 @@ class ReliableDatabase {
     const std::vector<std::string> keys = {
         "knowledgeAccuracy", "medicalCompliance", "empathy", "needsDiscovery", "serviceEtiquette"};
     json totals = json::object();
-    for (const auto& key : keys) totals[key] = 0.0;
+    json dimension_counts = json::object();
+    for (const auto& key : keys) {
+      totals[key] = 0.0;
+      dimension_counts[key] = 0;
+    }
     int total_score = 0;
+    int completed_count = 0;
+    int scored_count = 0;
     std::vector<json> all_trend;
     std::set<std::string> mistake_keys;
     for (const auto& row : rows) {
       const auto report = storedReport(row);
       if (!report.is_object()) continue;
-      accumulateDimensionScores(totals, report, keys);
-      total_score += row["total_score"].as<int>();
-      all_trend.push_back({
-          {"sessionId", row["id"].c_str()}, {"scenarioId", row["scenario_id"].c_str()},
-          {"scenarioName", row["scenario_name"].c_str()}, {"date", row["finished_date"].c_str()},
-          {"totalScore", row["total_score"].as<int>()},
-          {"scores", report.value("dimensionScores", json::object())},
-      });
+      ++completed_count;
+      accumulateDimensionScores(totals, dimension_counts, report, keys);
+      if (!row["total_score"].is_null()) {
+        ++scored_count;
+        total_score += row["total_score"].as<int>();
+        all_trend.push_back({
+            {"sessionId", row["id"].c_str()}, {"scenarioId", row["scenario_id"].c_str()},
+            {"scenarioName", row["scenario_name"].c_str()}, {"date", row["finished_date"].c_str()},
+            {"totalScore", row["total_score"].as<int>()},
+            {"scores", report.value("dimensionScores", json::object())},
+        });
+      }
       for (const auto& mistake : learningMistakesFromReport(report)) {
         if (mistake.is_object() && !jsonString(mistake, "mistakeKey").empty()) {
           mistake_keys.insert(masteryKey(row["id"].c_str(), jsonString(mistake, "mistakeKey")));
         }
       }
     }
-    const auto count = static_cast<int>(all_trend.size());
-    json averages = json::object();
-    for (const auto& key : keys) {
-      averages[key] = count == 0 ? 0.0 : std::round(totals[key].get<double>() / count * 10.0) / 10.0;
-    }
+    const auto averages = dimensionAverages(totals, dimension_counts, keys);
     const auto mastered_rows = tx.exec_params(R"(
       SELECT session_id, mistake_key FROM learner_mistake_progress
       WHERE user_id = $1 AND mastered_at IS NOT NULL
@@ -995,12 +1009,15 @@ class ReliableDatabase {
         {"needsDiscovery", {"需求挖掘", "用开放问题确认患者最在意的重点，再提供服务协助。"}},
         {"serviceEtiquette", {"服务礼仪", "使用清晰、尊重的表达，并给出可执行的服务安排。"}},
     };
-    std::vector<std::string> ordered_keys = keys;
+    std::vector<std::string> ordered_keys;
+    for (const auto& key : keys) {
+      if (averages.contains(key) && averages[key].is_number()) ordered_keys.push_back(key);
+    }
     std::sort(ordered_keys.begin(), ordered_keys.end(), [&](const auto& left, const auto& right) {
       return averages[left].get<double>() < averages[right].get<double>();
     });
     json weaknesses = json::array();
-    if (count > 0) {
+    if (!ordered_keys.empty()) {
       for (size_t index = 0; index < ordered_keys.size() && index < 2; ++index) {
         const auto& key = ordered_keys[index];
         const auto& copy = dimension_copy.at(key);
@@ -1010,10 +1027,14 @@ class ReliableDatabase {
     json trend = json::array();
     const size_t first = all_trend.size() > 12 ? all_trend.size() - 12 : 0;
     for (size_t index = first; index < all_trend.size(); ++index) trend.push_back(all_trend[index]);
-    const int score_delta = all_trend.size() < 2 ? 0
-        : all_trend.back()["totalScore"].get<int>() - all_trend.front()["totalScore"].get<int>();
-    return {{"overall", {{"totalCompleted", count},
-                            {"averageScore", count == 0 ? 0.0 : std::round(static_cast<double>(total_score) / count * 10.0) / 10.0},
+    const json score_delta = all_trend.size() < 2 ? json(nullptr)
+        : json(all_trend.back()["totalScore"].get<int>() -
+               all_trend.front()["totalScore"].get<int>());
+    return {{"overall", {{"totalCompleted", completed_count}, {"scoredCount", scored_count},
+                            {"unscoredCount", completed_count - scored_count},
+                            {"averageScore", scored_count == 0 ? json(nullptr)
+                                : json(std::round(static_cast<double>(total_score) /
+                                    scored_count * 10.0) / 10.0)},
                             {"scoreDelta", score_delta}}},
             {"dimensionAverages", averages}, {"trend", trend}, {"weaknesses", weaknesses},
             {"mistakes", {{"total", static_cast<int>(mistake_keys.size())}, {"mastered", mastered_count}}}};
@@ -1030,8 +1051,11 @@ class ReliableDatabase {
     const auto stats = tx.exec_params(R"(
       SELECT COUNT(*) FILTER (WHERE status <> 'abandoned') AS total_sessions,
         COUNT(*) FILTER (WHERE status = 'completed' AND evaluation_status = 'ready') AS completed_sessions,
+        COUNT(*) FILTER (WHERE status = 'completed' AND evaluation_status = 'ready'
+          AND total_score IS NOT NULL) AS scored_sessions,
         COUNT(*) FILTER (WHERE status = 'completed' AND evaluation_status = 'ready' AND total_score >= 60) AS passed_sessions,
-        AVG(total_score) FILTER (WHERE status = 'completed' AND evaluation_status = 'ready') AS average_score
+        AVG(total_score) FILTER (WHERE status = 'completed' AND evaluation_status = 'ready'
+          AND total_score IS NOT NULL) AS average_score
       FROM sessions WHERE user_id = $1
     )", user_id)[0];
     const auto today = tx.exec(R"(
@@ -1065,8 +1089,8 @@ class ReliableDatabase {
     const auto favorites = tx.exec_params(
         "SELECT COUNT(*) AS count FROM learner_phrase_favorites WHERE user_id = $1", user_id)[0]["count"].as<int>();
     const auto completed = stats["completed_sessions"].as<int>();
+    const auto scored = stats["scored_sessions"].as<int>();
     const auto passed = stats["passed_sessions"].as<int>();
-    const auto average = stats["average_score"].is_null() ? 0.0 : stats["average_score"].as<double>();
     return {{"user", {{"displayName", user_rows[0]["display_name"].c_str()}}},
             {"points", checkin_summary["points"].as<int>()},
             {"checkin", {{"today", today["today"].c_str()}, {"year", today["year"].as<int>()},
@@ -1074,9 +1098,13 @@ class ReliableDatabase {
                          {"checkedToday", checkin_summary["checked_today"].as<bool>()},
                          {"checkinDays", checkin_summary["checkin_days"].as<int>()},
                          {"streakDays", streak}, {"checkedDates", checked_dates}}},
-            {"stats", {{"totalCompleted", completed}, {"passRate", completed == 0 ? 0.0
-                : std::round(static_cast<double>(passed) / completed * 1000.0) / 10.0},
-                       {"averageScore", std::round(average * 10.0) / 10.0}}},
+            {"stats", {{"totalCompleted", completed}, {"scoredCount", scored},
+                       {"unscoredCount", completed - scored},
+                       {"passRate", scored == 0 ? json(nullptr)
+                           : json(std::round(static_cast<double>(passed) /
+                               scored * 1000.0) / 10.0)},
+                       {"averageScore", stats["average_score"].is_null() ? json(nullptr)
+                           : json(std::round(stats["average_score"].as<double>() * 10.0) / 10.0)}}},
             {"favoritesCount", favorites},
             {"rules", json::array({{{"action", "每日签到"}, {"points", "+10"},
                                      {"description", "每个自然日限一次，按中国时区计算。"}}})}};
@@ -1113,15 +1141,19 @@ class ReliableDatabase {
     const auto totals = tx.exec(R"(
       SELECT COUNT(*) FILTER (WHERE s.status <> 'abandoned') AS total_sessions,
         COUNT(*) FILTER (WHERE s.status = 'completed' AND s.evaluation_status = 'ready') AS completed_sessions,
+        COUNT(*) FILTER (WHERE s.status = 'completed' AND s.evaluation_status = 'ready'
+          AND s.total_score IS NOT NULL) AS scored_sessions,
         COUNT(*) FILTER (WHERE s.status = 'completed' AND s.evaluation_status = 'ready' AND s.total_score >= 60) AS passed_sessions,
-        AVG(s.total_score) FILTER (WHERE s.status = 'completed' AND s.evaluation_status = 'ready') AS average_score
+        AVG(s.total_score) FILTER (WHERE s.status = 'completed' AND s.evaluation_status = 'ready'
+          AND s.total_score IS NOT NULL) AS average_score
       FROM sessions s WHERE TRUE
     )" + time_filter)[0];
     const auto scenario_rows = tx.exec(R"(
       SELECT sc.id, sc.name, COUNT(s.id) AS completed_count,
+        COUNT(s.id) FILTER (WHERE s.total_score IS NOT NULL) AS scored_count,
         AVG(s.total_score) AS average_score,
-        COALESCE(ROUND(100.0 * COUNT(s.id) FILTER (WHERE s.total_score >= 60) /
-          NULLIF(COUNT(s.id), 0), 1), 0) AS pass_rate
+        ROUND(100.0 * COUNT(s.id) FILTER (WHERE s.total_score >= 60) /
+          NULLIF(COUNT(s.id) FILTER (WHERE s.total_score IS NOT NULL), 0), 1) AS pass_rate
       FROM scenarios sc
       LEFT JOIN sessions s ON s.scenario_id = sc.id
         AND s.status = 'completed' AND s.evaluation_status = 'ready'
@@ -1135,28 +1167,36 @@ class ReliableDatabase {
     const std::vector<std::string> keys = {
         "knowledgeAccuracy", "medicalCompliance", "empathy", "needsDiscovery", "serviceEtiquette"};
     json dimensions = json::object();
-    for (const auto& key : keys) dimensions[key] = 0.0;
+    json dimension_counts = json::object();
+    for (const auto& key : keys) {
+      dimensions[key] = 0.0;
+      dimension_counts[key] = 0;
+    }
     for (const auto& row : report_rows) {
       const auto report = storedReport(row);
-      if (report.is_object()) accumulateDimensionScores(dimensions, report, keys);
-    }
-    if (!report_rows.empty()) {
-      for (const auto& key : keys) {
-        dimensions[key] = std::round(dimensions[key].get<double>() / report_rows.size() * 10.0) / 10.0;
+      if (report.is_object()) {
+        accumulateDimensionScores(dimensions, dimension_counts, report, keys);
       }
     }
+    dimensions = dimensionAverages(dimensions, dimension_counts, keys);
     json scenario_stats = json::array();
     for (const auto& row : scenario_rows) {
       scenario_stats.push_back({{"scenarioId", row["id"].c_str()}, {"scenarioName", row["name"].c_str()},
                                 {"total", row["completed_count"].as<int>()},
-                                {"averageScore", row["average_score"].is_null() ? 0.0 : row["average_score"].as<double>()},
-                                {"passRate", row["pass_rate"].as<double>()}});
+                                {"scoredCount", row["scored_count"].as<int>()},
+                                {"unscoredCount", row["completed_count"].as<int>() -
+                                    row["scored_count"].as<int>()},
+                                {"averageScore", row["average_score"].is_null()
+                                    ? json(nullptr) : json(row["average_score"].as<double>())},
+                                {"passRate", row["pass_rate"].is_null()
+                                    ? json(nullptr) : json(row["pass_rate"].as<double>())}});
     }
     const auto trend_rows = tx.exec(R"(
       SELECT to_char(s.finished_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS date,
         COUNT(*) AS count, ROUND(AVG(s.total_score)::numeric, 1) AS average_score
       FROM sessions s
       WHERE s.status = 'completed' AND s.evaluation_status = 'ready'
+        AND s.total_score IS NOT NULL
     )" + time_filter + R"(
       GROUP BY 1 ORDER BY date DESC LIMIT 12
     )");
@@ -1166,11 +1206,15 @@ class ReliableDatabase {
                        {"averageScore", (*iterator)["average_score"].as<double>()}});
     }
     const auto completed = totals["completed_sessions"].as<int>();
+    const auto scored = totals["scored_sessions"].as<int>();
     const auto passed = totals["passed_sessions"].as<int>();
     return {{"range", time_range}, {"studentCount", student_count},
             {"totalSessions", totals["total_sessions"].as<int>()}, {"completedSessions", completed},
-            {"averageScore", totals["average_score"].is_null() ? 0.0 : totals["average_score"].as<double>()},
-            {"passRate", completed == 0 ? 0.0 : std::round(static_cast<double>(passed) / completed * 1000.0) / 10.0},
+            {"scoredSessions", scored}, {"unscoredSessions", completed - scored},
+            {"averageScore", totals["average_score"].is_null()
+                ? json(nullptr) : json(totals["average_score"].as<double>())},
+            {"passRate", scored == 0 ? json(nullptr)
+                : json(std::round(static_cast<double>(passed) / scored * 1000.0) / 10.0)},
             {"dimensionAverages", dimensions}, {"scenarioStats", scenario_stats}, {"trend", trend}};
   }
 
@@ -1185,16 +1229,25 @@ class ReliableDatabase {
     if (!rows.empty() && std::string(rows[0]["status"].c_str()) == "ready" &&
         !rows[0]["report"].is_null()) {
       auto report = json::parse(rows[0]["report"].c_str(), nullptr, false);
-      const auto valid_score = [](const json& value) {
-        if (!value.is_number()) return false;
-        const auto number = value.get<double>();
-        return std::isfinite(number) && number >= 0 && number <= 100 && std::floor(number) == number;
+      if (!report.is_object()) throw ApiError(503, "REPORT_INVALID", "评分报告存储格式无效");
+      const auto schema_version = reportSchemaVersion(report);
+      if (schema_version == 2 && isV2InsufficientEvidenceReport(report)) {
+        tx.exec_params(R"(
+          UPDATE sessions SET evaluation_status = 'ready', total_score = NULL, updated_at = NOW()
+          WHERE id = $1 AND (evaluation_status <> 'ready' OR total_score IS NOT NULL)
+        )", session_id);
+        return "ready";
+      }
+      if (schema_version != 1 && schema_version != 2) {
+        throw ApiError(503, "REPORT_INVALID", "评分报告版本无效");
+      }
+      const auto valid_integer_score = [](const json& value) {
+        return validReportScore(value) && std::floor(value.get<double>()) == value.get<double>();
       };
       std::optional<int> total;
-      if (report.is_object()) {
-        if (report.contains("totalScore") && valid_score(report["totalScore"])) {
-          total = report["totalScore"].get<int>();
-        } else {
+      if (report.contains("totalScore") && valid_integer_score(report["totalScore"])) {
+        total = report["totalScore"].get<int>();
+      } else if (schema_version == 1) {
           const auto session = tx.exec_params("SELECT total_score FROM sessions WHERE id = $1", session_id);
           if (!session[0]["total_score"].is_null()) total = session[0]["total_score"].as<int>();
           if (!total && report.contains("dimensionScores") && report["dimensionScores"].is_object()) {
@@ -1205,7 +1258,7 @@ class ReliableDatabase {
             double weighted = 0;
             bool complete = true;
             for (const auto& entry : weights) {
-              if (!dimensions.contains(entry.first) || !valid_score(dimensions[entry.first])) {
+              if (!dimensions.contains(entry.first) || !valid_integer_score(dimensions[entry.first])) {
                 complete = false;
                 break;
               }
@@ -1213,16 +1266,21 @@ class ReliableDatabase {
             }
             if (complete) total = static_cast<int>(std::round(weighted));
           }
-        }
       }
       // A read must never destroy an existing report just because it cannot
       // infer a score. Keep the evidence for diagnosis instead of re-enqueueing.
-      if (!total) throw ApiError(503, "REPORT_INVALID", "旧报告缺少可恢复的总分，原报告已保留");
-      tx.exec_params(R"(
-        UPDATE evaluations SET report = jsonb_set(report, '{totalScore}', to_jsonb($2::int)),
-          updated_at = NOW()
-        WHERE session_id = $1 AND report->'totalScore' IS DISTINCT FROM to_jsonb($2::int)
-      )", session_id, *total);
+      if (!total) {
+        throw ApiError(503, "REPORT_INVALID",
+                       schema_version == 2 ? "v2 报告总分状态无效，原报告已保留"
+                                           : "旧报告缺少可恢复的总分，原报告已保留");
+      }
+      if (schema_version == 1) {
+        tx.exec_params(R"(
+          UPDATE evaluations SET report = jsonb_set(report, '{totalScore}', to_jsonb($2::int)),
+            updated_at = NOW()
+          WHERE session_id = $1 AND report->'totalScore' IS DISTINCT FROM to_jsonb($2::int)
+        )", session_id, *total);
+      }
       tx.exec_params(R"(
         UPDATE sessions SET evaluation_status = 'ready', total_score = $2, updated_at = NOW()
         WHERE id = $1 AND (evaluation_status <> 'ready' OR total_score IS DISTINCT FROM $2)
@@ -1407,7 +1465,7 @@ class ReliableRoleplayDatabase {
   explicit ReliableRoleplayDatabase(std::shared_ptr<DatabasePool> database_pool)
       : database_pool_(std::move(database_pool)) {}
 
-  json listScenarios(const std::string& user_id) const {
+  json listScenarios(const std::string& user_id, const std::string& service_id = "") const {
     auto connection = database_pool_->acquire();
     pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params(R"(
@@ -1419,10 +1477,11 @@ class ReliableRoleplayDatabase {
       LEFT JOIN LATERAL (
         SELECT id, current_round, max_rounds, updated_at FROM roleplay_sessions
         WHERE user_id = $1 AND scenario_id = s.id AND status = 'in_progress'
+          AND ($2 = '' OR service_id = $2)
         ORDER BY updated_at DESC LIMIT 1
       ) active ON TRUE
       ORDER BY s.sort_order
-    )", user_id);
+    )", user_id, service_id);
     json items = json::array();
     for (const auto& row : rows) {
       const auto config = json::parse(row["roleplay_config"].c_str());
@@ -1452,34 +1511,73 @@ class ReliableRoleplayDatabase {
     return {{"items", items}};
   }
 
-  json createSession(const std::string& user_id, const std::string& scenario_id) const {
+  json createSession(const std::string& user_id, const std::string& scenario_id,
+                     const std::string& service_id = "",
+                     const std::string& client_session_id = "") const {
     auto connection = database_pool_->acquire();
     pqxx::work tx(connection.get());
     const auto scenario = tx.exec_params(
         "SELECT id, name, max_rounds FROM scenarios WHERE id = $1", scenario_id);
     if (scenario.empty()) throw ApiError(404, "SCENARIO_NOT_FOUND", "训练场景不存在");
+    if (!service_id.empty()) {
+      if (client_session_id.empty() || client_session_id.size() > 100) {
+        throw ApiError(400, "INVALID_ARGUMENT", "clientSessionId 格式无效");
+      }
+      const auto replay = tx.exec_params(R"(
+        SELECT id, scenario_id, service_id FROM roleplay_sessions
+        WHERE user_id = $1 AND client_session_id = $2
+      )", user_id, client_session_id);
+      if (!replay.empty()) {
+        if (std::string(replay[0]["scenario_id"].c_str()) != scenario_id ||
+            replay[0]["service_id"].is_null() ||
+            std::string(replay[0]["service_id"].c_str()) != service_id) {
+          throw ApiError(409, "IDEMPOTENCY_CONFLICT", "clientSessionId 对应不同会话参数");
+        }
+        return {{"session", getSessionRow(tx, replay[0]["id"].c_str(), user_id)},
+                {"messages", json::array()}};
+      }
+    }
     const auto session_id = makeId("rpsess");
     const auto max_rounds = clampInt(scenario[0]["max_rounds"].as<int>(), 1, 10);
+    std::string service_revision_id;
+    if (!service_id.empty()) {
+      const auto service = tx.exec_params(R"(
+        SELECT s.current_revision_id FROM clinic_services s
+        JOIN service_scenarios ss ON ss.service_id = s.id AND ss.scenario_id = $2
+        WHERE s.id = $1 AND s.status = 'active' AND s.current_revision_id IS NOT NULL
+      )", service_id, scenario_id);
+      if (service.empty()) {
+        throw ApiError(409, "SERVICE_SCENARIO_MISMATCH", "服务不可用或不支持当前场景");
+      }
+      service_revision_id = service[0]["current_revision_id"].c_str();
+    }
     const auto inserted = tx.exec_params(R"(
       INSERT INTO roleplay_sessions
-        (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds)
-      VALUES ($1, $2, $3, $4, 'in_progress', 0, $5)
-      ON CONFLICT (user_id, scenario_id) WHERE status = 'in_progress' DO NOTHING
+        (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds,
+         service_id, service_revision_id, client_session_id, context_version)
+      VALUES ($1, $2, $3, $4, 'in_progress', 0, $5, NULLIF($6, ''), NULLIF($7, ''),
+              NULLIF($8, ''), CASE WHEN $6 = '' THEN 1 ELSE 2 END)
+      ON CONFLICT DO NOTHING
       RETURNING id
-    )", session_id, user_id, scenario_id, scenario[0]["name"].c_str(), max_rounds);
+    )", session_id, user_id, scenario_id, scenario[0]["name"].c_str(), max_rounds,
+        service_id, service_revision_id, client_session_id);
     if (inserted.empty()) {
-      throw ApiError(409, "ROLEPLAY_SESSION_IN_PROGRESS", "该场景已有进行中的患者模拟");
+      throw ApiError(409, "ROLEPLAY_SESSION_IN_PROGRESS", "该服务和场景已有进行中的患者模拟");
+    }
+    if (!service_id.empty()) {
+      createRagContext(tx, session_id, service_id, service_revision_id);
     }
     const auto saved = getSessionRow(tx, session_id, user_id);
     tx.commit();
     return {{"session", saved}, {"messages", json::array()}};
   }
 
-  json restartSession(const std::string& user_id, const std::string& session_id) const {
+  json restartSession(const std::string& user_id, const std::string& session_id,
+                      const std::string& client_session_id = "") const {
     auto connection = database_pool_->acquire();
     pqxx::work tx(connection.get());
     const auto previous = tx.exec_params(R"(
-      SELECT scenario_id, status FROM roleplay_sessions
+      SELECT scenario_id, status, service_id FROM roleplay_sessions
       WHERE id = $1 AND user_id = $2 FOR UPDATE
     )", session_id, user_id);
     if (previous.empty()) {
@@ -1489,18 +1587,36 @@ class ReliableRoleplayDatabase {
       throw ApiError(409, "ROLEPLAY_SESSION_NOT_RESTARTABLE", "只有进行中的患者模拟可以重新开始");
     }
     const auto scenario_id = std::string(previous[0]["scenario_id"].c_str());
+    const auto service_id = previous[0]["service_id"].is_null()
+        ? std::string() : std::string(previous[0]["service_id"].c_str());
     const auto scenario = tx.exec_params(
         "SELECT name, max_rounds FROM scenarios WHERE id = $1", scenario_id);
     tx.exec_params(
         "UPDATE roleplay_sessions SET status = 'abandoned', updated_at = NOW() WHERE id = $1",
         session_id);
     const auto new_id = makeId("rpsess");
+    std::string service_revision_id;
+    if (!service_id.empty()) {
+      if (client_session_id.empty() || client_session_id.size() > 100) {
+        throw ApiError(400, "INVALID_ARGUMENT", "clientSessionId 格式无效");
+      }
+      const auto service = tx.exec_params(R"(
+        SELECT current_revision_id FROM clinic_services
+        WHERE id = $1 AND status = 'active' AND current_revision_id IS NOT NULL
+      )", service_id);
+      if (service.empty()) throw ApiError(409, "SERVICE_NOT_AVAILABLE", "服务当前不可用");
+      service_revision_id = service[0]["current_revision_id"].c_str();
+    }
     tx.exec_params(R"(
       INSERT INTO roleplay_sessions
-        (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds)
-      VALUES ($1, $2, $3, $4, 'in_progress', 0, $5)
+        (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds,
+         service_id, service_revision_id, client_session_id, context_version)
+      VALUES ($1, $2, $3, $4, 'in_progress', 0, $5, NULLIF($6, ''), NULLIF($7, ''),
+              NULLIF($8, ''), CASE WHEN $6 = '' THEN 1 ELSE 2 END)
     )", new_id, user_id, scenario_id, scenario[0]["name"].c_str(),
-        clampInt(scenario[0]["max_rounds"].as<int>(), 1, 10));
+        clampInt(scenario[0]["max_rounds"].as<int>(), 1, 10), service_id,
+        service_revision_id, client_session_id);
+    if (!service_id.empty()) createRagContext(tx, new_id, service_id, service_revision_id);
     const auto saved = getSessionRow(tx, new_id, user_id);
     tx.commit();
     return {{"session", saved}, {"messages", json::array()}};
@@ -1511,7 +1627,8 @@ class ReliableRoleplayDatabase {
     pqxx::read_transaction tx(connection.get());
     const auto session = getSessionRow(tx, session_id, user_id);
     const auto rows = tx.exec_params(R"(
-      SELECT id, role, content, learning_points, compliance_boundary, round,
+      SELECT id, role, content, learning_points, compliance_boundary, answer_status,
+        citations, trace_id, round,
         to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD"T"HH24:MI:SS') || '+08:00' AS created_at
       FROM roleplay_messages WHERE session_id = $1 ORDER BY round, created_at
     )", session_id);
@@ -1550,10 +1667,14 @@ class ReliableRoleplayDatabase {
     auto connection = database_pool_->acquire();
     pqxx::read_transaction tx(connection.get());
     std::string query =
-        "SELECT r.id, r.scenario_id, r.scenario_name, r.status, r.current_round, r.max_rounds, " +
+        "SELECT r.id, r.scenario_id, r.scenario_name, r.status, r.current_round, r.max_rounds, "
+        "r.context_version, r.service_id, r.service_revision_id, cs.name AS service_name, "
+        "sr.version AS service_version, " +
         std::string(kRoleplaySessionTimes) +
         ", COALESCE(summary.status, 'not_started') AS summary_status "
         "FROM roleplay_sessions r LEFT JOIN roleplay_summaries summary ON summary.session_id = r.id "
+        "LEFT JOIN clinic_services cs ON cs.id = r.service_id "
+        "LEFT JOIN service_revisions sr ON sr.id = r.service_revision_id "
         "WHERE r.user_id = " + tx.quote(user_id);
     if (status != "all") query += " AND r.status = " + tx.quote(status);
     if (!scenario_id.empty()) query += " AND r.scenario_id = " + tx.quote(scenario_id);
@@ -1583,6 +1704,48 @@ class ReliableRoleplayDatabase {
                          {"patientProfile", json::parse(row["patient_profile"].c_str())},
                          {"maxRounds", row["max_rounds"].as<int>()}}},
             {"roleplay", guidance}};
+  }
+
+  json getRagContext(const std::string& session_id) const {
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
+    const auto rows = tx.exec_params(R"(
+      SELECT c.id, c.service_id, c.service_revision_id, c.manifest, c.manifest_hash,
+        c.training_scope,
+        to_char(c.knowledge_as_of AT TIME ZONE 'Asia/Shanghai',
+          'YYYY-MM-DD"T"HH24:MI:SS') || '+08:00' AS knowledge_as_of
+      FROM training_contexts c
+      WHERE c.session_type = 'roleplay' AND c.session_id = $1
+    )", session_id);
+    if (rows.empty()) return nullptr;
+    return {{"contextId", rows[0]["id"].c_str()},
+            {"serviceId", rows[0]["service_id"].c_str()},
+            {"serviceRevisionId", rows[0]["service_revision_id"].c_str()},
+            {"manifest", json::parse(rows[0]["manifest"].c_str())},
+            {"manifestHash", rows[0]["manifest_hash"].c_str()},
+            {"trainingScope", rows[0]["training_scope"].c_str()},
+            {"knowledgeAsOf", rows[0]["knowledge_as_of"].c_str()}};
+  }
+
+  json getEvidence(const std::string& user_id, const std::string& session_id,
+                   const std::string& trace_id) const {
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
+    const auto rows = tx.exec_params(R"(
+      SELECT t.id, t.purpose, t.round, t.query, t.evidence_json, t.model_version, t.created_at
+      FROM rag_traces t
+      JOIN training_contexts c ON c.id = t.context_id AND c.session_type = 'roleplay'
+      JOIN roleplay_sessions r ON r.id = c.session_id
+      WHERE r.id = $1 AND r.user_id = $2 AND t.id = $3 AND t.is_public = TRUE
+    )", session_id, user_id, trace_id);
+    if (rows.empty()) throw ApiError(404, "EVIDENCE_NOT_FOUND", "引用依据不存在");
+    return {{"traceId", rows[0]["id"].c_str()}, {"purpose", rows[0]["purpose"].c_str()},
+            {"round", rows[0]["round"].is_null() ? json(nullptr) : json(rows[0]["round"].as<int>())},
+            {"query", rows[0]["query"].c_str()},
+            {"evidence", json::parse(rows[0]["evidence_json"].c_str())},
+            {"modelVersion", rows[0]["model_version"].is_null()
+                ? json(nullptr) : json(rows[0]["model_version"].c_str())},
+            {"createdAt", rows[0]["created_at"].c_str()}};
   }
 
   json getHistory(const std::string& session_id) const {
@@ -1625,7 +1788,9 @@ class ReliableRoleplayDatabase {
         learner.reply_lease_until > NOW() AS lease_active,
         customer.id AS customer_id, customer.content AS customer_content,
         customer.learning_points AS customer_learning_points,
-        customer.compliance_boundary AS customer_compliance_boundary
+        customer.compliance_boundary AS customer_compliance_boundary,
+        customer.answer_status AS customer_answer_status,
+        customer.citations AS customer_citations, customer.trace_id AS customer_trace_id
       FROM roleplay_messages learner
       LEFT JOIN roleplay_messages customer ON customer.session_id = learner.session_id
         AND customer.role = 'standard_customer' AND customer.round = learner.round
@@ -1647,7 +1812,11 @@ class ReliableRoleplayDatabase {
             row["customer_id"].c_str(), "standard_customer", row["customer_content"].c_str(),
             row["learner_round"].as<int>(), json::parse(row["customer_learning_points"].c_str()),
             row["customer_compliance_boundary"].is_null()
-                ? "" : row["customer_compliance_boundary"].c_str());
+                ? "" : row["customer_compliance_boundary"].c_str(),
+            row["customer_answer_status"].is_null() ? "" : row["customer_answer_status"].c_str(),
+            row["customer_citations"].is_null() ? json::array()
+                : json::parse(row["customer_citations"].c_str()),
+            row["customer_trace_id"].is_null() ? "" : row["customer_trace_id"].c_str());
         tx.commit();
         return result;
       }
@@ -1731,9 +1900,13 @@ class ReliableRoleplayDatabase {
     const auto reply = trim(jsonString(model_reply, "reply"));
     const auto learning_points = model_reply.value("learningPoints", json::array());
     const auto boundary = trim(jsonString(model_reply, "complianceBoundary"));
+    const auto answer_status = trim(jsonString(model_reply, "answerStatus"));
+    const auto citations = model_reply.value("citations", json::array());
     if (utf8Length(reply) < 1 || utf8Length(reply) > 1000 || !learning_points.is_array() ||
         learning_points.size() < 2 || learning_points.size() > 4 || boundary.empty() ||
-        utf8Length(boundary) > 300) {
+        utf8Length(boundary) > 300 || !citations.is_array() ||
+        (!answer_status.empty() && answer_status != "answered" && answer_status != "partial" &&
+         answer_status != "unknown" && answer_status != "conflicted")) {
       throw ApiError(503, "MODEL_INVALID_RESPONSE", "模型未返回有效标准客服回复");
     }
     auto connection = database_pool_->acquire();
@@ -1745,7 +1918,8 @@ class ReliableRoleplayDatabase {
       throw ApiError(404, "ROLEPLAY_SESSION_NOT_FOUND", "患者模拟会话不存在");
     }
     const auto existing = tx.exec_params(R"(
-      SELECT id, content, learning_points, compliance_boundary FROM roleplay_messages
+      SELECT id, content, learning_points, compliance_boundary, answer_status, citations, trace_id
+      FROM roleplay_messages
       WHERE session_id = $1 AND role = 'standard_customer' AND round = $2
     )", session_id, round);
     if (!existing.empty()) {
@@ -1755,7 +1929,10 @@ class ReliableRoleplayDatabase {
       return {{"standardCustomerMessage", messageJson(
                   row["id"].c_str(), "standard_customer", row["content"].c_str(), round,
                   json::parse(row["learning_points"].c_str()),
-                  row["compliance_boundary"].is_null() ? "" : row["compliance_boundary"].c_str())},
+                  row["compliance_boundary"].is_null() ? "" : row["compliance_boundary"].c_str(),
+                  row["answer_status"].is_null() ? "" : row["answer_status"].c_str(),
+                  json::parse(row["citations"].c_str()),
+                  row["trace_id"].is_null() ? "" : row["trace_id"].c_str())},
               {"session", session}, {"shouldFinish", session["status"] == "completed"}};
     }
     const auto status = std::string(session_rows[0]["status"].c_str());
@@ -1772,11 +1949,34 @@ class ReliableRoleplayDatabase {
       throw ApiError(409, "ROLEPLAY_RESPONSE_PENDING", "该回复生成租约已失效，请查询会话后重试");
     }
     const auto message_id = makeId("rpmsg");
+    const auto trace_id = trim(jsonString(model_reply, "traceId"));
+    if (!trace_id.empty()) {
+      const auto evidence_bundle = model_reply.value("evidenceBundle", json::object());
+      const auto inserted_trace = tx.exec_params(R"(
+        INSERT INTO rag_traces
+          (id, context_id, purpose, round, attempt_token, query, evidence_json,
+           model_version, is_public)
+        SELECT $1, c.id, 'customer_reply', $3, $4, $5, $6::jsonb, NULLIF($7, ''), FALSE
+        FROM training_contexts c
+        WHERE c.session_type = 'roleplay' AND c.session_id = $2
+        RETURNING id
+      )", trace_id, session_id, round, token, jsonString(model_reply, "query"),
+          evidence_bundle.dump(), jsonString(model_reply, "modelVersion"));
+      if (inserted_trace.empty()) {
+        throw ApiError(503, "RAG_UNAVAILABLE", "会话证据上下文不可用");
+      }
+    }
     tx.exec_params(R"(
       INSERT INTO roleplay_messages
-        (id, session_id, role, content, learning_points, compliance_boundary, round)
-      VALUES ($1, $2, 'standard_customer', $3, $4::jsonb, $5, $6)
-    )", message_id, session_id, reply, learning_points.dump(), boundary, round);
+        (id, session_id, role, content, learning_points, compliance_boundary, round,
+         answer_status, citations, trace_id)
+      VALUES ($1, $2, 'standard_customer', $3, $4::jsonb, $5, $6,
+              NULLIF($7, ''), $8::jsonb, NULLIF($9, ''))
+    )", message_id, session_id, reply, learning_points.dump(), boundary, round,
+        answer_status, citations.dump(), trace_id);
+    if (!trace_id.empty()) {
+      tx.exec_params("UPDATE rag_traces SET is_public = TRUE WHERE id = $1", trace_id);
+    }
     tx.exec_params(R"(
       UPDATE roleplay_messages SET reply_status = 'ready', reply_lease_until = NULL,
         reply_attempt_token = NULL, reply_error_type = NULL WHERE id = $1
@@ -1802,7 +2002,8 @@ class ReliableRoleplayDatabase {
     const auto saved = getSessionRow(tx, session_id, user_id);
     tx.commit();
     return {{"standardCustomerMessage", messageJson(
-                message_id, "standard_customer", reply, round, learning_points, boundary)},
+                message_id, "standard_customer", reply, round, learning_points, boundary,
+                answer_status, citations, trace_id)},
             {"session", saved}, {"shouldFinish", should_finish}};
   }
 
@@ -1937,6 +2138,31 @@ class ReliableRoleplayDatabase {
   }
 
  private:
+  static void createRagContext(pqxx::transaction_base& tx, const std::string& session_id,
+                               const std::string& service_id,
+                               const std::string& service_revision_id) {
+    const auto revisions = tx.exec_params(R"(
+      SELECT r.id
+      FROM knowledge_entries e
+      JOIN knowledge_revisions r ON r.id = e.current_revision_id
+      WHERE e.status = 'active' AND r.metadata->>'trainingScope' = 'demo'
+        AND (e.scope = 'general' OR e.service_id = $1)
+      ORDER BY r.id
+    )", service_id);
+    json manifest = json::array();
+    for (const auto& row : revisions) manifest.push_back(row["id"].c_str());
+    const auto manifest_text = manifest.dump();
+    const auto manifest_hash = std::string("md5:") +
+        tx.exec_params("SELECT md5($1) AS hash", manifest_text)[0]["hash"].c_str();
+    tx.exec_params(R"(
+      INSERT INTO training_contexts
+        (id, session_type, session_id, service_id, service_revision_id,
+         manifest, manifest_hash, training_scope)
+      VALUES ($1, 'roleplay', $2, $3, $4, $5::jsonb, $6, 'demo')
+    )", makeId("ctx"), session_id, service_id, service_revision_id,
+        manifest_text, manifest_hash);
+  }
+
   static std::string repairSummaryState(pqxx::transaction_base& tx,
                                         const std::string& session_id,
                                         const std::string& session_status) {
@@ -1977,11 +2203,17 @@ class ReliableRoleplayDatabase {
   static json messageJson(const std::string& id, const std::string& role,
                           const std::string& content, int round,
                           const json& learning_points = json::array(),
-                          const std::string& compliance_boundary = "") {
+                          const std::string& compliance_boundary = "",
+                          const std::string& answer_status = "",
+                          const json& citations = json::array(),
+                          const std::string& trace_id = "") {
     return {{"id", id}, {"role", role}, {"content", content}, {"round", round},
             {"learningPoints", learning_points},
             {"complianceBoundary", compliance_boundary.empty()
-                ? json(nullptr) : json(compliance_boundary)}};
+                ? json(nullptr) : json(compliance_boundary)},
+            {"answerStatus", answer_status.empty() ? json(nullptr) : json(answer_status)},
+            {"citations", citations},
+            {"traceId", trace_id.empty() ? json(nullptr) : json(trace_id)}};
   }
 
   static json messageJson(const pqxx::row& row) {
@@ -1991,7 +2223,11 @@ class ReliableRoleplayDatabase {
         ? "" : std::string(row["compliance_boundary"].c_str());
     auto message = messageJson(row["id"].c_str(), row["role"].c_str(),
                                row["content"].c_str(), row["round"].as<int>(),
-                               learning_points, boundary);
+                               learning_points, boundary,
+                               row["answer_status"].is_null() ? "" : row["answer_status"].c_str(),
+                               row["citations"].is_null() ? json::array()
+                                   : json::parse(row["citations"].c_str()),
+                               row["trace_id"].is_null() ? "" : row["trace_id"].c_str());
     message["createdAt"] = row["created_at"].c_str();
     return message;
   }
@@ -2000,9 +2236,12 @@ class ReliableRoleplayDatabase {
                             const std::string& user_id) {
     const auto rows = tx.exec_params(
         "SELECT r.id, r.user_id, r.scenario_id, r.scenario_name, r.status, r.current_round, "
-        "r.max_rounds, " + std::string(kRoleplaySessionTimes) +
+        "r.max_rounds, r.context_version, r.service_id, r.service_revision_id, "
+        "cs.name AS service_name, sr.version AS service_version, " + std::string(kRoleplaySessionTimes) +
         ", COALESCE(summary.status, 'not_started') AS summary_status "
         "FROM roleplay_sessions r LEFT JOIN roleplay_summaries summary ON summary.session_id = r.id "
+        "LEFT JOIN clinic_services cs ON cs.id = r.service_id "
+        "LEFT JOIN service_revisions sr ON sr.id = r.service_revision_id "
         "WHERE r.id = $1", session_id);
     if (rows.empty() || (!user_id.empty() && std::string(rows[0]["user_id"].c_str()) != user_id)) {
       throw ApiError(404, "ROLEPLAY_SESSION_NOT_FOUND", "患者模拟会话不存在");
