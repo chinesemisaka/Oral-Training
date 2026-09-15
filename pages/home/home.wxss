@@ -174,10 +174,3 @@
 .swiper-page-indicator { display: flex; justify-content: center; gap: 10rpx; margin-top: 16rpx; }
 .page-dot { width: 12rpx; height: 12rpx; border-radius: 50%; background: var(--color-border); transition: all .2s; }
 .page-dot.active { width: 28rpx; border-radius: 6rpx; background: var(--color-primary); }
-
-/* ── 从 master 并入：下列选择器的类名在 app.wxss 与本页 wxss 里都不存在，追加不会覆盖任何既有规则 ──*/
-.model-key-card { margin: 22rpx 0 34rpx; padding: 24rpx; }
-.model-key-title { color: #333; font-size: 28rpx; font-weight: 600; }
-.key-input-row { display: flex; gap: 14rpx; align-items: center; margin-top: 18rpx; }
-.key-input { flex: 1; height: 66rpx; padding: 0 16rpx; border: 1rpx solid #e2e3ef; border-radius: 12rpx; color: #333; font-size: 24rpx; }
-.key-save-button { flex: 0 0 120rpx; height: 66rpx; margin: 0; padding: 0; border-radius: 12rpx; line-height: 66rpx; color: #fff; background: #667eea; font-size: 24rpx; }

@@ -51,8 +51,6 @@ const realApi = (() => {
 const apiStub = {
   getCurrentUser: () => ({ id: 'demo-user-001', role: 'admin', displayName: '机构主管' }),
   ensureAuthenticated: () => Promise.resolve(),
-  /* 首页 onShow 末尾的后端健康探测：决定是否展示模型密钥配置入口（master 侧功能） */
-  getHealth: () => Promise.resolve({ runtimeApiKeyAllowed: false }),
   getSupervisorDashboard: () => Promise.resolve({
     range: 'month', studentCount: 8, totalSessions: 42, completedSessions: 30,
     averageScore: 71.25, passRate: 76.5, scenarioStats: [], dimensionAverages: {}, trend: []

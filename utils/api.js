@@ -115,7 +115,6 @@ module.exports = {
   clearAuthentication,
   getCurrentUser: () => wx.getStorageSync(USER_KEY) || null,
   getHealth: () => request('/health', { public: true, acceptUnreadyHealth: true }),
-  setDeepSeekKey: apiKey => request('/config/deepseek-key', { method: 'POST', data: { apiKey } }),
 
   // ── 训练（学员端） ──
   getScenarios: () => request('/scenarios'),

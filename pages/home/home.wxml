@@ -28,15 +28,6 @@
     </view>
   </view>
 
-  <!-- 模型密钥配置入口（master 独有，由 api.getHealth 决定是否展示） -->
-  <view class="model-key-card card" wx:if="{{showKeyConfig}}">
-    <text class="model-key-title">DeepSeek 模型密钥</text>
-    <view class="key-input-row">
-      <input class="key-input" password placeholder="输入 DeepSeek API Key" value="{{apiKey}}" bindinput="onKeyInput" disabled="{{savingKey}}" />
-      <button class="key-save-button" bindtap="saveApiKey" disabled="{{savingKey || !apiKey}}">{{savingKey ? '配置中' : '配置'}}</button>
-    </view>
-  </view>
-
   <!-- 培训计划提醒：最紧急的待办计划摘要（标题 / 剩余时间 / 达标差额 / 进度），
        主体点击进该计划明细，右上角「全部 N 个」进列表看全量 -->
   <view class="plan-banner {{planNotice.urgent ? 'is-urgent' : ''}}" wx:if="{{!isAdmin && planNotice}}" bindtap="openUrgentPlan" hover-class="plan-banner-hover">

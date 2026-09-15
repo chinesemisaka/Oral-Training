@@ -115,12 +115,7 @@ Page({
     overviewFailed: false,
     recommendFailed: false,
     recentFailed: false,
-    workbenchFailed: false,
-    /* 模型密钥配置入口：来自 master 的 api.getHealth()，仅后端允许时显示 */
-    showKeyConfig: false,
-    apiKey: '',
-    keyStatus: '',
-    savingKey: false
+    workbenchFailed: false
   },
 
   onShow() {
@@ -157,10 +152,6 @@ Page({
     }).catch(() => {
       wx.showToast({ title: '登录状态获取失败，请检查网络', icon: 'none' });
     });
-    /* master 独有：后端健康探测，决定是否展示模型密钥配置入口 */
-    api.getHealth().then(data => {
-      this.setData({ showKeyConfig: data.runtimeApiKeyAllowed === true });
-    }).catch(() => this.setData({ showKeyConfig: false }));
   },
 
   // 各区块失败后的统一重试入口：重新拉一遍全部四路
@@ -414,19 +405,6 @@ Page({
   },
   viewDashboard() { wx.switchTab({ url: '/pages/admin/admin' }); },
   viewPhrases() { wx.navigateTo({ url: '/pages/phrases/phrases' }); },
-
-  // ── 模型密钥配置（master 独有，由 api.getHealth 触发显示） ──
-  onKeyInput(e) { this.setData({ apiKey: e.detail.value, keyStatus: '' }); },
-
-  saveApiKey() {
-    const apiKey = this.data.apiKey.trim();
-    if (!apiKey || this.data.savingKey) return;
-    this.setData({ savingKey: true });
-    api.setDeepSeekKey(apiKey).then(() => {
-      this.setData({ apiKey: '', keyStatus: '已配置到当前后端进程' });
-      wx.showToast({ title: '模型密钥已配置', icon: 'success' });
-    }).catch(error => this.showRequestError(error)).finally(() => this.setData({ savingKey: false }));
-  },
 
   showRequestError(error) {
     wx.showToast({ title: error.message || '后端服务不可用', icon: 'none' });

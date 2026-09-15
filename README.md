@@ -112,7 +112,7 @@ cd backend
 Copy-Item backend.env.example backend.env
 ```
 
-3. 编辑 `backend.env`，至少修改数据库密码（也可填 DeepSeek Key）：
+3. 编辑 `backend.env`，至少修改数据库密码。**DeepSeek API Key 也在这里配置**——小程序前端已移除密钥输入框，请把 `DEEPSEEK_API_KEY=` 后面的占位值替换为你的真实 Key：
 
 ```dotenv
 DATABASE_URL=postgresql://oral_training_app:your_db_password@127.0.0.1:5432/oral_training
@@ -158,7 +158,7 @@ DATABASE_POOL_WAIT_MS=3000
 
 API、身份服务、报告 Worker 和独立的知识草稿 Worker 共享惰性数据库连接池。连接总数受 `DATABASE_POOL_SIZE` 限制；等待超过 `DATABASE_POOL_WAIT_MS` 的请求返回 HTTP 503 `DATABASE_BUSY`。连接池大小必须至少比两个 Worker 池的并发数之和多 2，避免后台任务占满 API 所需连接。
 
-> 没有 DeepSeek Key 时也可以先启动并做大部分界面测试，但「开始训练/生成报告/患者模拟」这类依赖模型的功能需要有效 Key。
+> **如何配置 DeepSeek API Key**：小程序前端不再提供密钥输入框，请统一在 `backend/backend.env` 的 `DEEPSEEK_API_KEY` 中填写（见上面第 5 节步骤 3），保存后重启后端即可生效。没有 Key 时服务也能启动、也能做界面测试，但「开始训练 / 生成报告 / 患者模拟」这类依赖模型的功能不可用（健康检查会返回 503）。
 
 ---
 
