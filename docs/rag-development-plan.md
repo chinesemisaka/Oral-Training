@@ -552,15 +552,15 @@ reliable_store.h 中 training_contexts/rag_traces/roleplay summary 逻辑。
 - 当前基线：`master@be64028ad5b121bbe5fc2b7a33d3a7a05380ca9d`。
 - 最近 RAG 功能提交：PR #7，`377464287c935c585ea4e3464a66688bf7dfc63d`，已合并。
 - 最近文档提交：`112a3f52206a3c61857303efb75710d339584e9e`，已合并。
-- 下一步：从 N01 开始，不要直接跳到向量检索或评分页面。
+- 下一步：见下方 N01 交接记录；先处理集成验收阻塞，再进入 N02。
 
 ### N01 — 加固当前角色互换 RAG（2026-09-20）
 
-- 状态：实现完成，核心离线验证通过；Windows/数据库集成及微信视觉验收待确认。
+- 状态：实现完成；核心离线、Windows 全量构建、CTest 和知识管理集成通过；总 CI 被上游主管看板场景统计测试阻断，尚未全量验收。
 - 基线：同步上游 `master@a1ba5fb1ea028d74b64f4a1ca5917d8e05e8d740`；工作分支 `fix/rag-n01`。旧工作区的未跟踪设计文档未覆盖，本次使用独立工作区。
 - 实际修改：`sha256.h`、`rag_manifest.h`、`evidence_validator.h`；`knowledge_store.cpp`、`rag_retriever.*`、`rag_types.h`、`main.cpp`、`reliable_store.h`；CTest、证据/检索测试；复盘页、历史详情页和共用引用展示；API 与验证记录。
 - API/DTO：规范化 SHA-256、bundle/passage 服务范围、新 citation 元数据；v2 summary 增加 groundedFacts/citations/knowledgeManifestHash。无迁移、无新配置。
 - 验证：58 项证据断言、RAG contract、客户端恢复、复盘引用 JS 测试及 50 个 JS/37 个 JSON 静态检查通过；详见 [N01 验证记录](rag-n01-validation.md)。
 - 与计划偏差：校验器 header-only；v2 沟通文本用固定模板，复盘直接由已公开证据确定性生成；原始旧 hash 不批量重写，读取时校验并规范化，保留审计原值。缺少范围元数据的旧 passage 不复用。
-- 已知限制：Windows/MSVC、数据库集成、微信视觉验收尚未本地执行；未运行真实模型。
+- 已知限制：通用 database_feature 测试停在主管统计场景数量不一致；后续通用 smoke/状态机/并发脚本未运行；微信视觉及真实模型未运行。代码提交 `60ddf18`，完整日志与结果见 N01 验证记录。
 - 下一任务：确认 N01 集成验收后执行 N02。当前最新迁移已为 019，必须重新核对并从下一空闲编号开始，不能使用计划原文中的 012。

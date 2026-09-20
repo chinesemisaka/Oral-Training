@@ -49,3 +49,16 @@ N01 状态为“实现完成，离线核心验证通过，Windows/数据库集�
 [Run 35498367274](https://github.com/chinesemisaka/Oral-Training/actions/runs/35498367274)，提交 `0cf18e7`：MSVC、CTest、迁移/知识存储及 knowledge_admin_api 全部通过，修复了测试库缺少 019 字段的问题。
 
 数据库功能测试随后在原有“话术分类筛选”断言失败：fixture 同时为当前报告与 400 天前的历史报告写入相同分类话术，但断言只期待一条。该查询没有时间窗口，应该返回两份；修正为精确核对两份会话 ID、phraseKey 和分类，保留其他分类必须为空的断言，不修改业务代码。此处之前的失败阻止了无模型 HTTP smoke/状态机/并发测试继续执行。
+
+## 最终结果与剩余阻塞
+
+[Run 35498662976](https://github.com/chinesemisaka/Oral-Training/actions/runs/35498662976)，代码提交 `60ddf18e560cb487b9a67befeefd4c9580e2dccb`：
+
+- Passed：Windows/MSVC Release 全量构建；CTest 9 Passed / 0 Failed / 1 Skipped；空库/历史迁移脚本、知识目录迁移、知识存储数据库测试、知识管理 API smoke。
+- 分类话术断言已通过，执行继续到主管看板测试。
+- Failed：`database_feature_test` 报 `supervisor aggregate did not cover every scenario`。当前场景目录过滤 `is_active AND NOT is_template`，主管看板场景统计口径不同；019 增加自由模拟模板后暴露该差异。这两处业务查询均来自上游，本次未修改。需要在主管看板任务中明确统计范围并修复/验证，不能直接放宽断言。
+- Not run：后续通用无模型 HTTP smoke、状态机和会话并发脚本（被前述失败阻断）；微信模拟器/真机；真实 DeepSeek。
+
+因此：**N01 实现已提交，核心离线与 Windows 构建/单元/知识管理集成验证通过；仓库总 CI 仍失败，不能宣布全量验收通过或直接合并。** 本次不延伸修改主管看板产品逻辑。原始失败日志与之前两处测试修复均保留。
+
+上游草稿 PR 创建被 GitHub 403 `Resource not accessible by integration` 拒绝；开发代码已保存到个人 fork `fix/rag-n01`，未合并 master。
