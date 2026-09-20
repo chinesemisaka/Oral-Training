@@ -1199,47 +1199,51 @@ class ReliableDatabase {
     /* 两个可选筛选用固定占位符 + 空串短路，避免拼 SQL 时重排参数序号；
        空串比较必须显式 ::text，否则 PostgreSQL 无法推断 $2/$3 的类型。
        scenarios 用 JOIN：sessions.scenario_id 有外键指向 scenarios，场景行必然存在。 */
-    const auto rows = tx.exec_params(R"(
-      SELECT s.id, s.scenario_id, s.scenario_name, sc.category,
-        to_char(s.finished_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS finished_date,
-        e.report
-      FROM sessions s JOIN evaluations e ON e.session_id = s.id
-      JOIN scenarios sc ON sc.id = s.scenario_id
-      WHERE s.user_id = $1 AND s.status = 'completed' AND e.status = 'ready'
-        AND ($2::text = '' OR s.scenario_id = $2::text)
-        AND ($3::text = '' OR sc.category = $3::text)
-      ORDER BY s.finished_at DESC NULLS LAST LIMIT 200
-    )", user_id, scenario_id, scene_category);
     json items = json::array();
-    for (const auto& row : rows) {
-      const auto report = storedReport(row);
-      const auto category = std::string(row["category"].c_str());
-      for (const auto& phrase : learningPhrasesFromReport(report)) {
-        if (items.size() >= static_cast<size_t>(limit)) break;
-        if (!phrase.is_object()) continue;
-        const auto phrase_key = jsonString(phrase, "phraseKey");
-        if (phrase_key.empty()) continue;
-        const auto patient_says = jsonString(phrase, "patientSays");
-        const auto cs_reply = jsonString(phrase, "csReply");
-        const auto reason = jsonString(phrase, "reason");
-        const auto scenario_name = std::string(row["scenario_name"].c_str());
-        const auto session_id = std::string(row["id"].c_str());
-        const bool favorited = favorites.find(favoriteKey(session_id, phrase_key)) != favorites.end();
-        if (favorites_only && !favorited) continue;
-        if (!search.empty() && patient_says.find(search) == std::string::npos &&
-            cs_reply.find(search) == std::string::npos && reason.find(search) == std::string::npos &&
-            scenario_name.find(search) == std::string::npos) {
-          continue;
+    // 筛选发生在报告解析后，必须继续翻页，不能把前 200 份报告当作全部历史。
+    for (size_t offset = 0; items.size() < static_cast<size_t>(limit); offset += 200) {
+      const auto rows = tx.exec_params(R"(
+        SELECT s.id, s.scenario_id, s.scenario_name, sc.category,
+          to_char(s.finished_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS finished_date,
+          e.report
+        FROM sessions s JOIN evaluations e ON e.session_id = s.id
+        JOIN scenarios sc ON sc.id = s.scenario_id
+        WHERE s.user_id = $1 AND s.status = 'completed' AND e.status = 'ready'
+          AND ($2::text = '' OR s.scenario_id = $2::text)
+          AND ($3::text = '' OR sc.category = $3::text)
+        ORDER BY s.finished_at DESC NULLS LAST, s.id DESC LIMIT 200 OFFSET $4
+      )", user_id, scenario_id, scene_category, offset);
+      for (const auto& row : rows) {
+        const auto report = storedReport(row);
+        const auto category = std::string(row["category"].c_str());
+        for (const auto& phrase : learningPhrasesFromReport(report)) {
+          if (items.size() >= static_cast<size_t>(limit)) break;
+          if (!phrase.is_object()) continue;
+          const auto phrase_key = jsonString(phrase, "phraseKey");
+          if (phrase_key.empty()) continue;
+          const auto patient_says = jsonString(phrase, "patientSays");
+          const auto cs_reply = jsonString(phrase, "csReply");
+          const auto reason = jsonString(phrase, "reason");
+          const auto scenario_name = std::string(row["scenario_name"].c_str());
+          const auto session_id = std::string(row["id"].c_str());
+          const bool favorited = favorites.find(favoriteKey(session_id, phrase_key)) != favorites.end();
+          if (favorites_only && !favorited) continue;
+          if (!search.empty() && patient_says.find(search) == std::string::npos &&
+              cs_reply.find(search) == std::string::npos && reason.find(search) == std::string::npos &&
+              scenario_name.find(search) == std::string::npos) {
+            continue;
+          }
+          items.push_back({
+              {"id", session_id + ':' + phrase_key}, {"sessionId", session_id}, {"phraseKey", phrase_key},
+              {"scenarioId", row["scenario_id"].c_str()}, {"scenarioName", scenario_name},
+              {"category", category}, {"finishedDate", row["finished_date"].c_str()},
+              {"round", jsonInt(phrase, "round", 0)}, {"patientSays", patient_says},
+              {"csReply", cs_reply}, {"reason", reason}, {"favorited", favorited},
+          });
         }
-        items.push_back({
-            {"id", session_id + ':' + phrase_key}, {"sessionId", session_id}, {"phraseKey", phrase_key},
-            {"scenarioId", row["scenario_id"].c_str()}, {"scenarioName", scenario_name},
-            {"category", category}, {"finishedDate", row["finished_date"].c_str()},
-            {"round", jsonInt(phrase, "round", 0)}, {"patientSays", patient_says},
-            {"csReply", cs_reply}, {"reason", reason}, {"favorited", favorited},
-        });
+        if (items.size() >= static_cast<size_t>(limit)) break;
       }
-      if (items.size() >= static_cast<size_t>(limit)) break;
+      if (rows.size() < 200) break;
     }
     /* 分类中文名只由后端下发（sceneCategories），前端不再各写一份映射 */
     return {{"items", items}, {"total", static_cast<int>(items.size())},
@@ -1305,32 +1309,35 @@ class ReliableDatabase {
       FROM sessions s JOIN evaluations e ON e.session_id = s.id
       WHERE s.user_id = $1 AND s.status = 'completed' AND e.status = 'ready'
     )";
-    if (!scenario_id.empty()) query += " AND s.scenario_id = $2";
-    query += " ORDER BY s.finished_at DESC NULLS LAST LIMIT 200";
-    const auto rows = scenario_id.empty() ? tx.exec_params(query, user_id)
-                                          : tx.exec_params(query, user_id, scenario_id);
+    query += " AND ($2::text = '' OR s.scenario_id = $2::text)"
+        " ORDER BY s.finished_at DESC NULLS LAST, s.id DESC LIMIT 200 OFFSET $3";
     json items = json::array();
-    for (const auto& row : rows) {
-      const auto session_id = std::string(row["id"].c_str());
-      const auto report = storedReport(row);
-      for (const auto& mistake : learningMistakesFromReport(report)) {
+    // 筛选发生在报告解析后，必须继续翻页，不能把前 200 份报告当作全部历史。
+    for (size_t offset = 0; items.size() < static_cast<size_t>(limit); offset += 200) {
+      const auto rows = tx.exec_params(query, user_id, scenario_id, offset);
+      for (const auto& row : rows) {
+        const auto session_id = std::string(row["id"].c_str());
+        const auto report = storedReport(row);
+        for (const auto& mistake : learningMistakesFromReport(report)) {
+          if (items.size() >= static_cast<size_t>(limit)) break;
+          if (!mistake.is_object()) continue;
+          const auto mistake_key = jsonString(mistake, "mistakeKey");
+          if (mistake_key.empty()) continue;
+          const bool mastered = mastered_keys.find(masteryKey(session_id, mistake_key)) != mastered_keys.end();
+          if (mastered && !include_mastered) continue;
+          items.push_back({
+              {"id", session_id + ':' + mistake_key}, {"sessionId", session_id},
+              {"mistakeKey", mistake_key}, {"scenarioId", row["scenario_id"].c_str()},
+              {"scenarioName", row["scenario_name"].c_str()}, {"finishedDate", row["finished_date"].c_str()},
+              {"kind", jsonString(mistake, "kind")}, {"priority", jsonString(mistake, "priority")},
+              {"round", jsonInt(mistake, "round", 0)}, {"originalQuote", jsonString(mistake, "originalQuote")},
+              {"reason", jsonString(mistake, "reason")},
+              {"recommendedRewrite", jsonString(mistake, "recommendedRewrite")}, {"mastered", mastered},
+          });
+        }
         if (items.size() >= static_cast<size_t>(limit)) break;
-        if (!mistake.is_object()) continue;
-        const auto mistake_key = jsonString(mistake, "mistakeKey");
-        if (mistake_key.empty()) continue;
-        const bool mastered = mastered_keys.find(masteryKey(session_id, mistake_key)) != mastered_keys.end();
-        if (mastered && !include_mastered) continue;
-        items.push_back({
-            {"id", session_id + ':' + mistake_key}, {"sessionId", session_id},
-            {"mistakeKey", mistake_key}, {"scenarioId", row["scenario_id"].c_str()},
-            {"scenarioName", row["scenario_name"].c_str()}, {"finishedDate", row["finished_date"].c_str()},
-            {"kind", jsonString(mistake, "kind")}, {"priority", jsonString(mistake, "priority")},
-            {"round", jsonInt(mistake, "round", 0)}, {"originalQuote", jsonString(mistake, "originalQuote")},
-            {"reason", jsonString(mistake, "reason")},
-            {"recommendedRewrite", jsonString(mistake, "recommendedRewrite")}, {"mastered", mastered},
-        });
       }
-      if (items.size() >= static_cast<size_t>(limit)) break;
+      if (rows.size() < 200) break;
     }
     return {{"items", items}, {"total", static_cast<int>(items.size())},
             {"includeMastered", include_mastered}};
