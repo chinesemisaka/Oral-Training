@@ -1644,6 +1644,7 @@ class ReliableDatabase {
       LEFT JOIN sessions s ON s.scenario_id = sc.id
         AND s.status = 'completed' AND s.evaluation_status = 'ready'
     )" + supervisorTimeFilter(time_range, "s.finished_at") + supervisorTeamFilter("s.user_id") + R"(
+      WHERE sc.is_active AND NOT sc.is_template
       GROUP BY sc.id, sc.name, sc.sort_order ORDER BY sc.sort_order
     )", supervisor_id);
     const auto report_rows = tx.exec_params(R"(

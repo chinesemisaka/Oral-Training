@@ -289,8 +289,17 @@ int main() {
        改为与 listScenarios 的实际条数对齐，并额外确认学员练过的场景在列表里。 */
     require(dashboard["studentCount"].get<int>() >= 2,
             "supervisor aggregate did not include learner data");
-    require(dashboard["scenarioStats"].size() == scenarios["items"].size(),
-            "supervisor aggregate did not cover every scenario");
+    std::set<std::string> catalog_scenario_ids;
+    std::set<std::string> dashboard_scenario_ids;
+    for (const auto& scenario : scenarios["items"]) {
+      catalog_scenario_ids.insert(scenario["id"].get<std::string>());
+    }
+    for (const auto& stat : dashboard["scenarioStats"]) {
+      dashboard_scenario_ids.insert(stat["scenarioId"].get<std::string>());
+    }
+    require(dashboard_scenario_ids == catalog_scenario_ids &&
+                dashboard["scenarioStats"].size() == catalog_scenario_ids.size(),
+            "supervisor aggregate did not match the active non-template scenario catalog");
     require(!dashboard.contains("members") && !dashboard.contains("recentSessions"),
             "supervisor aggregate leaked member-level data");
     {
