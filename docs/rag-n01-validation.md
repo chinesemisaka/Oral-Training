@@ -43,3 +43,9 @@ N01 状态为“实现完成，离线核心验证通过，Windows/数据库集�
 后续 knowledge_admin_api.ps1 失败：测试库仅执行 001—011，而当前后端已经依赖 019 的 free_description 字段，创建角色互换会话返回 500。无模型 API/状态机/并发测试因此跳过。该失败是同步上游后的测试初始化与当前 schema 不一致。
 
 修复测试基础设施：当前后端 API smoke 和 workflow 的当前库初始化按名称顺序应用所有三位数字编号 SQL（当前 001—019），明确排除 `_seed_supervisor_test.sql`；专门的历史迁移 fixtures 保持原范围，已发布迁移没有修改。此修复为完成 N01 集成验证所需，未扩展到 N02。
+
+## 远端 Windows CI 第二次运行
+
+[Run 35498367274](https://github.com/chinesemisaka/Oral-Training/actions/runs/35498367274)，提交 `0cf18e7`：MSVC、CTest、迁移/知识存储及 knowledge_admin_api 全部通过，修复了测试库缺少 019 字段的问题。
+
+数据库功能测试随后在原有“话术分类筛选”断言失败：fixture 同时为当前报告与 400 天前的历史报告写入相同分类话术，但断言只期待一条。该查询没有时间窗口，应该返回两份；修正为精确核对两份会话 ID、phraseKey 和分类，保留其他分类必须为空的断言，不修改业务代码。此处之前的失败阻止了无模型 HTTP smoke/状态机/并发测试继续执行。

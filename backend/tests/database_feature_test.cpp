@@ -248,8 +248,17 @@ int main() {
     require(catalog_has_category, "scene category catalog did not include the report category");
     /* 分类筛选在 LIMIT 之前生效：命中分类能查到，其他分类必须为空 */
     const auto filtered = database.listLearningPhrases(kLearnerId, "", "", report_category, false, 20);
-    require(filtered["items"].size() == 1 && filtered["items"][0]["phraseKey"] == "feature-phrase",
-            "scene category filter dropped the matching phrase");
+    // Both the recent and 400-day-old fixture belong to implant-basic.
+    // Category filtering is independent of dashboard time windows.
+    std::set<std::string> filtered_sessions;
+    for (const auto& item : filtered["items"]) {
+      require(item["phraseKey"] == "feature-phrase" && item["category"] == report_category,
+              "scene category filter returned an unrelated phrase");
+      filtered_sessions.insert(item["sessionId"].get<std::string>());
+    }
+    require(filtered["items"].size() == 2 && filtered_sessions ==
+                std::set<std::string>{kReportSessionId, kOldReportSessionId},
+            "scene category filter dropped a matching recent or historical phrase");
     const auto other_category = report_category == "consultation" ? "price_negotiation" : "consultation";
     const auto excluded = database.listLearningPhrases(kLearnerId, "", "", other_category, false, 20);
     require(excluded["items"].empty(), "scene category filter leaked phrases from another category");
