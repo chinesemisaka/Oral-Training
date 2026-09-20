@@ -3138,22 +3138,13 @@ class ReliableRoleplayDatabase {
   json getRagContext(const std::string& session_id) const {
     auto connection = database_pool_->acquire();
     pqxx::read_transaction tx(connection.get());
-    const auto rows = tx.exec_params(R"(
-      SELECT c.id, c.service_id, c.service_revision_id, c.manifest, c.manifest_hash,
-        c.training_scope,
-        to_char(c.knowledge_as_of AT TIME ZONE 'Asia/Shanghai',
-          'YYYY-MM-DD"T"HH24:MI:SS') || '+08:00' AS knowledge_as_of
-      FROM training_contexts c
-      WHERE c.session_type = 'roleplay' AND c.session_id = $1
-    )", session_id);
-    if (rows.empty()) return nullptr;
-    return {{"contextId", rows[0]["id"].c_str()},
-            {"serviceId", rows[0]["service_id"].c_str()},
-            {"serviceRevisionId", rows[0]["service_revision_id"].c_str()},
-            {"manifest", json::parse(rows[0]["manifest"].c_str())},
-            {"manifestHash", rows[0]["manifest_hash"].c_str()},
-            {"trainingScope", rows[0]["training_scope"].c_str()},
-            {"knowledgeAsOf", rows[0]["knowledge_as_of"].c_str()}};
+    return readRagContext(tx, session_id);
+  }
+
+  json getPublicSummaryEvidence(const std::string& session_id) const {
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
+    return readPublicSummaryEvidence(tx, session_id, readRagContext(tx, session_id));
   }
 
   json getEvidence(const std::string& user_id, const std::string& session_id,
@@ -3171,7 +3162,8 @@ class ReliableRoleplayDatabase {
     return {{"traceId", rows[0]["id"].c_str()}, {"purpose", rows[0]["purpose"].c_str()},
             {"round", rows[0]["round"].is_null() ? json(nullptr) : json(rows[0]["round"].as<int>())},
             {"query", rows[0]["query"].c_str()},
-            {"evidence", json::parse(rows[0]["evidence_json"].c_str())},
+            {"evidence", publicEvidenceProjection(json::parse(rows[0]["evidence_json"].c_str()),
+                readRagContext(tx, session_id))},
             {"modelVersion", rows[0]["model_version"].is_null()
                 ? json(nullptr) : json(rows[0]["model_version"].c_str())},
             {"createdAt", rows[0]["created_at"].c_str()}};
@@ -3379,8 +3371,17 @@ class ReliableRoleplayDatabase {
     }
     const auto message_id = makeId("rpmsg");
     const auto trace_id = trim(jsonString(model_reply, "traceId"));
+    if (session_rows[0]["context_version"].as<int>() >= 2 && trace_id.empty())
+      throw ApiError(503, "RAG_UNAVAILABLE", "缺少本轮证据 trace");
     if (!trace_id.empty()) {
       const auto evidence_bundle = model_reply.value("evidenceBundle", json::object());
+      const auto context = readRagContext(tx, session_id);
+      oral_training::rag::EvidenceValidator validator(context, evidence_bundle, trace_id);
+      if (!validator.valid()) throw ApiError(503, "RAG_UNAVAILABLE", "会话证据快照不匹配");
+      for (const auto& citation : citations) {
+        if (validator.resolve(citation).is_null())
+          throw ApiError(503, "RAG_UNAVAILABLE", "引用不属于本轮证据");
+      }
       const auto inserted_trace = tx.exec_params(R"(
         INSERT INTO rag_traces
           (id, context_id, purpose, round, attempt_token, query, evidence_json,
@@ -3527,15 +3528,25 @@ class ReliableRoleplayDatabase {
       return {{"sessionId", session_id}, {"status", status},
               {"retryable", status == "failed"}, {"summary", nullptr}};
     }
+    auto summary_json = json::parse(summary[0]["summary"].c_str());
+    const auto context = readRagContext(tx, session_id);
+    if (context.is_object() && summary_json.value("schemaVersion", 1) < 2) {
+      summary_json = oral_training::rag::groundedSummary(context,
+          readPublicSummaryEvidence(tx, session_id, context));
+      summary_json["modelVersion"] = "deterministic-evidence-v1";
+      summary_json["promptVersion"] = "roleplay-summary-evidence-v2";
+    }
     const auto result = json{{"sessionId", session_id}, {"status", "ready"}, {"retryable", false},
-                             {"summary", json::parse(summary[0]["summary"].c_str())}};
+                             {"summary", summary_json}};
     tx.commit();
     return result;
   }
 
   void saveSummary(const AiJob& job, json summary, const std::string& model_version) const {
     summary["modelVersion"] = model_version;
-    summary["promptVersion"] = "roleplay-summary-prompt-v1";
+    const auto prompt_version = summary.value("schemaVersion", 1) >= 2
+        ? "roleplay-summary-evidence-v2" : "roleplay-summary-prompt-v1";
+    summary["promptVersion"] = prompt_version;
     auto connection = database_pool_->acquire();
     pqxx::work tx(connection.get());
     if (!lockAiJobTarget(tx, "roleplay_summary", job.target_id)) {
@@ -3546,14 +3557,24 @@ class ReliableRoleplayDatabase {
         AND generation = $3 AND attempts = $4 AND lease_until > NOW() FOR UPDATE
     )", job.id, job.target_id, job.generation, job.attempt);
     if (owned.empty()) throw ApiError(409, "JOB_LEASE_LOST", "复盘任务租约已失效");
+    const auto context = readRagContext(tx, job.target_id);
+    if (context.is_object()) {
+      const auto expected = oral_training::rag::groundedSummary(context,
+          readPublicSummaryEvidence(tx, job.target_id, context));
+      auto supplied = summary;
+      supplied.erase("modelVersion");
+      supplied.erase("promptVersion");
+      if (supplied != expected)
+        throw ApiError(503, "RAG_UNAVAILABLE", "复盘不匹配已公开证据");
+    }
     tx.exec_params(R"(
       INSERT INTO roleplay_summaries
         (session_id, status, summary, model_version, prompt_version, error_type, generated_at, updated_at)
-      VALUES ($1, 'ready', $2::jsonb, $3, 'roleplay-summary-prompt-v1', NULL, NOW(), NOW())
+      VALUES ($1, 'ready', $2::jsonb, $3, $4, NULL, NOW(), NOW())
       ON CONFLICT (session_id) DO UPDATE SET status = 'ready', summary = EXCLUDED.summary,
         model_version = EXCLUDED.model_version, prompt_version = EXCLUDED.prompt_version,
         error_type = NULL, generated_at = NOW(), updated_at = NOW()
-    )", job.target_id, summary.dump(), model_version);
+    )", job.target_id, summary.dump(), model_version, prompt_version);
     tx.exec_params("UPDATE roleplay_sessions SET updated_at = NOW() WHERE id = $1", job.target_id);
     tx.exec_params(R"(
       UPDATE ai_job_attempts SET status = 'succeeded', finished_at = NOW()
@@ -3567,6 +3588,81 @@ class ReliableRoleplayDatabase {
   }
 
  private:
+  static json readRagContext(pqxx::transaction_base& tx, const std::string& session_id) {
+    const auto rows = tx.exec_params(R"(
+      SELECT c.id, c.service_id, c.service_revision_id, c.manifest, c.manifest_hash,
+        c.training_scope,
+        to_char(c.knowledge_as_of AT TIME ZONE 'Asia/Shanghai',
+          'YYYY-MM-DD"T"HH24:MI:SS') || '+08:00' AS knowledge_as_of
+      FROM training_contexts c
+      WHERE c.session_type = 'roleplay' AND c.session_id = $1
+    )", session_id);
+    if (rows.empty()) return nullptr;
+    const auto manifest = json::parse(rows[0]["manifest"].c_str());
+    const auto canonical_hash = oral_training::rag::manifestHash(
+        rows[0]["service_revision_id"].c_str(), manifest, rows[0]["training_scope"].c_str());
+    const std::string stored_hash = rows[0]["manifest_hash"].c_str();
+    const auto legacy_hash = std::string("md5:") +
+        tx.exec_params("SELECT md5($1) AS hash", manifest.dump())[0]["hash"].c_str();
+    if (stored_hash != canonical_hash && stored_hash != legacy_hash)
+      throw ApiError(503, "RAG_UNAVAILABLE", "会话知识快照摘要不匹配");
+    return {{"legacyManifestHash", stored_hash == canonical_hash ? "" : stored_hash},
+            {"contextId", rows[0]["id"].c_str()},
+            {"serviceId", rows[0]["service_id"].c_str()},
+            {"serviceRevisionId", rows[0]["service_revision_id"].c_str()},
+            {"manifest", json::parse(rows[0]["manifest"].c_str())},
+            {"manifestHash", canonical_hash},
+            {"trainingScope", rows[0]["training_scope"].c_str()},
+            {"knowledgeAsOf", rows[0]["knowledge_as_of"].c_str()}};
+  }
+
+  static json publicEvidenceProjection(json bundle, const json& context) {
+    if (!context.is_object() || !bundle.is_object() ||
+        bundle.value("contextId", "") != context.value("contextId", "") ||
+        bundle.value("serviceRevisionId", "") != context.value("serviceRevisionId", ""))
+      throw ApiError(503, "RAG_UNAVAILABLE", "历史证据上下文不匹配");
+    const auto hash = bundle.value("manifestHash", "");
+    if (hash != context.value("manifestHash", "")) {
+      std::string joined;
+      for (const auto& id : context["manifest"]) {
+        if (!joined.empty()) joined += ",";
+        joined += id.get<std::string>();
+      }
+      if (context.value("legacyManifestHash", "").empty() ||
+          (hash != joined && hash != context.value("legacyManifestHash", "")))
+        throw ApiError(503, "RAG_UNAVAILABLE", "历史证据摘要不匹配");
+      bundle["legacyManifestHash"] = hash;
+      bundle["manifestHash"] = context["manifestHash"];
+      bundle["serviceId"] = context["serviceId"];
+      bundle["trainingScope"] = context["trainingScope"];
+    }
+    for (auto& fact : bundle["facts"]) {
+      if (fact.is_object() && fact.contains("value"))
+        fact["displayText"] = oral_training::rag::renderFact(
+            oral_training::rag::evidenceString(fact, "field"), fact["value"]);
+    }
+    return bundle;
+  }
+
+  static json readPublicSummaryEvidence(pqxx::transaction_base& tx,
+                                         const std::string& session_id, const json& context) {
+    const auto rows = tx.exec_params(R"(
+      SELECT t.id, t.evidence_json, m.citations
+      FROM rag_traces t
+      JOIN training_contexts c ON c.id = t.context_id AND c.session_type = 'roleplay'
+      JOIN roleplay_messages m ON m.trace_id = t.id AND m.session_id = c.session_id
+        AND m.role = 'standard_customer'
+      WHERE c.session_id = $1 AND t.is_public = TRUE AND t.purpose = 'customer_reply'
+      ORDER BY t.round, t.id
+    )", session_id);
+    json traces = json::array();
+    for (const auto& row : rows) traces.push_back({{"traceId", row["id"].c_str()},
+        {"isPublic", true}, {"evidence", publicEvidenceProjection(
+            json::parse(row["evidence_json"].c_str()), context)},
+        {"citations", json::parse(row["citations"].c_str())}});
+    return traces;
+  }
+
   static void createRagContext(pqxx::transaction_base& tx, const std::string& session_id,
                                const std::string& service_id,
                                const std::string& service_revision_id) {
@@ -3581,8 +3677,7 @@ class ReliableRoleplayDatabase {
     json manifest = json::array();
     for (const auto& row : revisions) manifest.push_back(row["id"].c_str());
     const auto manifest_text = manifest.dump();
-    const auto manifest_hash = std::string("md5:") +
-        tx.exec_params("SELECT md5($1) AS hash", manifest_text)[0]["hash"].c_str();
+    const auto manifest_hash = oral_training::rag::manifestHash(service_revision_id, manifest, "demo");
     tx.exec_params(R"(
       INSERT INTO training_contexts
         (id, session_type, session_id, service_id, service_revision_id,

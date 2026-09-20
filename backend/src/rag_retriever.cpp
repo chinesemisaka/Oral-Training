@@ -1,4 +1,5 @@
 #include "rag_retriever.h"
+#include "evidence_validator.h"
 
 #include <algorithm>
 #include <cctype>
@@ -106,45 +107,6 @@ std::string utf8Slice(const std::vector<Rune>& runes, std::size_t first, std::si
 std::string metadataString(const json& metadata, const char* key) {
   return metadata.contains(key) && metadata[key].is_string()
       ? metadata[key].get<std::string>() : "";
-}
-
-std::string yuan(long long minor) {
-  std::ostringstream output;
-  output << minor / 100;
-  if (minor % 100 != 0) output << '.' << std::setw(2) << std::setfill('0') << minor % 100;
-  return output.str();
-}
-
-std::string priceDisplay(const json& price) {
-  if (price.value("status", "unknown") == "unknown") return "目前资料没有提供价格信息";
-  const std::map<std::string, std::string> units = {
-      {"per_tooth", "颗"}, {"per_case", "例"}, {"per_visit", "次"},
-      {"per_arch", "牙弓"}, {"per_item", "项"}};
-  const auto type = price.value("type", "quote_after_assessment");
-  std::string amount = "需评估后报价";
-  if (type == "fixed") amount = yuan(price.value("amountMinor", 0LL)) + " 元";
-  if (type == "starting_from") amount = yuan(price.value("amountMinor", 0LL)) + " 元起";
-  if (type == "range") amount = yuan(price.value("minimumMinor", 0LL)) + "—" +
-      yuan(price.value("maximumMinor", 0LL)) + " 元";
-  const auto unit = units.find(price.value("unit", "per_item"));
-  return amount + "/" + (unit == units.end() ? "项" : unit->second) + "；" +
-      price.value("conditions", "以评估结果为准");
-}
-
-std::string durationDisplay(const json& duration, const std::string& label) {
-  if (duration.value("status", "unknown") == "unknown") return "目前资料没有提供" + label + "信息";
-  const std::map<std::string, std::string> units = {
-      {"minute", "分钟"}, {"hour", "小时"}, {"day", "天"}, {"week", "周"},
-      {"month", "个月"}, {"year", "年"}};
-  const auto unit = units.find(duration.value("unit", "minute"));
-  const auto minimum = duration.value("minimum", 0);
-  const auto maximum = duration.value("maximum", minimum);
-  std::string value = minimum == maximum ? std::to_string(minimum)
-      : std::to_string(minimum) + "—" + std::to_string(maximum);
-  value += unit == units.end() ? "" : unit->second;
-  if (duration.value("estimated", false)) value = "约 " + value;
-  const auto conditions = duration.value("conditions", "");
-  return label + "：" + value + (conditions.empty() ? "" : "；" + conditions);
 }
 
 bool containsAny(const std::string& text, const std::vector<std::string>& needles) {
@@ -292,6 +254,7 @@ void insertKnowledgeChunks(pqxx::transaction_base& tx, const std::string& revisi
 EvidenceBundle RagRetriever::retrieve(const std::string& service_revision_id,
                                       const std::vector<std::string>& knowledge_revision_ids,
                                       const std::string& knowledge_as_of,
+                                      const std::string& locked_manifest_hash,
                                       const RetrievalRequest& request,
                                       const std::string& training_scope) const {
   EvidenceBundle bundle;
@@ -299,7 +262,10 @@ EvidenceBundle RagRetriever::retrieve(const std::string& service_revision_id,
   bundle.service_revision_id = service_revision_id;
   bundle.knowledge_as_of = knowledge_as_of;
   bundle.purpose = request.purpose;
-  bundle.manifest_hash = join(knowledge_revision_ids, ",");
+  if (locked_manifest_hash != manifestHash(service_revision_id, knowledge_revision_ids, training_scope))
+    throw std::runtime_error("RAG manifest hash mismatch");
+  bundle.manifest_hash = locked_manifest_hash;
+  bundle.training_scope = training_scope;
   auto connection = database_pool_->acquire();
   pqxx::read_transaction tx(connection.get());
 
@@ -313,6 +279,19 @@ EvidenceBundle RagRetriever::retrieve(const std::string& service_revision_id,
     service_payload = json::parse(service[0]["payload"].c_str());
   }
 
+  // Validate the complete locked set before retrieval; missing or foreign revisions
+  // are a snapshot failure, not a legitimate no-hit response.
+  const auto canonical = canonicalManifest(service_revision_id, knowledge_revision_ids, training_scope);
+  const auto revisions = tx.exec_params(R"(
+    SELECT r.id FROM knowledge_revisions r
+    JOIN knowledge_entries e ON e.id = r.entry_id
+    WHERE r.id IN (SELECT jsonb_array_elements_text($1::jsonb))
+      AND r.metadata->>'trainingScope' = $2
+      AND (e.scope = 'general' OR e.service_id = $3)
+  )", canonical["knowledgeRevisionIds"].dump(), training_scope, service_id);
+  if (revisions.size() != canonical["knowledgeRevisionIds"].size())
+    throw std::runtime_error("RAG locked revisions unavailable or outside service scope");
+  bundle.service_id = service_id;
   int evidence = 1;
   for (const auto& field : requestedFields(request.current_question, request.field)) {
     if (!service_payload.contains(field)) {
@@ -324,20 +303,10 @@ EvidenceBundle RagRetriever::retrieve(const std::string& service_revision_id,
       bundle.missing_fields.push_back(field);
       continue;
     }
-    std::string display;
-    if (field == "price") display = priceDisplay(value);
-    else if (field == "visitDuration") display = durationDisplay(value, "单次就诊时长");
-    else if (field == "treatmentDuration") display = durationDisplay(value, "完整疗程");
-    else if (field == "followupInterval") display = durationDisplay(value, "复诊间隔");
-    else if (field == "includedItems") {
-      display = "包含项目：";
-      if (value.is_array()) for (std::size_t i = 0; i < value.size(); ++i) {
-        if (i != 0) display += "、";
-        display += value[i].get<std::string>();
-      }
-    } else if (field == "appointment") {
-      display = value.value("text", "目前没有可确认的预约信息");
-      if (!value.value("isLiveAvailability", false)) display += "（非实时号源，请以预约确认为准）";
+    const auto display = renderFact(field, value);
+    if (display.empty()) {
+      bundle.missing_fields.push_back(field);
+      continue;
     }
     bundle.facts.push_back({"E" + std::to_string(evidence++), field, value, display,
                             service_revision_id, service_payload.value("dataOrigin", "manual")});
@@ -347,7 +316,7 @@ EvidenceBundle RagRetriever::retrieve(const std::string& service_revision_id,
   if (!knowledge_revision_ids.empty() && !query_terms.empty()) {
     const json manifest = knowledge_revision_ids;
     const auto rows = tx.exec_params(R"(
-      SELECT c.id, c.revision_id, c.body, c.section, r.title, r.metadata,
+      SELECT c.id, c.revision_id, c.body, c.section, r.title, r.metadata, e.scope, e.service_id,
         ts_rank_cd(c.search_vector, to_tsquery('simple', $2)) AS rank
       FROM knowledge_chunks c
       JOIN knowledge_revisions r ON r.id = c.revision_id
@@ -370,7 +339,9 @@ EvidenceBundle RagRetriever::retrieve(const std::string& service_revision_id,
           metadataString(metadata, "sourceUrl").empty() ? std::nullopt
               : std::optional<std::string>(metadataString(metadata, "sourceUrl")),
           metadataString(metadata, "sourceLocator").empty() ? std::nullopt
-              : std::optional<std::string>(metadataString(metadata, "sourceLocator"))});
+              : std::optional<std::string>(metadataString(metadata, "sourceLocator")),
+          row["scope"].c_str(), row["service_id"].is_null() ? "" : row["service_id"].c_str(),
+          training_scope});
     }
   }
   bundle.retrieval_status = bundle.facts.empty() && bundle.passages.empty()

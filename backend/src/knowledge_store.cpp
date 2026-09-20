@@ -1,5 +1,6 @@
 #include "knowledge_store.h"
 #include "rag_retriever.h"
+#include "sha256.h"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -281,38 +282,7 @@ void validateGeneratedDraft(const std::string& kind, const json& candidate) {
 }
 
 std::string contentSha256(const json& value) {
-  const auto input = value.dump();
-  BCRYPT_ALG_HANDLE algorithm = nullptr;
-  BCRYPT_HASH_HANDLE hash = nullptr;
-  DWORD object_size = 0;
-  DWORD hash_size = 0;
-  DWORD bytes = 0;
-  if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0 ||
-      BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH,
-                        reinterpret_cast<PUCHAR>(&object_size), sizeof(object_size), &bytes, 0) != 0 ||
-      BCryptGetProperty(algorithm, BCRYPT_HASH_LENGTH,
-                        reinterpret_cast<PUCHAR>(&hash_size), sizeof(hash_size), &bytes, 0) != 0) {
-    if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
-    throw std::runtime_error("SHA-256 initialization failed");
-  }
-  std::vector<unsigned char> object(object_size);
-  std::vector<unsigned char> digest(hash_size);
-  const auto cleanup = [&] {
-    if (hash) BCryptDestroyHash(hash);
-    if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
-  };
-  if (BCryptCreateHash(algorithm, &hash, object.data(), object_size, nullptr, 0, 0) != 0 ||
-      BCryptHashData(hash, reinterpret_cast<PUCHAR>(const_cast<char*>(input.data())),
-                     static_cast<ULONG>(input.size()), 0) != 0 ||
-      BCryptFinishHash(hash, digest.data(), hash_size, 0) != 0) {
-    cleanup();
-    throw std::runtime_error("SHA-256 calculation failed");
-  }
-  cleanup();
-  std::ostringstream output;
-  for (const auto value : digest) output << std::hex << std::setw(2) << std::setfill('0')
-                                        << static_cast<int>(value);
-  return output.str();
+  return oral_training::sha256Hex(value.dump());
 }
 
 json servicePublicProjection(const json& payload) {

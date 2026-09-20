@@ -38,6 +38,7 @@ class RagRetriever {
   EvidenceBundle retrieve(const std::string& service_revision_id,
                           const std::vector<std::string>& knowledge_revision_ids,
                           const std::string& knowledge_as_of,
+                          const std::string& locked_manifest_hash,
                           const RetrievalRequest& request,
                           const std::string& training_scope = "demo") const;
 

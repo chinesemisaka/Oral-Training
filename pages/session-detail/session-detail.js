@@ -1,4 +1,5 @@
 const api = require('../../utils/api.js');
+const { viewSummaryEvidence } = require('../../utils/roleplay-evidence.js');
 const datetime = require('../../utils/datetime.js');
 const emotion = require('../../utils/emotion.js');
 
@@ -45,6 +46,10 @@ Page({
 
   sessionId: '',
   pollTimer: null,
+
+  viewSummaryEvidence(e) {
+    viewSummaryEvidence(this.sessionId, e.currentTarget.dataset.citation);
+  },
 
   onLoad(options) {
     this.sessionId = options.sessionId || '';

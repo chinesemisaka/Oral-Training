@@ -553,3 +553,43 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | 503 | `EVIDENCE_VALIDATION_FAILED` | 模型输出经过一次修复后仍不能由证据支持 |
 
 证据读取必须同时验证当前用户拥有会话、`traceId` 属于该会话且证据已被胜出消息或报告公开。任一条件不满足时统一返回无资源响应，避免枚举其他用户或失败尝试的 trace。
+
+### N01：角色互换 RAG 证据加固（2026-09-20）
+
+适用 `contextVersion >= 2` 的角色互换会话；无服务的 v1 会话保持原路径。不新增接口、环境变量或数据库迁移。
+
+- 新上下文的 `manifestHash` 为 `sha256:` + 64 位小写十六进制。规范化对象为 `{version:1, serviceRevisionId, knowledgeRevisionIds, trainingScope}`；知识 revision ID 排序去重，以 nlohmann JSON 默认键排序、紧凑 UTF-8 序列化计算 SHA-256。服务 revision 和训练范围也参与摘要。
+- 检索显式接受锁定摘要，返回同一摘要；检索前核对完整锁定 revision 集。摘要不一致、revision 丢失或越过服务范围属于系统错误，不伪装为资料未知。
+- evidence bundle 新增 `serviceId`、`trainingScope`；passage 新增 `scope`、`serviceId`、`trainingScope`。后端验证本轮 trace、context、manifest、revision、服务范围及可渲染字段。新 citation 保留 `traceId/evidenceId`，增加 `manifestHash/revisionId`。
+- 模型没有选择合法 evidenceId 时返回 `answerStatus=unknown`、空 citations；不再自动选择命中块。部分缺失返回 `partial`，有冲突时返回 `conflicted` 且不选边。
+- 服务事实从结构化值重新渲染，不信任 displayText 或模型文本。保留起价、单位、范围、有效期、阶段和条件；预约资料明确为非实时号源。完整证据放不下时略过该条，不截断原文或价格限定词。
+- N01 使用固定 intro、learningPoints 和 complianceBoundary；模型自由文本不进入这些展示字段，因此阿拉伯数字、中文数字、日期、折扣和无依据承诺不能从这些字段绕过引用。模型仍可选择本轮证据并返回布尔 shouldEnd。
+
+`GET /roleplay/sessions/{id}/summary` 的 ready summary 对 v2 增加：
+
+```json
+{
+  "schemaVersion": 2,
+  "knowledgeManifestHash": "sha256:<64 hex characters>",
+  "groundedFacts": [
+    {
+      "text": "3980 元起/颗；需检查后确认",
+      "citation": {
+        "traceId": "trace-example",
+        "evidenceId": "E1",
+        "revisionId": "service-revision-example",
+        "manifestHash": "sha256:<64 hex characters>"
+      }
+    }
+  ],
+  "citations": [],
+  "modelVersion": "deterministic-evidence-v1",
+  "promptVersion": "roleplay-summary-evidence-v2"
+}
+```
+
+示例省略原有 summary、coveredTopics、keyPrinciples、nextPracticeSuggestions 字段；实际 citations 为 groundedFacts 中引用的同一列表。最多复用六条已公开且已被标准客服消息引用的依据；未公开 trace、其他会话/服务引用和未选中的命中块不进入复盘。没有可复用依据时 groundedFacts/citations 为空，仅返回沟通原则。v2 复盘由后端确定性生成，不调用模型；完成任务前在持有任务租约的事务中再次校验。结果页和历史详情页可逐项展开原始依据。
+
+**历史兼容**：不重写原始历史数据。旧 MD5 上下文须先校验原摘要，然后只在读取投影中按原服务 revision/manifest 计算规范化 SHA-256。旧 trace 的版本拼接串须与同一上下文相符，投影保留 `legacyManifestHash` 并返回规范化摘要。旧消息中仅有 traceId/evidenceId 的 citation 仍可读取；新回复、复盘及其引用使用规范化 SHA-256。没有服务范围元数据的旧 passage 不纳入新复盘，旧结构化事实经校验后可复用。旧 v2 自由文本复盘通过安全投影读取；v1 复盘不变。
+
+验证范围与未运行项见 [N01 验证记录](rag-n01-validation.md)。

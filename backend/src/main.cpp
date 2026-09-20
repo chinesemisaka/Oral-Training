@@ -40,6 +40,7 @@
 #include "knowledge_store.h"
 #include "model_gateway.h"
 #include "rag_retriever.h"
+#include "evidence_validator.h"
 
 using json = nlohmann::json;
 
@@ -322,38 +323,7 @@ std::string randomToken(size_t byte_count = 32) {
   return output.str();
 }
 
-std::string sha256Hex(const std::string& value) {
-  BCRYPT_ALG_HANDLE algorithm = nullptr;
-  BCRYPT_HASH_HANDLE hash = nullptr;
-  DWORD object_size = 0;
-  DWORD hash_size = 0;
-  DWORD result_size = 0;
-  if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0 ||
-      BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&object_size),
-                        sizeof(object_size), &result_size, 0) != 0 ||
-      BCryptGetProperty(algorithm, BCRYPT_HASH_LENGTH, reinterpret_cast<PUCHAR>(&hash_size),
-                        sizeof(hash_size), &result_size, 0) != 0) {
-    if (algorithm != nullptr) BCryptCloseAlgorithmProvider(algorithm, 0);
-    throw std::runtime_error("SHA-256 initialization failed");
-  }
-  std::vector<unsigned char> object(object_size);
-  std::vector<unsigned char> digest(hash_size);
-  const auto create_status = BCryptCreateHash(algorithm, &hash, object.data(), object_size, nullptr, 0, 0);
-  const auto update_status = create_status == 0
-      ? BCryptHashData(hash, reinterpret_cast<PUCHAR>(const_cast<char*>(value.data())),
-                       static_cast<ULONG>(value.size()), 0)
-      : create_status;
-  const auto finish_status = update_status == 0
-      ? BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0)
-      : update_status;
-  if (hash != nullptr) BCryptDestroyHash(hash);
-  BCryptCloseAlgorithmProvider(algorithm, 0);
-  if (finish_status != 0) throw std::runtime_error("SHA-256 failed");
-  std::ostringstream output;
-  output << std::hex << std::setfill('0');
-  for (const auto byte : digest) output << std::setw(2) << static_cast<int>(byte);
-  return output.str();
-}
+using oral_training::sha256Hex;
 
 int jsonInt(const json& object, const char* key, int fallback) {
   if (!object.contains(key) || !object[key].is_number()) return fallback;
@@ -1391,89 +1361,9 @@ json normalizeRoleplayReply(const json& source) {
 }
 
 json normalizeGroundedRoleplayReply(const json& source, const json& evidence,
-                                    const std::string& trace_id) {
+                                    const std::string& trace_id, const json& context) {
   if (!source.is_object()) throw ApiError(503, "MODEL_INVALID_RESPONSE", "带依据回复不是 JSON 对象");
-  const std::string intro_fallback = "我理解您关心的是这个服务的具体信息。";
-  const std::string boundary_fallback = "客服仅说明已发布的服务资料，具体诊疗判断需由医生结合检查评估。";
-  const std::vector<std::string> learning_fallbacks = {
-      "先回应患者问题，再引用已发布的服务资料。",
-      "资料未提供的信息要明确说明，不自行补充。",
-      "具体诊疗判断仍需由医生结合检查评估。",
-  };
-  auto intro = safeRoleplayText(roleplayText(source, "intro", intro_fallback, 240), intro_fallback);
-  auto boundary = safeRoleplayText(
-      roleplayText(source, "complianceBoundary", boundary_fallback, 300), boundary_fallback);
-  if (!containsAny(boundary, {"医生", "检查", "评估", "资料"})) boundary = boundary_fallback;
-
-  std::map<std::string, std::string> renderable;
-  for (const auto& fact : evidence.value("facts", json::array())) {
-    if (fact.is_object() && fact.contains("evidenceId") && fact["evidenceId"].is_string() &&
-        fact.contains("displayText") && fact["displayText"].is_string()) {
-      renderable[fact["evidenceId"].get<std::string>()] = fact["displayText"].get<std::string>();
-    }
-  }
-  for (const auto& passage : evidence.value("passages", json::array())) {
-    if (passage.is_object() && passage.contains("evidenceId") && passage["evidenceId"].is_string() &&
-        passage.contains("body") && passage["body"].is_string()) {
-      renderable[passage["evidenceId"].get<std::string>()] =
-          "资料说明：" + utf8Truncate(passage["body"].get<std::string>(), 220);
-    }
-  }
-
-  std::vector<std::string> selected;
-  if (source.contains("evidenceIds") && source["evidenceIds"].is_array()) {
-    for (const auto& item : source["evidenceIds"]) {
-      if (!item.is_string()) continue;
-      const auto id = item.get<std::string>();
-      if (renderable.count(id) != 0 && std::find(selected.begin(), selected.end(), id) == selected.end()) {
-        selected.push_back(id);
-        if (selected.size() == 4) break;
-      }
-    }
-  }
-  if (selected.empty() && !renderable.empty()) {
-    for (const auto& [id, text] : renderable) {
-      selected.push_back(id);
-      if (selected.size() == 2) break;
-    }
-  }
-
-  std::string reply = intro;
-  json citations = json::array();
-  for (const auto& id : selected) {
-    if (!reply.empty()) reply += " ";
-    reply += renderable[id];
-    citations.push_back({{"traceId", trace_id}, {"evidenceId", id}});
-  }
-  const auto missing = evidence.value("missingFields", json::array());
-  if (!missing.empty()) {
-    const std::map<std::string, std::string> labels = {
-        {"price", "价格"}, {"visitDuration", "单次就诊时长"},
-        {"treatmentDuration", "完整疗程"}, {"followupInterval", "复诊间隔"},
-        {"includedItems", "包含项目"}, {"appointment", "预约号源"}};
-    std::string names;
-    for (const auto& field : missing) {
-      if (!field.is_string()) continue;
-      const auto found = labels.find(field.get<std::string>());
-      const auto label = found == labels.end() ? field.get<std::string>() : found->second;
-      if (!names.empty()) names += "、";
-      names += label;
-    }
-    if (!names.empty()) reply += " 目前资料没有提供" + names + "，建议进一步确认。";
-  }
-  if (selected.empty() && missing.empty()) {
-    reply += " 当前资料没有命中这个问题，我可以帮您记录后进一步确认。";
-  }
-  if (utf8Length(reply) > 1000) reply = utf8Truncate(reply, 980) + "…";
-  const auto answer_status = selected.empty() ? "unknown" : (missing.empty() ? "answered" : "partial");
-  return {{"reply", reply},
-          {"answerStatus", answer_status},
-          {"citations", citations},
-          {"learningPoints", roleplayAdviceList(source, "learningPoints", 2, 4, learning_fallbacks)},
-          {"complianceBoundary", boundary},
-          {"shouldEnd", source.contains("shouldEnd") && source["shouldEnd"].is_boolean()
-                            ? source["shouldEnd"].get<bool>() : false},
-          {"traceId", trace_id}, {"evidenceBundle", evidence}};
+  return oral_training::rag::groundedReply(source, context, evidence, trace_id);
 }
 
 json roleplayTopicList(const json& source, const json& messages) {
@@ -2101,12 +1991,13 @@ class Service {
         retrieval_request.recent_question_answers = history;
         const auto bundle = rag_retriever_.retrieve(
             context["serviceRevisionId"].get<std::string>(), manifest,
-            context["knowledgeAsOf"].get<std::string>(), retrieval_request,
+            context["knowledgeAsOf"].get<std::string>(),
+            context["manifestHash"].get<std::string>(), retrieval_request,
             context.value("trainingScope", "demo"));
         const json evidence = bundle;
         const auto trace_id = makeId("trace");
         model_reply = normalizeGroundedRoleplayReply(
-            model_->groundedServiceReply(scenario, history, evidence), evidence, trace_id);
+            model_->groundedServiceReply(scenario, history, evidence), evidence, trace_id, context);
         model_reply["query"] = content;
         model_reply["modelVersion"] = model_->modelVersion();
       } else {
@@ -2193,8 +2084,16 @@ class Service {
       const auto free_description = roleplay_database_.getFreeDescription(job.target_id);
       if (!free_description.empty()) scenario["_freeScenarioDescription"] = free_description;
       const auto history = roleplay_database_.getHistory(job.target_id);
-      const auto summary = normalizeRoleplaySummary(model_->roleplaySummary(scenario, history), history);
-      roleplay_database_.saveSummary(job, summary, model_->modelVersion());
+      if (detail["session"].value("contextVersion", 1) >= 2) {
+        const auto context = roleplay_database_.getRagContext(job.target_id);
+        if (!context.is_object()) throw ApiError(503, "RAG_UNAVAILABLE", "会话知识快照不可用");
+        const auto summary = oral_training::rag::groundedSummary(
+            context, roleplay_database_.getPublicSummaryEvidence(job.target_id));
+        roleplay_database_.saveSummary(job, summary, "deterministic-evidence-v1");
+      } else {
+        const auto summary = normalizeRoleplaySummary(model_->roleplaySummary(scenario, history), history);
+        roleplay_database_.saveSummary(job, summary, model_->modelVersion());
+      }
       return;
     }
     throw ApiError(500, "UNKNOWN_JOB_TYPE", "未知 AI 任务类型");

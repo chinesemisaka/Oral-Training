@@ -1,4 +1,5 @@
 #include "../src/rag_retriever.h"
+#include "../src/rag_manifest.h"
 
 #include <algorithm>
 #include <iostream>
@@ -19,6 +20,13 @@ bool has(const std::vector<std::string>& values, const std::string& value) {
 
 int main() {
   try {
+    oral_training::rag::RagRetriever retriever(nullptr);
+    oral_training::rag::RetrievalRequest request;
+    bool mismatched_hash_rejected = false;
+    try {
+      retriever.retrieve("sr1", {"kr1"}, "2026-09-20", "kr1", request);
+    } catch (const std::runtime_error&) { mismatched_hash_rejected = true; }
+    require(mismatched_hash_rejected, "manifest mismatch must fail before database access");
     const auto price = oral_training::rag::tokenizeChinese("这个项目多少钱？");
     const auto quote = oral_training::rag::tokenizeChinese("请问报价和收费标准");
     require(has(price, "a_price") && has(quote, "a_price"), "price aliases must converge");
