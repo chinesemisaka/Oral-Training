@@ -340,6 +340,8 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | `GET` | `/supervisor/members/{memberId}` | 本团队单个成员的五维均值、弱项建议和最多 12 条训练分数趋势；非本团队成员返回 `MEMBER_NOT_FOUND` |
 | `GET` | `/supervisor/scenarios` | 场景目录（`id`、`name`、`category`、`difficulty`），供发布培训计划时选择适用场景 |
 
+看板的 `scenarioStats` 与训练场景目录一致，仅列出启用且非模板的场景，保留训练次数为零的场景；总览计数仍包含所选时间范围内的团队历史训练，因此不要求等于场景行之和。
+
 主管接口不会返回消息、原始患者内容、报告全文、错题或话术；不包含任务指派（培训计划见第 11 节）。
 
 ## 10. 我的团队

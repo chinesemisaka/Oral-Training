@@ -1130,7 +1130,8 @@ class ReliableDatabase {
     const auto scenarios = tx.exec(R"(
       SELECT s.id, s.name, COUNT(x.id) AS training_count FROM scenarios s
       LEFT JOIN sessions x ON x.scenario_id = s.id AND x.status <> 'abandoned'
-    )" + user_condition + " GROUP BY s.id, s.name, s.sort_order ORDER BY s.sort_order");
+    )" + user_condition + " WHERE s.is_active AND NOT s.is_template"
+        " GROUP BY s.id, s.name, s.sort_order ORDER BY s.sort_order");
     const auto report_filter = institution_aggregate ? "" : " AND s.user_id = " + tx.quote(user_id);
     const auto reports = tx.exec(R"(
       SELECT e.report FROM evaluations e JOIN sessions s ON s.id = e.session_id

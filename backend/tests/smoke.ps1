@@ -59,14 +59,24 @@ if ([string]::IsNullOrWhiteSpace($login.accessToken)) { throw 'Login did not ret
 $script:AccessToken = $login.accessToken
 
 $scenarioData = Invoke-Api GET '/scenarios' $null
-if ($scenarioData.items.Count -ne 4) { throw "Expected 4 scenarios, got $($scenarioData.items.Count)." }
+$scenarioIds = @($scenarioData.items | ForEach-Object { $_.id } | Sort-Object)
+if ($scenarioIds.Count -eq 0 -or $scenarioIds -contains 'free-roleplay-template' -or
+    @($scenarioIds | Select-Object -Unique).Count -ne $scenarioIds.Count) {
+  throw 'Scenario catalog is empty, duplicated, or contains the free-roleplay template.'
+}
 if ($scenarioData.items[0].PSObject.Properties.Name -contains 'hidden') { throw 'Scenario API leaked hidden configuration.' }
 $roleplayScenarioData = Invoke-Api GET '/roleplay/scenarios' $null
-if ($roleplayScenarioData.items.Count -ne 4) { throw "Expected 4 roleplay scenarios, got $($roleplayScenarioData.items.Count)." }
+$roleplayScenarioIds = @($roleplayScenarioData.items | ForEach-Object { $_.id } | Sort-Object)
+if (@(Compare-Object $scenarioIds $roleplayScenarioIds).Count -ne 0) {
+  throw 'Roleplay scenario catalog differs from the training catalog.'
+}
 if ($roleplayScenarioData.items[0].PSObject.Properties.Name -contains 'serviceGuidance') { throw 'Roleplay scenario API leaked service guidance.' }
 if ($roleplayScenarioData.items[0].suggestedQuestions.Count -lt 3) { throw 'Roleplay scenario suggestions are missing.' }
 $dashboard = Invoke-Api GET '/dashboard/summary' $null
-if ($null -eq $dashboard.scenarioStats -or $dashboard.scenarioStats.Count -ne 4) { throw 'Dashboard scenario statistics are invalid.' }
+$dashboardScenarioIds = @($dashboard.scenarioStats | ForEach-Object { $_.scenarioId } | Sort-Object)
+if (@(Compare-Object $scenarioIds $dashboardScenarioIds).Count -ne 0) {
+  throw 'Dashboard scenario statistics differ from the training catalog.'
+}
 if ($null -eq $dashboard.dimensionAverages) { throw 'Dashboard dimension averages are missing.' }
 
 if (-not $WithModel) {
