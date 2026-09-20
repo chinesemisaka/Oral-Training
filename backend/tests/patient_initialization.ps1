@@ -57,6 +57,14 @@ VALUES ('init-migration-job','evaluation','init-migration-done','evaluation:init
   $env:ORAL_TRAINING_TEST_DATABASE_URL = $DatabaseUrl
   & $ExecutablePath
   if ($LASTEXITCODE -ne 0) { throw 'Patient initialization test failed.' }
+  $digestSql = "SELECT md5(string_agg(row_to_json(c)::text, '' ORDER BY id)) FROM training_contexts c;"
+  $before = & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -Atc $digestSql
+  if ($LASTEXITCODE -ne 0) { throw 'Snapshot digest failed.' }
+  & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -f (Join-Path $migrations '020_patient_initialization_jobs.sql')
+  if ($LASTEXITCODE -ne 0) { throw 'Populated N02 migration rerun failed.' }
+  $after = & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -Atc $digestSql
+  if ($LASTEXITCODE -ne 0 -or "$before" -ne "$after") { throw 'Migration rerun changed a stored context.' }
+
 } finally {
   $env:PGOPTIONS = $previousOptions
   $env:ORAL_TRAINING_TEST_DATABASE_URL = $previousTestUrl

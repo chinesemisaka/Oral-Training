@@ -562,8 +562,7 @@ class ReliableDatabase {
     if (std::string(previous[0]["status"].c_str()) != "in_progress") {
       throw ApiError(409, "SESSION_NOT_RESTARTABLE", "只有进行中的训练可以重新开始");
     }
-    const auto version = tx.exec_params("SELECT context_version FROM sessions WHERE id = $1", session_id);
-    if (version[0]["context_version"].as<int>() >= 2)
+    if (previous[0]["context_version"].as<int>() >= 2)
       throw ApiError(409, "SERVICE_SESSION_RESTART_REQUIRES_CREATE", "请先放弃会话，再用新的 clientSessionId 创建服务训练");
     const auto scenario_id = std::string(previous[0]["scenario_id"].c_str());
     // 保留旧会话的自定义画像，重新开始时继续沿用
@@ -1104,6 +1103,7 @@ class ReliableDatabase {
   }
 
   void saveEvaluation(const AiJob& job, json report, const std::string& model_version) const {
+    if (job.type != "evaluation") throw ApiError(409, "JOB_LEASE_LOST", "AI 任务类型不匹配");
     const auto& dimensions = report["dimensionScores"];
     const auto total = static_cast<int>(std::round(
         dimensions["knowledgeAccuracy"].get<int>() * 0.25 +
@@ -1121,7 +1121,8 @@ class ReliableDatabase {
     }
     const auto owned = tx.exec_params(R"(
       SELECT 1 FROM ai_jobs WHERE id = $1 AND status = 'running' AND target_id = $2
-        AND generation = $3 AND attempts = $4 AND lease_until > NOW() FOR UPDATE
+        AND generation = $3 AND attempts = $4 AND lease_until > NOW()
+        AND job_type = 'evaluation' FOR UPDATE
     )", job.id, job.target_id, job.generation, job.attempt);
     if (owned.empty()) throw ApiError(409, "JOB_LEASE_LOST", "评分任务租约已失效");
     tx.exec_params(R"(
@@ -3587,6 +3588,7 @@ class ReliableRoleplayDatabase {
   }
 
   void saveSummary(const AiJob& job, json summary, const std::string& model_version) const {
+    if (job.type != "roleplay_summary") throw ApiError(409, "JOB_LEASE_LOST", "AI 任务类型不匹配");
     summary["modelVersion"] = model_version;
     const auto prompt_version = summary.value("schemaVersion", 1) >= 2
         ? "roleplay-summary-evidence-v2" : "roleplay-summary-prompt-v1";
@@ -3598,7 +3600,8 @@ class ReliableRoleplayDatabase {
     }
     const auto owned = tx.exec_params(R"(
       SELECT 1 FROM ai_jobs WHERE id = $1 AND status = 'running' AND target_id = $2
-        AND generation = $3 AND attempts = $4 AND lease_until > NOW() FOR UPDATE
+        AND generation = $3 AND attempts = $4 AND lease_until > NOW()
+        AND job_type = 'roleplay_summary' FOR UPDATE
     )", job.id, job.target_id, job.generation, job.attempt);
     if (owned.empty()) throw ApiError(409, "JOB_LEASE_LOST", "复盘任务租约已失效");
     const auto context = readRagContext(tx, job.target_id);

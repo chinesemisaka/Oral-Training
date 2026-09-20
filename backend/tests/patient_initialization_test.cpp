@@ -104,6 +104,9 @@ int main() {
     expectInitError([&]{pqxx::work tx(control);lockAiJobTarget(tx,"unknown",id);},"UNKNOWN_JOB_TYPE");
     auto job = *queue.claim("first-worker");
     requireInit(job.type=="patient_initialization","wrong dispatch");
+    expectInitError([&]{db.saveEvaluation(job,json::object(),"wrong-type");},"JOB_LEASE_LOST");
+    ReliableRoleplayDatabase roleplay(pool);
+    expectInitError([&]{roleplay.saveSummary(job,json::object(),"wrong-type");},"JOB_LEASE_LOST");
     const auto original = store.begin(job);
     requireInit(original["manifest"]==json::array({"init-kr-1"}),"incomplete manifest");
     // Publishing only changes future sessions, including after a failed generation.
@@ -162,6 +165,15 @@ int main() {
     (void)queue.claim("reaper");
     requireInit(store.get("init-user",next)["status"]=="failed","exhausted lease not failed");
     store.retry("init-user",next);
+    auto transient = *queue.claim("transient-worker");
+    (void)store.begin(transient);
+    queue.fail(transient,"TRANSIENT_FIXTURE","retryable failure",true);
+    requireInit(store.get("init-user",next)["status"]=="pending","retry_wait was not projected");
+    {
+      pqxx::work tx(control);
+      tx.exec_params("UPDATE ai_jobs SET available_at=NOW() WHERE id=$1",transient.id);
+      tx.commit();
+    }
     // Exercise the actual worker with an injected deterministic gateway; no network requests.
     Config config{};
     config.worker_concurrency=1; config.knowledge_worker_concurrency=0;

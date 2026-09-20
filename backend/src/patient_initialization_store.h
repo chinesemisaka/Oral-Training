@@ -40,6 +40,9 @@ class PatientInitializationStore {
         throw ApiError(409, "IDEMPOTENCY_CONFLICT", "clientSessionId 对应不同会话参数");
       return replay[0]["id"].c_str();
     }
+    // Wait for any publisher before taking the statement snapshot / knowledgeAsOf timestamp.
+    // Otherwise READ COMMITTED row-lock rechecks could see a newer service pointer.
+    tx.exec_params("SELECT id FROM clinic_services WHERE id = $1 FOR SHARE", service);
     // The service pointer and complete knowledge manifest are selected in one MVCC statement.
     const auto snapshot = tx.exec_params(R"(
       SELECT sc.name, sc.max_rounds, s.current_revision_id,
