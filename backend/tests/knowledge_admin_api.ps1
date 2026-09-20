@@ -240,7 +240,7 @@ VALUES ('$adminHash', 'knowledge-api-admin', NOW() + INTERVAL '1 hour'),
   }
   $retry = Invoke-Api POST "/sessions/$trainingId/initialization/retry" $learnerToken @{} 202
   if ($retry.data.generation -ne 2) { throw 'Initialization retry did not advance generation.' }
-  Invoke-Api POST "/sessions/$trainingId/abandon" $learnerToken @{} 200 | Out-Null
+  Invoke-Api POST "/sessions/$trainingId/abandon" $learnerToken @{} 202 | Out-Null
 
   $job = Invoke-Api POST '/admin/knowledge/generation-jobs' $adminToken @{
     kind = 'knowledge_draft'; draftId = $knowledge.data.draftId
