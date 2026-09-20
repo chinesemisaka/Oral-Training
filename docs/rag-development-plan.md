@@ -206,7 +206,7 @@ DeepSeek 选择 evidenceId
 
 ### N02 — 客服训练上下文与患者初始化基础设施
 
-当前状态：基础设施已实现，正在进行 Windows/PostgreSQL CI 验证。真实患者生成与逐轮回复仍属于 N03。
+当前状态（2026-09-20）：基础设施完成，完整 Windows/PostgreSQL CI 通过，尚未合并。详见 [N02 验证记录](rag-n02-validation.md)。真实患者生成与逐轮回复仍属于 N03。
 
 对应原任务：R06、R09。  
 预计：2—3 人日。  
