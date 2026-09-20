@@ -82,14 +82,13 @@ try {
   & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "CREATE SCHEMA $schema;"
   if ($LASTEXITCODE -ne 0) { throw 'Failed to create disposable schema.' }
   $env:PGOPTIONS = "-c search_path=$schema"
-  foreach ($migration in @(
-    '001_initial.sql', '002_roleplay.sql', '003_reliability.sql', '004_identity.sql',
-    '005_pair_and_state_repair.sql', '006_learner_insights.sql',
-    '007_training_experience.sql', '008_supervisor_growth.sql',
-    '009_legacy_report_totals.sql', '010_knowledge_catalog.sql', '011_roleplay_rag_mvp.sql'
-  )) {
-    & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -f (Join-Path $migrations $migration)
-    if ($LASTEXITCODE -ne 0) { throw "Migration failed: $migration" }
+  # This smoke launches the current backend, so use every numbered migration.
+  # Historical migration fixtures remain pinned in their dedicated tests.
+  $migrationFiles = Get-ChildItem -LiteralPath $migrations -File -Filter '*.sql' |
+    Where-Object { $_.Name -match '^\d{3}_.+\.sql$' } | Sort-Object Name
+  foreach ($migration in $migrationFiles) {
+    & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -f $migration.FullName
+    if ($LASTEXITCODE -ne 0) { throw "Migration failed: $($migration.Name)" }
   }
 
   $adminHash = Get-Sha256Hex $adminToken

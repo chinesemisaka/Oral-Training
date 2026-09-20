@@ -35,3 +35,11 @@ SHA 标准向量包括空串、abc、一百万个 a。证据测试覆盖跨 trac
 - 真实 DeepSeek：Not run，遵循 N07 前不调用真实模型的边界。
 
 N01 状态为“实现完成，离线核心验证通过，Windows/数据库集成验收待确认”，不将核心单元测试等同于完整上线验收。需要 Windows CI/数据库回归通过后再开放发布。
+
+## 远端 Windows CI 第一次运行
+
+[Run 35498088974](https://github.com/chinesemisaka/Oral-Training/actions/runs/35498088974)，提交 `ee18c85`：MSVC Release 全量构建通过；CTest 9 Passed、0 Failed、database_feature 1 Skipped（CTest 阶段未设置测试库变量）。证据校验、retriever、报告/安全配置、客户端恢复和静态检查全部通过；knowledge_store_database_test 通过。
+
+后续 knowledge_admin_api.ps1 失败：测试库仅执行 001—011，而当前后端已经依赖 019 的 free_description 字段，创建角色互换会话返回 500。无模型 API/状态机/并发测试因此跳过。该失败是同步上游后的测试初始化与当前 schema 不一致。
+
+修复测试基础设施：当前后端 API smoke 和 workflow 的当前库初始化按名称顺序应用所有三位数字编号 SQL（当前 001—019），明确排除 `_seed_supervisor_test.sql`；专门的历史迁移 fixtures 保持原范围，已发布迁移没有修改。此修复为完成 N01 集成验证所需，未扩展到 N02。
