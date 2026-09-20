@@ -209,6 +209,39 @@ VALUES ('$adminHash', 'knowledge-api-admin', NOW() + INTERVAL '1 hour'),
     throw 'Roleplay clientSessionId replay created another session.'
   }
 
+  # N02 transport contract: the default gateway fails explicitly without a model call.
+  $trainingRequest = @{ scenarioId = 'implant-basic'; serviceId = $serviceId; clientSessionId = 'api-training-init-1' }
+  $training = Invoke-Api POST '/sessions' $learnerToken $trainingRequest 202
+  $trainingId = $training.data.session.id
+  if ($training.data.session.contextVersion -ne 2 -or $training.data.session.serviceId -ne $serviceId) {
+    throw 'Training creation did not expose the locked service.'
+  }
+  $trainingReplay = Invoke-Api POST '/sessions' $learnerToken $trainingRequest 202
+  if ($trainingReplay.data.session.id -ne $trainingId) { throw 'Training replay created another session.' }
+  $different = Invoke-Api POST '/sessions' $learnerToken @{
+    scenarioId = 'price-comparison'; serviceId = $serviceId; clientSessionId = 'api-training-init-1'
+  } 409
+  if ($different.code -ne 'IDEMPOTENCY_CONFLICT') { throw 'Training replay did not compare parameters.' }
+  foreach ($attempt in 1..40) {
+    $initialization = Invoke-Api GET "/sessions/$trainingId/initialization" $learnerToken $null 200
+    if ($initialization.data.status -eq 'failed') { break }
+    Start-Sleep -Milliseconds 100
+  }
+  if ($initialization.data.status -ne 'failed' -or
+      $initialization.data.errorType -ne 'PATIENT_INITIALIZATION_UNAVAILABLE' -or
+      $null -ne $initialization.data.publicProfile) {
+    throw 'Unavailable initializer did not fail safely.'
+  }
+  foreach ($action in @('messages', 'hint', 'finish')) {
+    $blocked = Invoke-Api POST "/sessions/$trainingId/$action" $learnerToken @{
+      clientMessageId = 'blocked-init-message'; content = 'hello'
+    } 409
+    if ($blocked.code -ne 'PATIENT_INITIALIZATION_FAILED') { throw "Uninitialized $action was not blocked." }
+  }
+  $retry = Invoke-Api POST "/sessions/$trainingId/initialization/retry" $learnerToken @{} 202
+  if ($retry.data.generation -ne 2) { throw 'Initialization retry did not advance generation.' }
+  Invoke-Api POST "/sessions/$trainingId/abandon" $learnerToken @{} 200 | Out-Null
+
   $job = Invoke-Api POST '/admin/knowledge/generation-jobs' $adminToken @{
     kind = 'knowledge_draft'; draftId = $knowledge.data.draftId
     brief = 'Generate a synthetic candidate'; count = 1

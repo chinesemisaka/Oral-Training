@@ -49,6 +49,13 @@ int main() {
       requireInit(schema.rfind("patient_init_",0) == 0, "requires isolated patient_init_ schema");
     }
     {
+      pqxx::read_transaction tx(control);
+      requireInit(tx.exec("SELECT 1 FROM sessions WHERE id LIKE 'init-migration-%' AND context_version=1 AND service_id IS NULL").size()==2,
+                  "migration changed legacy sessions");
+      requireInit(tx.exec("SELECT 1 FROM ai_jobs WHERE id='init-migration-job' AND job_type='evaluation' AND generation=1 AND status='pending'").size()==1,
+                  "migration changed legacy job");
+    }
+    {
       pqxx::work tx(control);
       tx.exec(R"(
         INSERT INTO users(id,display_name,role,status,is_demo)

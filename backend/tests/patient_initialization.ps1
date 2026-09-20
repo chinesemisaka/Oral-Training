@@ -18,7 +18,7 @@ if (-not $ExecutablePath) {
   $ExecutablePath = Join-Path $repositoryRoot 'backend\build-msvc\Release\patient_initialization_test.exe'
 }
 if (-not (Test-Path -LiteralPath $ExecutablePath)) {
-  throw "knowledge store database test executable not found: $ExecutablePath"
+  throw "patient initialization test executable not found: $ExecutablePath"
 }
 
 $schema = 'patient_init_' + [Guid]::NewGuid().ToString('N').Substring(0, 10)
@@ -33,6 +33,19 @@ try {
   $migrationFiles = Get-ChildItem -LiteralPath $migrations -File -Filter '*.sql' |
     Where-Object { $_.Name -match '^\d{3}_.+\.sql$' } | Sort-Object Name
   foreach ($migration in $migrationFiles) {
+    if ($migration.Name -eq '020_patient_initialization_jobs.sql') {
+      # Representative pre-N02 history: completed and active legacy sessions plus a pending job.
+      $history = @"
+INSERT INTO sessions(id,user_id,scenario_id,scenario_name,status,current_round,max_rounds,patient_state)
+VALUES ('init-migration-active','demo-user-001','implant-basic','Legacy active','in_progress',0,10,'{}'),
+       ('init-migration-done','demo-user-001','price-comparison','Legacy done','completed',1,10,'{}');
+INSERT INTO evaluations(session_id,status,report) VALUES ('init-migration-done','generating',NULL);
+INSERT INTO ai_jobs(id,job_type,target_id,dedupe_key,status,available_at)
+VALUES ('init-migration-job','evaluation','init-migration-done','evaluation:init-migration-done','pending',NOW()+INTERVAL '1 day');
+"@
+      & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c $history
+      if ($LASTEXITCODE -ne 0) { throw 'N02 historical fixture failed.' }
+    }
     & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -f $migration.FullName
     if ($LASTEXITCODE -ne 0) { throw "Migration failed: $($migration.Name)" }
   }
