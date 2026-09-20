@@ -1121,7 +1121,7 @@ class ReliableDatabase {
     }
     const auto owned = tx.exec_params(R"(
       SELECT 1 FROM ai_jobs WHERE id = $1 AND status = 'running' AND target_id = $2
-        AND generation = $3 AND attempts = $4 AND lease_until > NOW()
+        AND generation = $3 AND attempts = $4 AND lease_until > clock_timestamp()
         AND job_type = 'evaluation' FOR UPDATE
     )", job.id, job.target_id, job.generation, job.attempt);
     if (owned.empty()) throw ApiError(409, "JOB_LEASE_LOST", "评分任务租约已失效");
@@ -3600,7 +3600,7 @@ class ReliableRoleplayDatabase {
     }
     const auto owned = tx.exec_params(R"(
       SELECT 1 FROM ai_jobs WHERE id = $1 AND status = 'running' AND target_id = $2
-        AND generation = $3 AND attempts = $4 AND lease_until > NOW()
+        AND generation = $3 AND attempts = $4 AND lease_until > clock_timestamp()
         AND job_type = 'roleplay_summary' FOR UPDATE
     )", job.id, job.target_id, job.generation, job.attempt);
     if (owned.empty()) throw ApiError(409, "JOB_LEASE_LOST", "复盘任务租约已失效");
@@ -3877,7 +3877,7 @@ class AiJobQueue {
     const auto renewed = tx.exec_params(R"(
       UPDATE ai_jobs SET lease_until = NOW() + ($5 * INTERVAL '1 second'), updated_at = NOW()
       WHERE id = $1 AND status = 'running' AND target_id = $2
-        AND generation = $3 AND attempts = $4 AND lease_until > NOW() AND job_type = $6
+        AND generation = $3 AND attempts = $4 AND lease_until > clock_timestamp() AND job_type = $6
       RETURNING id
     )", job.id, job.target_id, job.generation, job.attempt, kJobLeaseSeconds, job.type);
     tx.commit();
@@ -3892,7 +3892,7 @@ class AiJobQueue {
     const auto rows = tx.exec_params(
         "SELECT attempts, max_attempts, job_type, target_id FROM ai_jobs "
         "WHERE id = $1 AND status = 'running' AND generation = $2 AND attempts = $3 "
-        "AND job_type = $4 AND target_id = $5 AND lease_until > NOW() FOR UPDATE",
+        "AND job_type = $4 AND target_id = $5 AND lease_until > clock_timestamp() FOR UPDATE",
         job.id, job.generation, job.attempt, job.type, job.target_id);
     if (rows.empty()) {
       tx.commit();

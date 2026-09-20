@@ -207,7 +207,7 @@ class PatientInitializationStore {
     if (tx.exec_params(R"(
       SELECT id FROM ai_jobs WHERE id = $1 AND job_type = 'patient_initialization'
         AND target_id = $2 AND generation = $3 AND attempts = $4
-        AND status = 'running' AND lease_until > NOW() FOR UPDATE
+        AND status = 'running' AND lease_until > clock_timestamp() FOR UPDATE
     )", job.id, job.target_id, job.generation, job.attempt).empty())
       throw ApiError(409, "JOB_LEASE_LOST", "初始化任务租约已失效");
   }
