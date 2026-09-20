@@ -321,13 +321,14 @@ int main() {
     {
       pqxx::connection connection(database_url);
       pqxx::read_transaction tx(connection);
-      expected_weekly_completed = tx.exec(R"(
+      expected_weekly_completed = tx.exec_params(R"(
         SELECT COUNT(*) AS count FROM sessions s
         WHERE s.status = 'completed' AND s.evaluation_status = 'ready'
+          AND s.user_id IN ($1, $2)
           AND s.finished_at >= (
             date_trunc('week', NOW() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai'
           )
-      )")[0]["count"].as<int>();
+      )", kLearnerId, kPeerId)[0]["count"].as<int>();
     }
     const auto weekly_dashboard = database.supervisorDashboard(kAdminId, "week");
     require(weekly_dashboard["completedSessions"].get<int>() == expected_weekly_completed,
