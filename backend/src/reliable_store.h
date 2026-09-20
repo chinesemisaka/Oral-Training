@@ -8,12 +8,25 @@ struct AiJob {
   int attempt = 0;
 };
 
+inline std::string aiJobTargetTable(const std::string& type) {
+  if (type == "evaluation" || type == "patient_initialization") return "sessions";
+  if (type == "roleplay_summary") return "roleplay_sessions";
+  throw ApiError(500, "UNKNOWN_JOB_TYPE", "未知 AI 任务类型");
+}
+
+inline std::string aiJobDedupeKey(const std::string& type, const std::string& id) {
+  if (type == "evaluation") return "evaluation:" + id;
+  if (type == "roleplay_summary") return "roleplay-summary:" + id;
+  if (type == "patient_initialization") return "patient-initialization:" + id;
+  throw ApiError(500, "UNKNOWN_JOB_TYPE", "未知 AI 任务类型");
+}
+
 // Every transaction that touches both a session and its AI state must lock
 // the session first. The session serializes report/job writes for that target;
 // queue claim and heartbeat transactions touch jobs only and never wait on it.
 inline bool lockAiJobTarget(pqxx::transaction_base& tx, const std::string& type,
                             const std::string& target_id, bool skip_locked = false) {
-  const std::string table = type == "evaluation" ? "sessions" : "roleplay_sessions";
+  const std::string table = aiJobTargetTable(type);
   return !tx.exec_params("SELECT id FROM " + table + " WHERE id = $1 FOR UPDATE" +
                         (skip_locked ? " SKIP LOCKED" : ""), target_id).empty();
 }
@@ -24,8 +37,7 @@ inline int aiJobRetryDelaySeconds(int completed_attempts) {
 
 inline void enqueueAiJob(pqxx::transaction_base& tx, const std::string& type,
                          const std::string& target_id, bool reset_dead_job = false) {
-  const auto dedupe_key = type == "evaluation"
-      ? "evaluation:" + target_id : "roleplay-summary:" + target_id;
+  const auto dedupe_key = aiJobDedupeKey(type, target_id);
   if (reset_dead_job) {
     const auto reset = tx.exec_params(R"(
       INSERT INTO ai_jobs
@@ -51,8 +63,7 @@ inline void enqueueAiJob(pqxx::transaction_base& tx, const std::string& type,
 
 inline bool ensureAiJob(pqxx::transaction_base& tx, const std::string& type,
                         const std::string& target_id) {
-  const auto dedupe_key = type == "evaluation"
-      ? "evaluation:" + target_id : "roleplay-summary:" + target_id;
+  const auto dedupe_key = aiJobDedupeKey(type, target_id);
   auto jobs = tx.exec_params(
       "SELECT status, generation FROM ai_jobs WHERE dedupe_key = $1", dedupe_key);
   if (jobs.empty()) {
@@ -77,6 +88,8 @@ inline bool ensureAiJob(pqxx::transaction_base& tx, const std::string& type,
   )", dedupe_key);
   return reset.affected_rows() == 1;
 }
+
+#include "patient_initialization_store.h"
 
 class ReliableDatabase {
  public:
@@ -121,7 +134,7 @@ class ReliableDatabase {
       ) best ON TRUE
       LEFT JOIN LATERAL (
         SELECT id, current_round, max_rounds, updated_at FROM sessions
-        WHERE user_id = $1 AND scenario_id = s.id AND status = 'in_progress'
+        WHERE user_id = $1 AND scenario_id = s.id AND status = 'in_progress' AND service_id IS NULL
         ORDER BY updated_at DESC LIMIT 1
       ) active ON TRUE
       WHERE s.is_active AND NOT s.is_template
@@ -525,7 +538,7 @@ class ReliableDatabase {
       INSERT INTO sessions
           (id, user_id, scenario_id, scenario_name, status, current_round, max_rounds, patient_state, custom_patient_profile)
         VALUES ($1, $2, $3, $4, 'in_progress', 0, $5, $6::jsonb, $7::jsonb)
-        ON CONFLICT (user_id, scenario_id) WHERE status = 'in_progress' DO NOTHING
+        ON CONFLICT (user_id, scenario_id) WHERE status = 'in_progress' AND service_id IS NULL DO NOTHING
         RETURNING id
       )", session_id, user_id, scenario_id, row["name"].c_str(), row["max_rounds"].as<int>(), state.dump(), custom_profile_str);
       if (inserted.empty()) throw ApiError(409, "SESSION_IN_PROGRESS", "该场景已有进行中的训练");
@@ -543,12 +556,15 @@ class ReliableDatabase {
     auto connection = database_pool_->acquire();
     pqxx::work tx(connection.get());
     const auto previous = tx.exec_params(
-        "SELECT scenario_id, status, custom_patient_profile FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
+        "SELECT scenario_id, status, custom_patient_profile, service_id, service_revision_id, context_version FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
         session_id, user_id);
     if (previous.empty()) throw ApiError(404, "SESSION_NOT_FOUND", "训练会话不存在");
     if (std::string(previous[0]["status"].c_str()) != "in_progress") {
       throw ApiError(409, "SESSION_NOT_RESTARTABLE", "只有进行中的训练可以重新开始");
     }
+    const auto version = tx.exec_params("SELECT context_version FROM sessions WHERE id = $1", session_id);
+    if (version[0]["context_version"].as<int>() >= 2)
+      throw ApiError(409, "SERVICE_SESSION_RESTART_REQUIRES_CREATE", "请先放弃会话，再用新的 clientSessionId 创建服务训练");
     const auto scenario_id = std::string(previous[0]["scenario_id"].c_str());
     // 保留旧会话的自定义画像，重新开始时继续沿用
     json custom_profile = nullptr;
@@ -688,6 +704,7 @@ class ReliableDatabase {
       WHERE s.id = $1 AND s.user_id = $2 FOR UPDATE
     )", session_id, user_id);
     if (session_rows.empty()) throw ApiError(404, "SESSION_NOT_FOUND", "训练会话不存在");
+    requireTrainingInitialized(tx, session_id);
     if (std::string(session_rows[0]["status"].c_str()) != "in_progress") {
       throw ApiError(409, "SESSION_FINISHED", "已结束的训练不能继续获取提示");
     }
@@ -717,6 +734,13 @@ class ReliableDatabase {
             {"hintUsedThisRound", 1}, {"hintRemainingThisRound", 0}};
   }
 
+  void requireInitialized(const std::string& user_id, const std::string& session_id) const {
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
+    (void)getSessionRow(tx, session_id, user_id);
+    requireTrainingInitialized(tx, session_id);
+  }
+
   json getSessionInternal(const std::string& session_id) const {
     auto connection = database_pool_->acquire();
     pqxx::read_transaction tx(connection.get());
@@ -733,7 +757,7 @@ class ReliableDatabase {
     auto connection = database_pool_->acquire();
     pqxx::read_transaction tx(connection.get());
     std::string query = "SELECT id, scenario_id, scenario_name, status, current_round, max_rounds, " +
-        std::string(kSessionTimes) + ", total_score, evaluation_status, custom_patient_profile FROM sessions WHERE user_id = " +
+        std::string(kSessionTimes) + ", total_score, evaluation_status, custom_patient_profile, service_id, service_revision_id, context_version FROM sessions WHERE user_id = " +
         tx.quote(user_id);
     if (status != "all") query += " AND status = " + tx.quote(status);
     if (!scenario_id.empty()) query += " AND scenario_id = " + tx.quote(scenario_id);
@@ -799,6 +823,7 @@ class ReliableDatabase {
         "SELECT status, current_round, max_rounds FROM sessions "
         "WHERE id = $1 AND user_id = $2 FOR UPDATE", session_id, user_id);
     if (session.empty()) throw ApiError(404, "SESSION_NOT_FOUND", "训练会话不存在");
+    requireTrainingInitialized(tx, session_id);
     const auto existing = tx.exec_params(R"(
       SELECT input.id AS input_id, input.content AS input_content, input.round AS input_round,
         input.reply_status, input.reply_lease_until > NOW() AS lease_active,
@@ -986,6 +1011,7 @@ class ReliableDatabase {
       FROM sessions WHERE id = $1 AND user_id = $2 FOR UPDATE
     )", session_id, user_id);
     if (rows.empty()) throw ApiError(404, "SESSION_NOT_FOUND", "训练会话不存在");
+    requireTrainingInitialized(tx, session_id);
     const auto status = std::string(rows[0]["status"].c_str());
     if (status == "abandoned") throw ApiError(409, "SESSION_ABANDONED", "已放弃的训练不能结束或恢复");
     if (status == "completed") {
@@ -1159,7 +1185,7 @@ class ReliableDatabase {
       const auto recent_rows = tx.exec(
           "SELECT id, scenario_id, scenario_name, status, current_round, max_rounds, " +
           std::string(kSessionTimes) +
-          ", total_score, evaluation_status, custom_patient_profile FROM sessions WHERE user_id = " + tx.quote(user_id) +
+          ", total_score, evaluation_status, custom_patient_profile, service_id, service_revision_id, context_version FROM sessions WHERE user_id = " + tx.quote(user_id) +
           " AND status <> 'abandoned' ORDER BY updated_at DESC LIMIT 5");
       for (const auto& row : recent_rows) recent.push_back(sessionJson(row));
     }
@@ -2840,11 +2866,20 @@ class ReliableDatabase {
     auto rows = tx.exec_params(
         "SELECT id, user_id, scenario_id, scenario_name, status, current_round, max_rounds, " +
         std::string(kSessionTimes) +
-        ", total_score, evaluation_status, custom_patient_profile FROM sessions WHERE id = $1", session_id);
+        ", total_score, evaluation_status, custom_patient_profile, service_id, service_revision_id, context_version FROM sessions WHERE id = $1", session_id);
     if (rows.empty() || (!user_id.empty() && std::string(rows[0]["user_id"].c_str()) != user_id)) {
       throw ApiError(404, "SESSION_NOT_FOUND", "训练会话不存在");
     }
-    return sessionJson(rows[0]);
+    auto result = sessionJson(rows[0]);
+    if (rows[0]["context_version"].as<int>() >= 2) {
+      const auto context = tx.exec_params(
+          "SELECT initialization_status, public_profile FROM training_contexts"
+          " WHERE session_type = 'training' AND session_id = $1", session_id);
+      result["initializationStatus"] = context.empty() ? "failed" : context[0]["initialization_status"].c_str();
+      result["publicProfile"] = !context.empty() && !context[0]["public_profile"].is_null()
+          ? json::parse(context[0]["public_profile"].c_str()) : json(nullptr);
+    }
+    return result;
   }
 
   static void completeJob(pqxx::transaction_base& tx, const AiJob& job) {
@@ -3818,6 +3853,7 @@ class AiJobQueue {
     AiJob job{rows[0]["id"].c_str(), rows[0]["job_type"].c_str(),
               rows[0]["target_id"].c_str(), rows[0]["generation"].as<int>(),
               rows[0]["attempts"].as<int>()};
+    (void)aiJobTargetTable(job.type);
     tx.exec_params(R"(
       UPDATE ai_job_attempts SET status = 'failed', error_type = 'JOB_LEASE_EXPIRED',
         error_message = 'worker lease expired', finished_at = NOW()
@@ -3832,14 +3868,15 @@ class AiJobQueue {
   }
 
   bool renewLease(const AiJob& job) const {
+    (void)aiJobTargetTable(job.type);
     auto connection = database_pool_->acquire();
     pqxx::work tx(connection.get());
     const auto renewed = tx.exec_params(R"(
       UPDATE ai_jobs SET lease_until = NOW() + ($5 * INTERVAL '1 second'), updated_at = NOW()
       WHERE id = $1 AND status = 'running' AND target_id = $2
-        AND generation = $3 AND attempts = $4 AND lease_until > NOW()
+        AND generation = $3 AND attempts = $4 AND lease_until > NOW() AND job_type = $6
       RETURNING id
-    )", job.id, job.target_id, job.generation, job.attempt, kJobLeaseSeconds);
+    )", job.id, job.target_id, job.generation, job.attempt, kJobLeaseSeconds, job.type);
     tx.commit();
     return !renewed.empty();
   }
@@ -3852,7 +3889,7 @@ class AiJobQueue {
     const auto rows = tx.exec_params(
         "SELECT attempts, max_attempts, job_type, target_id FROM ai_jobs "
         "WHERE id = $1 AND status = 'running' AND generation = $2 AND attempts = $3 "
-        "AND job_type = $4 AND target_id = $5 FOR UPDATE",
+        "AND job_type = $4 AND target_id = $5 AND lease_until > NOW() FOR UPDATE",
         job.id, job.generation, job.attempt, job.type, job.target_id);
     if (rows.empty()) {
       tx.commit();
@@ -3881,6 +3918,11 @@ class AiJobQueue {
           last_error = $2, updated_at = NOW(), finished_at = NOW() WHERE id = $1
       )", job.id, error_type);
       markTargetFailed(tx, rows[0]["job_type"].c_str(), rows[0]["target_id"].c_str(), error_type);
+    }
+    if (retry && job.type == "patient_initialization") {
+      tx.exec_params("UPDATE training_contexts SET initialization_status = 'pending',"
+          " initialization_error = $2 WHERE session_type = 'training' AND session_id = $1"
+          " AND initialization_generation = $3", job.target_id, error_type, job.generation);
     }
     tx.commit();
     std::cerr << json({{"event", retry ? "ai_job_retry_scheduled" : "ai_job_dead"},
@@ -3913,7 +3955,7 @@ class AiJobQueue {
         UPDATE sessions SET evaluation_status = 'failed', total_score = NULL, updated_at = NOW()
         WHERE id = $1
       )", target_id);
-    } else {
+    } else if (type == "roleplay_summary") {
       tx.exec_params(R"(
         INSERT INTO roleplay_summaries(session_id, status, summary, error_type, updated_at)
         VALUES ($1, 'failed', NULL, $2, NOW())
@@ -3921,6 +3963,12 @@ class AiJobQueue {
           error_type = EXCLUDED.error_type, updated_at = NOW()
       )", target_id, error_type);
       tx.exec_params("UPDATE roleplay_sessions SET updated_at = NOW() WHERE id = $1", target_id);
+    } else if (type == "patient_initialization") {
+      tx.exec_params("UPDATE training_contexts SET initialization_status = 'failed',"
+          " initialization_error = $2 WHERE session_type = 'training' AND session_id = $1",
+          target_id, error_type);
+    } else {
+      throw ApiError(500, "UNKNOWN_JOB_TYPE", "未知 AI 任务类型");
     }
   }
 

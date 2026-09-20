@@ -15,6 +15,11 @@ class IModelGateway {
   virtual bool configured() const = 0;
   virtual std::string modelVersion() const = 0;
   virtual void setRuntimeKey(const std::string& api_key) = 0;
+  // N02 infrastructure seam. N03 implements grounded generation in the DeepSeek gateway.
+  virtual bool supportsPatientInitialization() const { return false; }
+  virtual json initializePatient(const json&, const json&, const json&) const {
+    return json::object();
+  }
   virtual json patientReply(const json& scenario, const json& patient_state,
                             const json& history) const = 0;
   virtual json evaluate(const json& scenario, const json& messages) const = 0;

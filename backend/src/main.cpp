@@ -1148,6 +1148,10 @@ json sessionJson(const pqxx::row& row) {
   if (!row["custom_patient_profile"].is_null()) {
     result["customPatientProfile"] = json::parse(row["custom_patient_profile"].c_str());
   }
+  result["contextVersion"] = row["context_version"].as<int>();
+  result["serviceId"] = row["service_id"].is_null() ? json(nullptr) : json(row["service_id"].c_str());
+  result["serviceRevisionId"] = row["service_revision_id"].is_null()
+      ? json(nullptr) : json(row["service_revision_id"].c_str());
   return result;
 }
 
@@ -1731,6 +1735,8 @@ class Service {
 
   ~Service() { stopWorkers(); }
 
+  void notifyJobs() { wakeWorkers(); }
+
   ReliableDatabase& database() { return database_; }
   ReliableRoleplayDatabase& roleplayDatabase() { return roleplay_database_; }
   oral_training::IModelGateway& model() { return *model_; }
@@ -1790,6 +1796,9 @@ class Service {
 
   json sendMessage(const std::string& user_id, const std::string& session_id,
                    const std::string& client_message_id, const std::string& content) {
+    database_.requireInitialized(user_id, session_id);
+    if (database_.getSession(user_id, session_id)["session"].value("contextVersion", 1) >= 2)
+      throw ApiError(503, "PATIENT_TRAINING_UNAVAILABLE", "服务患者对话将在 N03 启用");
     const auto saved = database_.claimUserMessage(user_id, session_id, client_message_id, content);
     if (saved["isComplete"].get<bool>()) {
       const auto session = database_.getSession(user_id, session_id)["session"];
@@ -1882,8 +1891,11 @@ class Service {
      used=0 然后双双插入，唯一键会把它变成一次 500，而用户看到的应该是
      「本轮已经用过提示」。 */
   json requestTrainingHint(const std::string& user_id, const std::string& session_id) {
+    database_.requireInitialized(user_id, session_id);
     const auto detail = database_.getSession(user_id, session_id);
     const auto& session = detail["session"];
+    if (session.value("contextVersion", 1) >= 2)
+      throw ApiError(503, "PATIENT_TRAINING_UNAVAILABLE", "服务患者提示将在 N03 启用");
     auto scenario = database_.getScenarioInternal(session["scenarioId"].get<std::string>());
 
     if (session["status"].get<std::string>() != "in_progress") {
@@ -2063,10 +2075,27 @@ class Service {
     return code != "MODEL_AUTH_FAILED" && code != "MODEL_NOT_CONFIGURED" &&
            code != "MODEL_CONTENT_FILTERED" && code != "MODEL_UNSAFE_RESPONSE" &&
            code != "SESSION_NOT_FOUND" && code != "ROLEPLAY_SESSION_NOT_FOUND" &&
-           code != "SCENARIO_NOT_FOUND" && code != "UNKNOWN_JOB_TYPE";
+           code != "SCENARIO_NOT_FOUND" && code != "UNKNOWN_JOB_TYPE" &&
+           code != "PATIENT_INITIALIZATION_UNAVAILABLE" && code != "SESSION_ABANDONED";
   }
 
   void processJob(const AiJob& job) {
+    if (job.type == "patient_initialization") {
+      PatientInitializationStore initialization(database_pool_);
+      const auto context = initialization.begin(job);
+      if (!model_->supportsPatientInitialization())
+        throw ApiError(503, "PATIENT_INITIALIZATION_UNAVAILABLE", "患者生成器尚未启用");
+      const auto detail = database_.getSessionInternal(job.target_id);
+      const auto scenario = database_.getScenarioInternal(detail["session"]["scenarioId"].get<std::string>());
+      oral_training::rag::RetrievalRequest request;
+      request.purpose = oral_training::rag::RetrievalPurpose::PatientInitialization;
+      request.context_id = context["contextId"].get<std::string>();
+      const json evidence = rag_retriever_.retrieve(context["serviceRevisionId"].get<std::string>(),
+          context["manifest"].get<std::vector<std::string>>(), context["knowledgeAsOf"].get<std::string>(),
+          context["manifestHash"].get<std::string>(), request, context["trainingScope"].get<std::string>());
+      initialization.save(job, model_->initializePatient(scenario, context, evidence), model_->modelVersion());
+      return;
+    }
     if (job.type == "evaluation") {
       const auto detail = database_.getSessionInternal(job.target_id);
       const auto scenario = database_.getScenarioInternal(
@@ -2146,7 +2175,8 @@ class Service {
           }
         } catch (const std::exception& error) {
           try {
-            queue_.fail(*job, job->type == "evaluation" ? "EVALUATION_ERROR" : "ROLEPLAY_SUMMARY_ERROR",
+            queue_.fail(*job, job->type == "evaluation" ? "EVALUATION_ERROR" :
+                        job->type == "patient_initialization" ? "PATIENT_INITIALIZATION_ERROR" : "ROLEPLAY_SUMMARY_ERROR",
                         error.what(), true);
           } catch (const std::exception& persist_error) {
             std::cerr << json({{"event", "job_failure_persist_error"}, {"jobId", job->id},
@@ -2479,7 +2509,42 @@ int main() {
         const auto cleaned = sanitizeCustomProfile(body["customPatientProfile"]);
         if (!cleaned.empty()) custom_profile = cleaned;
       }
+      for (const auto* key : {"serviceId", "clientSessionId"}) {
+        if (body.contains(key) && (!body[key].is_string() || body[key].get<std::string>().empty()))
+          throw ApiError(400, "INVALID_ARGUMENT", "服务训练参数必须是非空字符串");
+      }
+      const auto service_id = jsonString(body, "serviceId");
+      const auto client_id = jsonString(body, "clientSessionId");
+      if (!service_id.empty()) {
+        if (body.contains("customPatientProfile"))
+          throw ApiError(400, "INVALID_ARGUMENT", "服务训练暂不接受自定义患者画像");
+        PatientInitializationStore initialization(database_pool);
+        const auto id = initialization.create(user.id, scenario_id, service_id, client_id);
+        service.notifyJobs();
+        return ok({{"session", service.database().getSession(user.id, id)["session"]},
+                   {"initialization", initialization.get(user.id, id)}, {"messages", json::array()}},
+                  "accepted", 202);
+      }
+      if (!client_id.empty()) throw ApiError(400, "INVALID_ARGUMENT", "clientSessionId 需要 serviceId");
       return ok(service.database().createSession(user.id, scenario_id, custom_profile), "created", 201);
+    });
+  });
+
+  CROW_ROUTE(app, "/api/sessions/<string>/initialization").methods(crow::HTTPMethod::GET)(
+      [&](const crow::request& request, const std::string& id) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request, true);
+      return ok(PatientInitializationStore(database_pool).get(user.id, id));
+    });
+  });
+  CROW_ROUTE(app, "/api/sessions/<string>/initialization/retry").methods(crow::HTTPMethod::POST)(
+      [&](const crow::request& request, const std::string& id) {
+    return handle(request, [&] {
+      const auto user = identity.authorize(request, true);
+      PatientInitializationStore initialization(database_pool);
+      initialization.retry(user.id, id);
+      service.notifyJobs();
+      return ok(initialization.get(user.id, id), "accepted", 202);
     });
   });
 

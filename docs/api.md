@@ -595,3 +595,20 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 **历史兼容**：不重写原始历史数据。旧 MD5 上下文须先校验原摘要，然后只在读取投影中按原服务 revision/manifest 计算规范化 SHA-256。旧 trace 的版本拼接串须与同一上下文相符，投影保留 `legacyManifestHash` 并返回规范化摘要。旧消息中仅有 traceId/evidenceId 的 citation 仍可读取；新回复、复盘及其引用使用规范化 SHA-256。没有服务范围元数据的旧 passage 不纳入新复盘，旧结构化事实经校验后可复用。旧 v2 自由文本复盘通过安全投影读取；v1 复盘不变。
 
 验证范围与未运行项见 [N01 验证记录](rag-n01-validation.md)。
+
+## N02：客服训练异步患者初始化
+
+迁移：`020_patient_initialization_jobs.sql`。未提供服务的旧 `POST /sessions` 保持 201；提供服务时：
+`{"scenarioId":"implant-basic","serviceId":"svc-...","clientSessionId":"客户端稳定唯一 ID"}` 返回 202，包含 `session`、`initialization`、空 `messages`。此路径暂不接受 `customPatientProfile`。
+
+- 同一用户同一 clientSessionId、同参重放返回原会话（即使已放弃）；异参返回 409 IDEMPOTENCY_CONFLICT。
+- 活跃唯一性按用户、场景、服务隔离；旧无服务会话有独立的唯一索引。
+- 服务版本、完整知识 revision 清单、knowledgeAsOf、trainingScope=demo 和 SHA-256 manifest 在创建事务中固定，重试和续练不重新选取。
+- `GET /sessions/{id}/initialization`：返回 status（pending/generating/ready/failed）、generation、retryable、errorType、manifestHash 和 publicProfile。只允许本人读取，不返回 privateProfile 或内部患者状态。
+- `POST /sessions/{id}/initialization/retry`：仅失败且仍在进行中的会话可重试，返回 202；generation 增加，manifest 不变。重复重试返回 409 INITIALIZATION_NOT_RETRYABLE。
+- 初始化未就绪时，消息、提示、结束请求返回 409 PATIENT_INITIALIZATION_PENDING 或 PATIENT_INITIALIZATION_FAILED；可显式放弃。
+- 初始化成功时事务提交公开/私有画像、患者状态、round 0 开场和任务成功状态；开场不占学员轮数。旧 attempt、过期 lease、旧 generation 或已放弃会话的结果不能提交。
+- 服务会话的旧 restart 接口返回 409 SERVICE_SESSION_RESTART_REQUIRES_CREATE：先放弃，再携带新 clientSessionId 创建。
+- 会话详情及历史增加 contextVersion、serviceId、serviceRevisionId，详情增加 initializationStatus、publicProfile。
+
+**阶段边界：** N02 完成基础设施和可注入的初始化网关契约；默认 DeepSeek 网关尚不支持患者初始化，任务会明确失败为 PATIENT_INITIALIZATION_UNAVAILABLE。真实 grounded 画像/逐轮回复在 N03 实现；N02 不将服务训练降级到旧患者模板。即使测试网关将初始化推进 ready，服务对话与提示仍返回 503 PATIENT_TRAINING_UNAVAILABLE。小程序选择服务与轮询界面留在 N04。本次不调用真实模型。

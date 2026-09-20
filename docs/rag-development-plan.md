@@ -206,11 +206,13 @@ DeepSeek 选择 evidenceId
 
 ### N02 — 客服训练上下文与患者初始化基础设施
 
+当前状态：基础设施已实现，正在进行 Windows/PostgreSQL CI 验证。真实患者生成与逐轮回复仍属于 N03。
+
 对应原任务：R06、R09。  
 预计：2—3 人日。  
 前置：N01。
 
-新增迁移 `012_patient_initialization_jobs.sql`，不得修改已发布的 010/011。迁移至少需要：
+新增迁移 `020_patient_initialization_jobs.sql`，不得修改已发布的 010/011。迁移至少需要：
 
 - 为 `sessions` 增加可空的 `service_id`、`service_revision_id`、`client_session_id` 和 `context_version`。
 - 扩展 `training_contexts`，保存初始化状态、generation、错误、私有画像、公开画像和可变患者状态。
