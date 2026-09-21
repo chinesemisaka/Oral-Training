@@ -20,6 +20,9 @@ class IModelGateway {
   virtual json initializePatient(const json&, const json&, const json&) const {
     return json::object();
   }
+  virtual json groundedPatientReply(const json&, const json&, const json&) const {
+    return json::object();
+  }
   virtual json patientReply(const json& scenario, const json& patient_state,
                             const json& history) const = 0;
   virtual json evaluate(const json& scenario, const json& messages) const = 0;

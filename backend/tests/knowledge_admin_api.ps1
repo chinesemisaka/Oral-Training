@@ -209,7 +209,7 @@ VALUES ('$adminHash', 'knowledge-api-admin', NOW() + INTERVAL '1 hour'),
     throw 'Roleplay clientSessionId replay created another session.'
   }
 
-  # N02 transport contract: the default gateway fails explicitly without a model call.
+  # N02 transport contract: the default gateway without a key fails explicitly without a model call.
   $trainingRequest = @{ scenarioId = 'implant-basic'; serviceId = $serviceId; clientSessionId = 'api-training-init-1' }
   $training = Invoke-Api POST '/sessions' $learnerToken $trainingRequest 202
   $trainingId = $training.data.session.id
@@ -228,7 +228,7 @@ VALUES ('$adminHash', 'knowledge-api-admin', NOW() + INTERVAL '1 hour'),
     Start-Sleep -Milliseconds 100
   }
   if ($initialization.data.status -ne 'failed' -or
-      $initialization.data.errorType -ne 'PATIENT_INITIALIZATION_UNAVAILABLE' -or
+      $initialization.data.errorType -ne 'MODEL_NOT_CONFIGURED' -or
       $null -ne $initialization.data.publicProfile) {
     throw 'Unavailable initializer did not fail safely.'
   }

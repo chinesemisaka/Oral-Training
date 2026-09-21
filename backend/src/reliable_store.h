@@ -571,6 +571,10 @@ class ReliableDatabase {
       custom_profile = json::parse(previous[0]["custom_patient_profile"].c_str());
     }
     tx.exec_params("UPDATE sessions SET status = 'abandoned', updated_at = NOW() WHERE id = $1", session_id);
+    tx.exec_params(R"(UPDATE sessions SET patient_state=jsonb_set(patient_state,'{endingReason}',
+        '"abandoned"'::jsonb) WHERE id=$1 AND context_version>=2)",session_id);
+    tx.exec_params("UPDATE training_contexts c SET patient_state=s.patient_state FROM sessions s"
+        " WHERE c.session_type='training' AND c.session_id=s.id AND s.id=$1",session_id);
     const auto scenario = tx.exec_params("SELECT * FROM scenarios WHERE id = $1", scenario_id)[0];
     const auto hidden = json::parse(scenario["hidden_config"].c_str());
     json merged_hidden = hidden;
@@ -621,6 +625,10 @@ class ReliableDatabase {
       throw ApiError(409, "SESSION_FINISHED", "只有进行中的训练可以强制结束");
     }
     tx.exec_params("UPDATE sessions SET status = 'abandoned', updated_at = NOW() WHERE id = $1", session_id);
+    tx.exec_params(R"(UPDATE sessions SET patient_state=jsonb_set(patient_state,'{endingReason}',
+        '"abandoned"'::jsonb) WHERE id=$1 AND context_version>=2)",session_id);
+    tx.exec_params("UPDATE training_contexts c SET patient_state=s.patient_state FROM sessions s"
+        " WHERE c.session_type='training' AND c.session_id=s.id AND s.id=$1",session_id);
     tx.commit();
     return {{"sessionId", session_id}, {"status", "abandoned"}};
   }
@@ -673,12 +681,14 @@ class ReliableDatabase {
         "SELECT patient_state FROM sessions WHERE id = $1", session_id);
     const auto patient_state = state_rows.empty()
         ? json::object() : json::parse(state_rows[0]["patient_state"].c_str());
-    const json patient_state_out = {
+    json patient_state_out = {
         {"emotion", jsonString(patient_state, "emotion", "平静")},
         {"emotionLevel", jsonInt(patient_state, "emotionLevel", 0)},
         {"trustLevel", jsonInt(patient_state, "trustLevel", 50)},
         {"riskTriggered", patient_state.value("riskTriggered", false)},
     };
+    if(session.value("contextVersion",1)>=2)
+      patient_state_out={{"emotion",jsonString(patient_state,"emotion","犹豫")}};
     return {{"session", session}, {"messages", messages}, {"pendingMessage", pending_message},
             {"patientState", patient_state_out},
             {"hints", hints}, {"hintLimit", hint_total_limit},
@@ -916,8 +926,8 @@ class ReliableDatabase {
   }
 
   json savePatientReply(const std::string& user_id, const std::string& session_id, int round,
-                        const std::string& token, const json& model_reply) const {
-    const auto reply = jsonString(model_reply, "reply");
+                        const std::string& token, json model_reply) const {
+    auto reply = jsonString(model_reply, "reply");
     const auto reply_length = utf8Length(reply);
     if (reply_length < 1 || reply_length > 1000) {
       throw ApiError(503, "MODEL_INVALID_RESPONSE", "模型未返回有效患者回复");
@@ -942,12 +952,27 @@ class ReliableDatabase {
     if (status == "abandoned") throw ApiError(409, "SESSION_ABANDONED", "已放弃的训练不能恢复");
     if (status != "in_progress") throw ApiError(409, "SESSION_FINISHED", "训练已结束");
     const auto input = tx.exec_params(R"(
-      SELECT id, reply_attempt_token FROM messages
+      SELECT id, content, reply_attempt_token, reply_lease_until > clock_timestamp() AS lease_active FROM messages
       WHERE session_id = $1 AND role = 'user' AND round = $2 FOR UPDATE
     )", session_id, round);
     if (input.empty() || input[0]["reply_attempt_token"].is_null() ||
-        std::string(input[0]["reply_attempt_token"].c_str()) != token) {
+        std::string(input[0]["reply_attempt_token"].c_str()) != token ||
+        input[0]["lease_active"].is_null() || !input[0]["lease_active"].as<bool>()) {
       throw ApiError(409, "SESSION_RESPONSE_PENDING", "该回复生成租约已失效，请查询会话后重试");
+    }
+    const bool grounded=session["context_version"].as<int>()>=2;
+    if(grounded) {
+      requireTrainingInitialized(tx,session_id);
+      const auto profiles=readPatientProfiles(tx,session_id);
+      model_reply=oral_training::rag::groundedPatientReply(model_reply.at("selection"),profiles,
+          model_reply.at("evidenceBundle"),jsonString(model_reply,"traceId"),input[0]["content"].c_str(),round);
+      reply=jsonString(model_reply,"reply");
+      if(utf8Length(reply)>1000) throw ApiError(503,"MODEL_INVALID_RESPONSE","患者回复过长");
+      tx.exec_params(R"(
+        INSERT INTO rag_traces(id,context_id,purpose,round,attempt_token,evidence_json,is_public)
+        VALUES ($1,$2,'patient_reply',$3,$4,$5::jsonb,FALSE)
+      )",jsonString(model_reply,"traceId"),profiles["context"]["contextId"].get<std::string>(),
+          round,token,model_reply["evidenceBundle"].dump());
     }
     json state = json::parse(session["patient_state"].c_str());
     state["emotion"] = jsonString(model_reply, "emotion", state.value("emotion", "平静"));
@@ -969,6 +994,7 @@ class ReliableDatabase {
         }
       }
     }
+    if(grounded) state=model_reply.at("patientState");
     const auto message_id = makeId("msg");
     tx.exec_params(
         "INSERT INTO messages(id, session_id, role, content, round, emotion) VALUES ($1, $2, 'patient', $3, $4, $5)",
@@ -977,7 +1003,13 @@ class ReliableDatabase {
       UPDATE messages SET reply_status = 'ready', reply_lease_until = NULL,
         reply_attempt_token = NULL, reply_error_type = NULL WHERE id = $1
     )", input[0]["id"].c_str());
-    const bool should_finish = round >= session["max_rounds"].as<int>();
+    const bool should_finish = round >= session["max_rounds"].as<int>() ||
+        (grounded && model_reply.value("shouldEnd",false));
+    if(grounded) {
+      if(round>=session["max_rounds"].as<int>()) state["endingReason"]="round_limit";
+      tx.exec_params("UPDATE training_contexts SET patient_state=$2::jsonb"
+          " WHERE session_type='training' AND session_id=$1",session_id,state.dump());
+    }
     if (should_finish) {
       tx.exec_params(R"(
         UPDATE sessions SET current_round = $2, patient_state = $3::jsonb, status = 'completed',
@@ -1036,6 +1068,10 @@ class ReliableDatabase {
       ON CONFLICT (session_id) DO UPDATE SET status = 'generating', report = NULL,
         error_type = NULL, updated_at = NOW()
     )", session_id);
+    tx.exec_params("UPDATE sessions SET patient_state=jsonb_set(patient_state,'{endingReason}',"
+        "'\"manual\"'::jsonb) WHERE id=$1 AND context_version>=2",session_id);
+    tx.exec_params("UPDATE training_contexts c SET patient_state=s.patient_state FROM sessions s"
+        " WHERE c.session_type='training' AND c.session_id=s.id AND s.id=$1",session_id);
     enqueueAiJob(tx, "evaluation", session_id);
     const auto saved = getSessionRow(tx, session_id, user_id);
     tx.commit();

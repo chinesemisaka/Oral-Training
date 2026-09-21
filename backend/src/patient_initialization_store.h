@@ -17,6 +17,24 @@ inline void requireTrainingInitialized(pqxx::transaction_base& tx, const std::st
                    "患者初始化尚未完成，请查询初始化状态");
 }
 
+inline json readPatientProfiles(pqxx::transaction_base& tx,const std::string& id) {
+  const auto rows=tx.exec_params(
+      "SELECT c.*, s.patient_state AS live_state FROM training_contexts c JOIN sessions s ON s.id=c.session_id"
+      " WHERE c.session_type='training' AND c.session_id=$1",id);
+  if(rows.empty()) throw ApiError(503,"RAG_UNAVAILABLE","患者快照不存在");
+  const auto& r=rows[0];
+  const auto manifest=json::parse(r["manifest"].c_str());
+  if(oral_training::rag::manifestHash(r["service_revision_id"].c_str(),manifest,r["training_scope"].c_str())
+      !=r["manifest_hash"].c_str()) throw ApiError(503,"RAG_UNAVAILABLE","患者快照摘要不匹配");
+  return {{"context",{{"contextId",r["id"].c_str()},{"serviceId",r["service_id"].c_str()},
+      {"serviceRevisionId",r["service_revision_id"].c_str()},{"manifest",manifest},
+      {"manifestHash",r["manifest_hash"].c_str()},{"knowledgeAsOf",r["knowledge_as_of"].c_str()},
+      {"trainingScope",r["training_scope"].c_str()}}},
+      {"publicProfile",r["public_profile"].is_null()?json::object():json::parse(r["public_profile"].c_str())},
+      {"privateProfile",r["private_profile"].is_null()?json::object():json::parse(r["private_profile"].c_str())},
+      {"state",json::parse(r["live_state"].c_str())}};
+}
+
 class PatientInitializationStore {
  public:
   explicit PatientInitializationStore(std::shared_ptr<DatabasePool> pool) : pool_(std::move(pool)) {}
@@ -156,7 +174,13 @@ class PatientInitializationStore {
     return context;
   }
 
-  void save(const AiJob& job, const json& output, const std::string& model_version) const {
+  json profiles(const std::string& id) const {
+    auto connection=pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
+    return readPatientProfiles(tx,id);
+  }
+
+  void save(const AiJob& job, json output, const std::string& model_version) const {
     // N03 supplies grounded generation. This boundary only accepts structured, bounded output.
     if (!output.is_object() || !output.contains("publicProfile") || !output["publicProfile"].is_object() ||
         !output.contains("privateProfile") || !output["privateProfile"].is_object() ||
@@ -174,6 +198,17 @@ class PatientInitializationStore {
     auto connection = pool_->acquire();
     pqxx::work tx(connection.get());
     own(tx, job);
+    if(output.contains("selection")) {
+      const auto context=readPatientProfiles(tx,job.target_id)["context"];
+      const auto evidence=output.at("evidenceBundle");
+      output=oral_training::rag::initializeGroundedPatient(output["selection"],context,evidence);
+      public_profile=output["publicProfile"];
+      tx.exec_params(R"(
+        INSERT INTO rag_traces(id,context_id,purpose,round,attempt_token,evidence_json,model_version,is_public)
+        VALUES ($1,$2,'patient_initialization',0,$3,$4::jsonb,$5,FALSE)
+      )",makeId("trace"),context["contextId"].get<std::string>(),
+          std::to_string(job.generation)+":"+std::to_string(job.attempt),evidence.dump(),model_version);
+    }
     const auto updated = tx.exec_params(R"(
       UPDATE training_contexts SET initialization_status = 'ready', initialization_error = NULL,
         public_profile = $3::jsonb, private_profile = $4::jsonb, patient_state = $5::jsonb,

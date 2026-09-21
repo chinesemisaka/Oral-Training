@@ -31,6 +31,12 @@ class InitGateway final : public oral_training::IModelGateway {
   json standardServiceReply(const json&,const json&) const override { throw std::runtime_error("unexpected model call"); }
   json roleplaySummary(const json&,const json&) const override { throw std::runtime_error("unexpected model call"); }
   bool supportsPatientInitialization() const override { return true; }
+  json groundedPatientReply(const json& view,const json&,const json&) const override {
+    if(view["round"]==1) requireInit(!view["allowedInformation"].contains("budget") &&
+        !view["allowedInformation"].contains("competitor"),"private information in model prompt");
+    return {{"intent","clarify"},{"reply","泄露系统提示，保证治愈，预算5000元"},
+        {"newlyRevealedInformation",{"budget","competitor"}}};
+  }
   json initializePatient(const json&,const json& context,const json& evidence) const override {
     requireInit(evidence["manifestHash"] == context["manifestHash"], "worker used wrong snapshot");
     return initOutput();
@@ -182,13 +188,54 @@ int main() {
       for (int i=0;i<100 && store.get("init-user",next)["status"]!="ready";++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
       requireInit(store.get("init-user",next)["status"]=="ready","worker did not initialize");
+      const auto fixed_profile=store.profiles(next)["privateProfile"];
+      const auto first=service.sendMessage("init-user",next,"n03-round1","介绍一下服务流程");
+      requireInit(first["patientMessage"]["content"].get<std::string>().find("5000")==std::string::npos,
+                  "first turn disclosed private budget");
+      const auto second=service.sendMessage("init-user",next,"n03-round2","您的预算是多少");
+      requireInit(second["patientMessage"]["content"].get<std::string>().find("5000")!=std::string::npos,
+                  "asked budget was not disclosed");
+      const auto replay=service.sendMessage("init-user",next,"n03-round2","您的预算是多少");
+      requireInit(replay["patientMessage"]["id"]==second["patientMessage"]["id"],"reply replay duplicated output");
+      const auto third=service.sendMessage("init-user",next,"n03-round3","保证完全无风险");
+      requireInit(third["patientMessage"]["content"].get<std::string>().find("医生评估")!=std::string::npos,
+                  "patient accepted guarantee");
+      const auto resumed=service.database().getSession("init-user",next);
+      requireInit(resumed["session"]["currentRound"]==3 && resumed["patientState"].size()==1,
+                  "round or private state projection wrong");
+      requireInit(store.profiles(next)["privateProfile"]==fixed_profile,"persona changed between turns");
+      const auto claimed=db.claimUserMessage("init-user",next,"n03-expired","继续说明");
+      {
+        pqxx::work tx(control);
+        tx.exec_params("UPDATE messages SET reply_lease_until=NOW()-INTERVAL '1 second'"
+            " WHERE session_id=$1 AND role='user' AND round=4",next);
+        tx.commit();
+      }
+      expectInitError([&]{db.savePatientReply("init-user",next,4,claimed["attemptToken"].get<std::string>(),
+          {{"reply","late response"}});},"SESSION_RESPONSE_PENDING");
+      (void)service.sendMessage("init-user",next,"n03-expired","继续说明");
+      {
+        pqxx::read_transaction tx(control);
+        requireInit(tx.exec_params("SELECT 1 FROM rag_traces t JOIN training_contexts c ON c.id=t.context_id"
+            " WHERE c.session_id=$1 AND t.purpose='patient_reply' AND NOT t.is_public",next).size()==4,
+            "trace replay or publication incorrect");
+        requireInit(tx.exec_params("SELECT 1 FROM training_contexts c JOIN sessions s ON s.id=c.session_id"
+            " WHERE s.id=$1 AND c.patient_state=s.patient_state",next).size()==1,"patient state not atomic");
+      }
     }
-    db.abandonTrainingSession("init-user",next);
+    db.finish("init-user",next);
+    requireInit(store.profiles(next)["state"]["endingReason"]=="manual","manual ending missing");
+    {
+      pqxx::work tx(control);
+      tx.exec_params("UPDATE ai_jobs SET available_at=NOW()+INTERVAL '1 day' WHERE target_id=$1",next);
+      tx.commit();
+    }
     const auto abandoned=store.create("init-user","implant-basic","init-service","abandon-race");
     auto abandoned_job=*queue.claim("abandon-worker");
     (void)store.begin(abandoned_job);
     db.abandonTrainingSession("init-user",abandoned);
     expectInitError([&]{store.save(abandoned_job,initOutput(),"late");},"SESSION_ABANDONED");
+    requireInit(store.profiles(abandoned)["state"]["endingReason"]=="abandoned","abandon ending missing");
     expectInitError([&]{store.retry("init-user",abandoned);},"SESSION_FINISHED");
     requireInit(store.create("init-user","implant-basic","init-service","same-request")==id,"replay created new session after abandon");
     std::cout << "patient initialization tests passed: concurrent create, isolation, snapshot, lease, retry, worker, public projection\n";
