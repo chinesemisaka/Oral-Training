@@ -238,6 +238,33 @@ int main() {
     requireInit(store.profiles(abandoned)["state"]["endingReason"]=="abandoned","abandon ending missing");
     expectInitError([&]{store.retry("init-user",abandoned);},"SESSION_FINISHED");
     requireInit(store.create("init-user","implant-basic","init-service","same-request")==id,"replay created new session after abandon");
+    const auto final_id=store.create("init-user","implant-basic","init-service","final-round");
+    const auto final_job=*queue.claim("final-worker");
+    const auto final_context=store.begin(final_job);
+    json final_evidence=final_context;
+    final_evidence["facts"]=json::array(); final_evidence["passages"]=json::array();
+    final_evidence["conflicts"]=json::array(); final_evidence["missingFields"]=json::array();
+    store.save(final_job,oral_training::rag::initializeGroundedPatient(json::object(),final_context,final_evidence),"fixture");
+    {
+      pqxx::work tx(control);
+      tx.exec_params("UPDATE sessions SET max_rounds=1 WHERE id=$1",final_id);
+      tx.commit();
+    }
+    const auto final_claim=db.claimUserMessage("init-user",final_id,"last","请确认服务流程");
+    const auto final_reply=oral_training::rag::groundedPatientReply(json::object(),store.profiles(final_id),
+        final_evidence,makeId("trace"),"请确认服务流程",1);
+    const auto final_saved=db.savePatientReply("init-user",final_id,1,
+        final_claim["attemptToken"].get<std::string>(),final_reply);
+    requireInit(final_saved["shouldFinish"]==true && store.profiles(final_id)["state"]["endingReason"]=="round_limit",
+        "round limit did not finish patient state");
+    {
+      pqxx::read_transaction tx(control);
+      requireInit(tx.exec_params("SELECT 1 FROM sessions s JOIN training_contexts c ON c.session_id=s.id"
+          " JOIN evaluations e ON e.session_id=s.id JOIN ai_jobs j ON j.target_id=s.id"
+          " WHERE s.id=$1 AND s.status='completed' AND c.patient_state=s.patient_state"
+          " AND e.status='generating' AND j.job_type='evaluation' AND j.status='pending'",final_id).size()==1,
+          "final round report/job/state not atomic");
+    }
     std::cout << "patient initialization tests passed: concurrent create, isolation, snapshot, lease, retry, worker, public projection\n";
     return 0;
   } catch (const std::exception& e) {

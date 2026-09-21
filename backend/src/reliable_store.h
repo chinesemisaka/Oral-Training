@@ -836,7 +836,7 @@ class ReliableDatabase {
     const auto existing = tx.exec_params(R"(
       SELECT input.id AS input_id, input.content AS input_content, input.round AS input_round,
         input.reply_status, input.reply_lease_until > NOW() AS lease_active,
-        reply.id AS reply_id, reply.content AS reply_content
+        reply.id AS reply_id, reply.content AS reply_content, reply.emotion AS reply_emotion
       FROM messages input
       LEFT JOIN messages reply ON reply.session_id = input.session_id
         AND reply.role = 'patient' AND reply.round = input.round
