@@ -265,6 +265,33 @@ int main() {
           " AND e.status='generating' AND j.job_type='evaluation' AND j.status='pending'",final_id).size()==1,
           "final round report/job/state not atomic");
     }
+    {
+      pqxx::work tx(control);
+      tx.exec("INSERT INTO clinic_services(id,name,category,created_by) VALUES ('init-service-b','Other service','implant','init-user')");
+      tx.exec("INSERT INTO service_revisions(id,service_id,version,payload,content_hash,origin,published_by)"
+          " VALUES ('init-sr-b','init-service-b',1,'{\"name\":\"Other service\",\"dataOrigin\":\"synthetic\"}',repeat('e',64),'synthetic','init-user')");
+      tx.exec("UPDATE clinic_services SET current_revision_id='init-sr-b' WHERE id='init-service-b'");
+      tx.exec("INSERT INTO service_scenarios(service_id,scenario_id) VALUES ('init-service-b','implant-basic')");
+      tx.commit();
+    }
+    const auto active_a=store.create("init-user","implant-basic","init-service","n04-a");
+    const auto active_b=store.create("init-user","implant-basic","init-service-b","n04-b");
+    const auto catalog_a=db.listScenarios("init-user","init-service")["items"];
+    const auto catalog_b=db.listScenarios("init-user","init-service-b")["items"];
+    requireInit(catalog_a.size()==1 && catalog_b.size()==1,"incompatible scenarios in catalog");
+    requireInit(catalog_a[0]["activeSession"]["id"]==active_a && catalog_b[0]["activeSession"]["id"]==active_b,
+        "service resume scope mixed");
+    const auto legacy_catalog=db.listScenarios("init-user")["items"];
+    for(const auto& item:legacy_catalog)
+      if(item["id"]=="implant-basic") requireInit(item["activeSession"]["id"]==legacy["session"]["id"],"legacy scope mixed");
+    requireInit(roleplay.listScenarios("init-user","init-service")["items"].size()==1,"roleplay compatibility missing");
+    {
+      pqxx::work tx(control);
+      tx.exec("UPDATE clinic_services SET status='archived' WHERE id='init-service-b'");
+      tx.commit();
+    }
+    requireInit(db.listScenarios("init-user","init-service-b")["items"].empty(),"archived service selectable");
+    requireInit(db.getSession("init-user",active_b)["session"]["id"]==active_b,"archive broke saved session");
     std::cout << "patient initialization tests passed: concurrent create, isolation, snapshot, lease, retry, worker, public projection\n";
     return 0;
   } catch (const std::exception& e) {

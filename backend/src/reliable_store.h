@@ -119,27 +119,29 @@ class ReliableDatabase {
     }
   }
 
-  json listScenarios(const std::string& user_id) const {
+  json listScenarios(const std::string& user_id, const std::string& service_id = "") const {
     auto connection = database_pool_->acquire();
     pqxx::read_transaction tx(connection.get());
     const auto rows = tx.exec_params(R"(
       SELECT s.id, s.name, s.category, s.summary, s.difficulty, s.focus, s.patient_profile, s.max_rounds,
-        COALESCE(best.best_score, 0) AS best_score,
+        best.best_score AS best_score,
         active.id AS active_id, active.current_round AS active_current_round,
         active.max_rounds AS active_max_rounds, active.updated_at AS active_updated_at
       FROM scenarios s
       LEFT JOIN LATERAL (
         SELECT MAX(total_score) AS best_score FROM sessions
-        WHERE user_id = $1 AND scenario_id = s.id AND evaluation_status = 'ready'
+        WHERE user_id = $1 AND scenario_id = s.id AND evaluation_status = 'ready' AND (($2 = '' AND service_id IS NULL) OR service_id = $2)
       ) best ON TRUE
       LEFT JOIN LATERAL (
         SELECT id, current_round, max_rounds, updated_at FROM sessions
-        WHERE user_id = $1 AND scenario_id = s.id AND status = 'in_progress' AND service_id IS NULL
+        WHERE user_id = $1 AND scenario_id = s.id AND status = 'in_progress' AND (($2 = '' AND service_id IS NULL) OR service_id = $2)
         ORDER BY updated_at DESC LIMIT 1
       ) active ON TRUE
       WHERE s.is_active AND NOT s.is_template
+        AND ($2 = '' OR EXISTS (SELECT 1 FROM service_scenarios ss JOIN clinic_services cs ON cs.id=ss.service_id
+          WHERE ss.scenario_id=s.id AND ss.service_id=$2 AND cs.status='active' AND cs.current_revision_id IS NOT NULL))
       ORDER BY s.sort_order
-    )", user_id);
+    )", user_id, service_id);
     json items = json::array();
     for (const auto& row : rows) {
       json item = {
@@ -773,7 +775,14 @@ class ReliableDatabase {
     query += " ORDER BY updated_at DESC LIMIT " + std::to_string(limit);
     const auto rows = tx.exec(query);
     json items = json::array();
-    for (const auto& row : rows) items.push_back(sessionJson(row));
+    for (const auto& row : rows) {
+      auto item=sessionJson(row);
+      if(!row["service_revision_id"].is_null()) {
+        const auto name=tx.exec_params("SELECT payload->>'name' AS name FROM service_revisions WHERE id=$1",row["service_revision_id"].c_str());
+        if(!name.empty() && !name[0]["name"].is_null()) item["serviceName"]=name[0]["name"].c_str();
+      }
+      items.push_back(item);
+    }
     return {{"items", items}, {"total", static_cast<int>(items.size())}};
   }
 
@@ -2950,10 +2959,12 @@ class ReliableRoleplayDatabase {
       LEFT JOIN LATERAL (
         SELECT id, current_round, max_rounds, updated_at FROM roleplay_sessions
         WHERE user_id = $1 AND scenario_id = s.id AND status = 'in_progress'
-          AND ($2 = '' OR service_id = $2)
+          AND (($2 = '' AND service_id IS NULL) OR service_id = $2)
         ORDER BY updated_at DESC LIMIT 1
       ) active ON TRUE
       WHERE s.is_active AND NOT s.is_template
+        AND ($2 = '' OR EXISTS (SELECT 1 FROM service_scenarios ss JOIN clinic_services cs ON cs.id=ss.service_id
+          WHERE ss.scenario_id=s.id AND ss.service_id=$2 AND cs.status='active' AND cs.current_revision_id IS NOT NULL))
       ORDER BY s.sort_order
     )", user_id, service_id);
     json items = json::array();

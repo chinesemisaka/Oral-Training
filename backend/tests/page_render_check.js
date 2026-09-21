@@ -218,6 +218,7 @@ const run = async () => {
     const page = loadPage('pages/index/index.js', {
       getCurrentUser: () => ({ role: 'learner' }),
       getScenarios: () => Promise.reject(new Error('boom')),
+      getServices: () => Promise.resolve({ items: [{ id: 'service', name: '服务' }] }),
       getRoleplayScenarios: () => Promise.resolve({ items: [] }),
       getRoleplaySessions: () => Promise.resolve({ items: [] }),
       getLearnerTrainingPlans: () => Promise.resolve({ plans: [] })

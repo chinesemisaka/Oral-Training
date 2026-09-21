@@ -57,6 +57,14 @@ const trustBadge = patientState => {
 
 Page({
   data: {
+    contextVersion: 1,
+    initializationStatus: '',
+    initializationText: '',
+    interactionBlocked: true,
+    publicProfile: null,
+    currentEmotion: '',
+    loadError: '',
+    retryingInitialization: false,
     session: null,
     scenario: null,
     messages: [],
@@ -85,6 +93,8 @@ Page({
   pendingPollTimer: null,
 
   onLoad(options) {
+    this._visible = true;
+    this._epoch = (this._epoch || 0) + 1;
     this.sessionId = options.sessionId || '';
     // master：缺 sessionId 直接弹窗回场景列表，而不是让后续请求炸在 getSession 上
     if (!this.sessionId) {
@@ -113,8 +123,39 @@ Page({
     this.setData({ showAssistGuide: false });
   },
 
-  onUnload() {
-    if (this.pendingPollTimer) clearTimeout(this.pendingPollTimer);
+  onShow() {
+    this._visible = true;
+    this._epoch = (this._epoch || 0) + 1;
+    if (this.sessionId) {
+      this.setData({ sending: false, requestingHint: false, retryingInitialization: false });
+      this.loadSession();
+    }
+  },
+
+  onHide() {
+    this._visible = false;
+    this._epoch = (this._epoch || 0) + 1;
+    clearTimeout(this.pendingPollTimer);
+    clearTimeout(this.initializationTimer);
+  },
+
+  onUnload() { this.onHide(); },
+
+  requestScope() {
+    const epoch = this._epoch;
+    const sessionId = this.sessionId;
+    return () => this._visible !== false && epoch === this._epoch && sessionId === this.sessionId;
+  },
+
+  retryInitialization() {
+    if (this.data.initializationStatus !== 'failed' || this.data.retryingInitialization) return;
+    const active = this.requestScope();
+    this.setData({ retryingInitialization: true });
+    api.retryPatientInitialization(this.sessionId).then(() => {
+      if (active()) this.loadSession();
+    }).catch(error => {
+      if (active()) this.setData({ loadError: error.message || '重试失败，请稍后重试' });
+    }).finally(() => { if (active()) this.setData({ retryingInitialization: false }); });
   },
 
   handleMissingSession() {
@@ -127,16 +168,35 @@ Page({
   },
 
   loadSession() {
-    Promise.all([api.getSession(this.sessionId), api.getScenarios()]).then(([detail, scenarioData]) => {
-      const scenario = scenarioData.items.find(item => item.id === detail.session.scenarioId);
-      if (!scenario) throw new Error('训练场景不存在');
+    const active = this.requestScope();
+    const version = this._loadVersion = (this._loadVersion || 0) + 1;
+    clearTimeout(this.initializationTimer);
+    return api.getSession(this.sessionId).then(detail => {
+      if (!active() || version !== this._loadVersion) return null;
+      if (detail.session.contextVersion >= 2) return [detail, { items: [{ id: detail.session.scenarioId, name: detail.session.scenarioName }] }];
+      return api.getScenarios().then(scenarios => [detail, scenarios]);
+    }).then(result => {
+      if (!result || !active() || version !== this._loadVersion) return;
+      const [detail, scenarioData] = result;
+      const scenario = scenarioData.items.find(item => item.id === detail.session.scenarioId) || { name: detail.session.scenarioName };
+      const v2 = detail.session.contextVersion >= 2;
+      const status = v2 ? detail.session.initializationStatus : 'ready';
+      const labels = { pending: '患者正在排队生成，可暂存退出后继续', generating: '正在生成患者，请稍候', failed: '患者初始化失败，请重试', ready: '患者已就绪' };
+      this.setData({ contextVersion: v2 ? 2 : 1, initializationStatus: status,
+        initializationText: labels[status] || '初始化状态暂不可用，请刷新',
+        interactionBlocked: status !== 'ready' || detail.session.status !== 'in_progress',
+        publicProfile: v2 ? detail.session.publicProfile : null,
+        currentEmotion: (detail.patientState || {}).emotion || '', loadError: '' });
+      if (v2 && ['pending', 'generating'].includes(status) && detail.session.status === 'in_progress') {
+        this.initializationTimer = setTimeout(() => { if (active()) this.loadSession(); }, 2000);
+      }
       // 优先使用后端持久化的自定义画像，本地缓存仅作兜底
       const backendProfile = (detail.session && detail.session.customPatientProfile) || null;
-      const customProfile = backendProfile || this.data.customProfile;
+      const customProfile = v2 ? null : backendProfile || this.data.customProfile;
       const pendingMessage = detail.pendingMessage || null;
       this.setData(Object.assign({
         session: detail.session,
-        scenario: normalizeScenario(scenario, customProfile),
+        scenario: v2 ? scenario : normalizeScenario(scenario, customProfile),
         customProfile,
         messages: normalizeMessages(detail.messages),
         pendingClientMessageId: pendingMessage ? pendingMessage.clientMessageId : '',
@@ -166,24 +226,15 @@ Page({
         }
       });
     }).catch(error => {
-      // 页面栈只有本页时（如分享/扫码直达）navigateBack 无处可退，落回训练 tab
-      const canGoBack = getCurrentPages().length > 1;
-      wx.showModal({
-        title: '会话加载失败',
-        content: error.message || '请从场景列表重新开始训练。',
-        showCancel: false,
-        success: () => {
-          if (canGoBack) wx.navigateBack();
-          else wx.switchTab({ url: '/pages/index/index' });
-        }
-      });
+      if (!active() || version !== this._loadVersion) return;
+      this.setData({ loadError: error.message || '会话加载失败，请刷新重试', interactionBlocked: true });
     });
   },
 
   onInputChange(e) { this.setData({ inputValue: e.detail.value }); },
 
   useQuickPhrase(e) {
-    if (this.data.sending || this.data.finishing) return;
+    if (this.data.interactionBlocked || this.data.sending || this.data.finishing) return;
     const phrase = e.currentTarget.dataset.phrase || '';
     if (!phrase) return;
     this.setData({ inputValue: phrase });
@@ -195,13 +246,15 @@ Page({
   },
 
   requestHint() {
+    const active = this.requestScope();
     this.markAssistGuided();
     // 总数用完或本轮已用过都直接返回：后端的 409 是裁判，前端这里只是别让按钮变成
     // 「点了没反应」——文案由 hintRemainingThisRound 决定。
-    if (this.data.requestingHint || this.data.finishing) return;
+    if (this.data.interactionBlocked || this.data.currentRound < 1 || this.data.requestingHint || this.data.finishing) return;
     if (this.data.hintRemaining <= 0 || this.data.hintRemainingThisRound <= 0) return;
     this.setData({ requestingHint: true });
     api.requestTrainingHint(this.sessionId).then(data => {
+      if (!active()) return;
       const hint = data.hint;
       const hints = hint ? this.data.hints.concat(normalizeHints([hint])) : this.data.hints;
       this.setData({
@@ -213,6 +266,7 @@ Page({
         requestingHint: false
       }, () => this.scrollToBottom());
     }).catch(error => {
+      if (!active()) return;
       // 限额类冲突要顺带刷新「本轮/总剩余」，否则界面会一直显示还能点。
       this.setData({ requestingHint: false });
       const limited = error.code === 'HINT_LIMIT_REACHED' || error.code === 'HINT_ROUND_LIMIT_REACHED';
@@ -222,12 +276,14 @@ Page({
   },
 
   sendMessage() {
+    const active = this.requestScope();
     const content = this.data.inputValue.trim();
-    if (!content || this.data.sending || this.data.finishing || this.data.currentRound >= this.data.maxRounds) return;
+    if (this.data.interactionBlocked || !content || this.data.sending || this.data.finishing || this.data.currentRound >= this.data.maxRounds) return;
     this.markAssistGuided();
     const clientMessageId = this.data.pendingClientMessageId || `client-msg-${Date.now()}`;
     this.setData({ sending: true, failedMessage: null });
     api.sendMessage(this.sessionId, clientMessageId, content).then(data => {
+      if (!active()) return;
       this.setData({ pendingClientMessageId: '', inputValue: '', sending: false, failedMessage: null });
       if (data.session.shouldFinish) {
         this.setData({ finishing: true });
@@ -236,6 +292,7 @@ Page({
       }
       this.loadSession();
     }).catch(error => {
+      if (!active()) return;
       this.setData({ pendingClientMessageId: clientMessageId, inputValue: content });
       if (error.code === 'SESSION_RESPONSE_PENDING') {
         this.pollPendingReply(clientMessageId, content, Date.now(), POLL_BASE_DELAY);
@@ -267,10 +324,12 @@ Page({
   },
 
   pollPendingReply(clientMessageId, content, startedAt, delay) {
+    const active = this.requestScope();
     if (this.pendingPollTimer) clearTimeout(this.pendingPollTimer);
     const wait = delay || POLL_BASE_DELAY;
     this.setData({ sending: true, pendingClientMessageId: clientMessageId, inputValue: content });
     api.getSession(this.sessionId).then(detail => {
+      if (!active()) return;
       const pending = detail.pendingMessage || null;
       this.setData(Object.assign({
         session: detail.session,
@@ -283,6 +342,7 @@ Page({
           ? this.data.hintRemaining : detail.hintRemaining,
         hintRemainingThisRound: detail.hintRemainingThisRound === undefined
           ? this.data.hintRemainingThisRound : detail.hintRemainingThisRound
+        , currentEmotion: (detail.patientState || {}).emotion || ''
       }, trustBadge(detail.patientState)), () => this.scrollToBottom());
       if (detail.session.status === 'completed') {
         this.setData({ sending: false, finishing: true, pendingClientMessageId: '', inputValue: '' });
@@ -315,6 +375,7 @@ Page({
       this.pendingPollTimer = setTimeout(
         () => this.pollPendingReply(clientMessageId, content, startedAt, nextPollDelay(wait)), wait);
     }).catch(() => {
+      if (!active()) return;
       if (Date.now() - startedAt >= 30000) {
         this.setData({ sending: false, pendingClientMessageId: clientMessageId, inputValue: content });
         wx.showToast({ title: '网络异常，进度已保存，原消息已保留', icon: 'none' });
@@ -326,6 +387,8 @@ Page({
   },
 
   finishTraining() {
+    const active = this.requestScope();
+    if (this.data.interactionBlocked) return;
     if (this.data.currentRound < 1) {
       wx.showToast({ title: '至少完成1轮对话后才能评分', icon: 'none' });
       return;
@@ -346,24 +409,29 @@ Page({
       title: '结束本次训练？',
       content: '结束后将根据完整对话生成训练报告，结束后不能继续发送消息。',
       confirmText: '结束评分',
-      success: result => { if (result.confirm) this.completeTraining(); },
+      success: result => { if (active() && result.confirm) this.completeTraining(); },
       fail: () => wx.showToast({ title: '确认框打开失败，请重试', icon: 'none' })
     });
   },
 
   completeTraining() {
+    const active = this.requestScope();
+    if (this.data.interactionBlocked) return;
     this.setData({ finishing: true });
     api.finishSession(this.sessionId).then(() => {
+      if (!active()) return;
       // 训练完成，清理自定义画像缓存
       wx.removeStorageSync(`customProfile_${this.sessionId}`);
       wx.redirectTo({ url: `/pages/result/result?sessionId=${this.sessionId}` });
     }).catch(error => {
+      if (!active()) return;
       this.setData({ finishing: false });
       wx.showToast({ title: error.message || '结束训练失败', icon: 'none' });
     });
   },
 
   abandonTraining() {
+    const active = this.requestScope();
     if (this.data.sending || this.data.finishing) {
       wx.showToast({ title: '正在生成回复，请稍候', icon: 'none' });
       return;
@@ -374,15 +442,17 @@ Page({
       confirmText: '强制结束',
       cancelText: '取消',
       success: result => {
-        if (!result.confirm) return;
+        if (!active() || !result.confirm) return;
         wx.showLoading({ title: '正在结束…', mask: true });
         api.abandonSession(this.sessionId).then(() => {
           wx.hideLoading();
+          if (!active()) return;
           wx.removeStorageSync(`customProfile_${this.sessionId}`);
           wx.showToast({ title: '已强制结束', icon: 'success' });
-          setTimeout(() => wx.switchTab({ url: '/pages/index/index' }), 800);
+          setTimeout(() => { if (active()) wx.switchTab({ url: '/pages/index/index' }); }, 800);
         }).catch(error => {
           wx.hideLoading();
+          if (!active()) return;
           wx.showToast({ title: error.message || '强制结束失败', icon: 'none' });
         });
       }

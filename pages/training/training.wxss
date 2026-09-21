@@ -69,3 +69,6 @@
 
 /* ── 从 master 并入：下列选择器的类名在 app.wxss 与本页 wxss 里都不存在，追加不会覆盖任何既有规则 ──*/
 .leave-link { padding: 20rpx 8rpx; color: #999; font-size: 23rpx; }
+
+.initialization-card { margin: 16rpx 24rpx; padding: 24rpx; border-radius: 16rpx; background: #EEF2F8; color: #1F3864; font-size: 26rpx; }
+.initialization-card button { margin-top: 16rpx; }

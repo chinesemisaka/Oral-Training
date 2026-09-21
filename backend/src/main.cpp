@@ -2430,7 +2430,8 @@ int main() {
   CROW_ROUTE(app, "/api/scenarios").methods(crow::HTTPMethod::GET)([&](const crow::request& request) {
     return handle(request, [&] {
       const auto user = identity.authorize(request, true);
-      return ok(service.database().listScenarios(user.id));
+      const auto* service_id = request.url_params.get("serviceId");
+      return ok(service.database().listScenarios(user.id, service_id == nullptr ? "" : service_id));
     });
   });
 

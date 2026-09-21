@@ -117,12 +117,13 @@ module.exports = {
   getHealth: () => request('/health', { public: true, acceptUnreadyHealth: true }),
 
   // ── 训练（学员端） ──
-  getScenarios: () => request('/scenarios'),
-  createSession: (scenarioId, customPatientProfile) => request('/sessions', {
-    method: 'POST', data: { scenarioId, customPatientProfile }
+  getScenarios: serviceId => request(serviceId ? `/scenarios?${query({ serviceId })}` : '/scenarios'),
+  createSession: (scenarioId, customPatientProfile, options = {}) => request('/sessions', {
+    method: 'POST', data: Object.assign({ scenarioId }, customPatientProfile === undefined ? {} : { customPatientProfile }, options)
   }),
   restartSession: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/restart`, { method: 'POST', data: {} }),
   getSession: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}`),
+  retryPatientInitialization: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/initialization/retry`, { method: 'POST', data: {} }),
   sendMessage: (sessionId, clientMessageId, content) => request(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST', data: { clientMessageId, content }, timeout: MODEL_REQUEST_TIMEOUT
   }),
