@@ -237,7 +237,7 @@ DeepSeek 选择 evidenceId
 
 ### N03 — RAG 驱动的 AI 患者与逐轮状态
 
-当前状态（2026-09-21）：实现完成，验证进行中。详见 [N03 验证记录](rag-n03-validation.md)。
+当前状态（2026-09-21）：实现完成，完整 Windows/PostgreSQL CI 通过，尚未合并。详见 [N03 验证记录](rag-n03-validation.md)。
 
 对应原任务：R09。  
 预计：2—3 人日。  
