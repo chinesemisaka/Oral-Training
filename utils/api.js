@@ -134,6 +134,7 @@ module.exports = {
     method: 'POST', data: { reason }
   }),
   abandonSession: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/abandon`, { method: 'POST', data: {} }),
+  getTrainingEvidence: (sessionId, traceId) => request(`/sessions/${encodeURIComponent(sessionId)}/evidence/${encodeURIComponent(traceId)}`),
   getEvaluation: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/evaluation`),
   retryEvaluation: sessionId => request(`/sessions/${encodeURIComponent(sessionId)}/evaluation/retry`, { method: 'POST', data: {} }),
   getSessions: params => request(`/sessions?${query(params || {})}`),

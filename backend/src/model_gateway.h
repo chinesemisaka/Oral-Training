@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <stdexcept>
 
 namespace oral_training {
 
@@ -27,6 +28,9 @@ class IModelGateway {
   virtual json patientReply(const json& scenario, const json& patient_state,
                             const json& history) const = 0;
   virtual json evaluate(const json& scenario, const json& messages) const = 0;
+  virtual json evaluateCommunication(const json&, const json&) const {
+    throw std::runtime_error("grounded communication evaluator unavailable");
+  }
   virtual json standardServiceReply(const json& scenario, const json& history) const = 0;
   virtual json groundedServiceReply(const json& scenario, const json& history,
                                     const json& evidence) const {

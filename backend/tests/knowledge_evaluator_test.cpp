@@ -1,4 +1,5 @@
-#include "../src/knowledge_evaluator.h"
+#include "../src/knowledge_report.h"
+#include "fixtures/knowledge_cases.h"
 #include <iostream>
 using namespace oral_training::rag;
 int main() {
@@ -106,6 +107,40 @@ int main() {
     auto hours=duration;hours["unit"]="minute";hours["minimum"]=60;hours["maximum"]=60;hours["conditions"]="";hours["estimated"]=false;
     check(compareKnowledgeFact("visitDuration","单次就诊1小时",hours)=="supported","hour minute normalization");
     check(compareKnowledgeFact("visitDuration","费用3980元，单次就诊1小时",hours)=="supported","unrelated numeric claim contaminated time");
+    int fixed_passed=0;
+    for (const auto& fixture : fixedKnowledgeCases()) {
+      const auto quote=fixture.at("quote").get<std::string>();
+      auto evidence=bundle;
+      const auto mode=fixture.value("mode", "normal");
+      if(mode=="unknown") {evidence["facts"]=json::array(); evidence["passages"]=json::array();}
+      if(mode=="conflict") evidence["conflicts"]=json::array({"conflict"});
+      if(mode=="cross") evidence["serviceId"]="other-service";
+      json candidates=json::array();
+      if(fixture.contains("field")) candidates.push_back({{"round",1},{"field",fixture["field"]},{"originalQuote",quote}});
+      bool rejected_case=false; json actual;
+      try {
+        actual=evaluateKnowledge(context,json::array({{{"role","user"},{"round",1},{"content",quote}}}),candidates,
+            [&](const std::string&,const std::string&){return evidence;});
+      } catch(const std::runtime_error&) { rejected_case=true; }
+      if(fixture["expected"]=="rejected") {
+        check(rejected_case,"cross-service fixture accepted");
+      } else {
+        if(rejected_case || actual["knowledgeChecks"].empty() || actual["knowledgeChecks"][0]["verdict"]!=fixture["expected"])
+          throw std::runtime_error("fixed case failed: "+fixture.dump()+" actual="+actual.dump());
+      }
+      ++fixed_passed;
+    }
+    auto replayable=bad; replayable["claimCandidates"]=json::array();
+    const auto replay=replayKnowledgeAssessment(context,history,replayable);
+    const auto prepared=prepareKnowledgeReport(report,replay,context);
+    check(prepared["learningMistakes"].size()==1,"verified mistake missing");
+    check(prepareKnowledgeReport(report,none,context)["learningMistakes"].empty(),"unknown became a mistake");
+    check(prepareKnowledgeReport(report,corrected,context)["learningMistakes"].empty(),"corrected mistake retained");
+    auto tampered=replayable; tampered["knowledgeAssessment"]["knowledgeAccuracy"]=100;
+    bool tamper_rejected=false;
+    try{replayKnowledgeAssessment(context,history,tampered);}catch(...){tamper_rejected=true;}
+    check(tamper_rejected,"report score tampering accepted");
+    std::cout<<"fixed knowledge cases passed: "<<fixed_passed<<"/"<<fixedKnowledgeCases().size()<<"\n";
     std::cout<<"knowledge evaluator tests passed: "<<checks<<" checks\n";
     return 0;
   } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}

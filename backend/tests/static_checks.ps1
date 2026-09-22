@@ -27,6 +27,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Client recovery tests failed.' }
 & $node.Source (Join-Path $PSScriptRoot 'patient_client_test.js')
 if ($LASTEXITCODE -ne 0) { throw 'Patient client tests failed.' }
 
+& $node.Source (Join-Path $PSScriptRoot 'knowledge_report_client_test.js')
+if ($LASTEXITCODE -ne 0) { throw 'Knowledge report client tests failed.' }
+
 [pscustomobject]@{
   Result = 'passed'
   JavaScriptFiles = $javascriptFiles.Count

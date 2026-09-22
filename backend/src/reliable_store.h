@@ -1147,18 +1147,47 @@ class ReliableDatabase {
     return result;
   }
 
+  json getEvidence(const std::string& user_id, const std::string& session_id, const std::string& trace_id) const {
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
+    const auto rows = tx.exec_params(R"(
+      SELECT t.evidence_json, e.report FROM rag_traces t
+      JOIN training_contexts c ON c.id=t.context_id AND c.session_type='training'
+      JOIN sessions s ON s.id=c.session_id
+      JOIN evaluations e ON e.session_id=s.id AND e.status='ready'
+      WHERE s.id=$1 AND s.user_id=$2 AND s.status='completed' AND s.context_version=2
+        AND t.id=$3 AND t.is_public AND t.purpose='claim_verification'
+    )", session_id, user_id, trace_id);
+    if (rows.empty()) throw ApiError(404, "EVIDENCE_NOT_FOUND", "引用依据不存在");
+    const auto report = json::parse(rows[0]["report"].c_str());
+    const auto context = readPatientProfiles(tx, session_id).at("context");
+    const auto bundle = json::parse(rows[0]["evidence_json"].c_str());
+    oral_training::rag::EvidenceValidator validator(context, bundle, trace_id);
+    json citations = json::array();
+    for (const auto& check : report.value("knowledgeChecks", json::array()))
+      for (const auto& ref : check.value("evidenceRefs", json::array())) if (ref.value("traceId", "") == trace_id) {
+        const auto resolved = validator.resolve(ref, true, true);
+        if (!resolved.is_null()) citations.push_back(resolved);
+      }
+    if (citations.empty()) throw ApiError(404, "EVIDENCE_NOT_FOUND", "引用依据不存在");
+    return {{"traceId", trace_id}, {"manifestHash", context.at("manifestHash")}, {"citations", citations}};
+  }
+
   void saveEvaluation(const AiJob& job, json report, const std::string& model_version) const {
     if (job.type != "evaluation") throw ApiError(409, "JOB_LEASE_LOST", "AI 任务类型不匹配");
-    const auto& dimensions = report["dimensionScores"];
-    const auto total = static_cast<int>(std::round(
-        dimensions["knowledgeAccuracy"].get<int>() * 0.25 +
-        dimensions["medicalCompliance"].get<int>() * 0.25 +
-        dimensions["empathy"].get<int>() * 0.20 +
-        dimensions["needsDiscovery"].get<int>() * 0.20 +
-        dimensions["serviceEtiquette"].get<int>() * 0.10));
-    report["totalScore"] = clampInt(total, 0, 100);
+    const bool v2 = report.value("schemaVersion", 1) == 2;
+    if (!v2) {
+      const auto& dimensions = report["dimensionScores"];
+      const auto total = static_cast<int>(std::round(
+          dimensions["knowledgeAccuracy"].get<int>() * 0.25 +
+          dimensions["medicalCompliance"].get<int>() * 0.25 +
+          dimensions["empathy"].get<int>() * 0.20 +
+          dimensions["needsDiscovery"].get<int>() * 0.20 +
+          dimensions["serviceEtiquette"].get<int>() * 0.10));
+      report["totalScore"] = clampInt(total, 0, 100);
+    }
     report["modelVersion"] = model_version;
-    report["promptVersion"] = "score-prompt-v3";
+    report["promptVersion"] = v2 ? "score-rag-v1" : "score-prompt-v3";
     auto connection = database_pool_->acquire();
     pqxx::work tx(connection.get());
     if (!lockAiJobTarget(tx, "evaluation", job.target_id)) {
@@ -1170,17 +1199,43 @@ class ReliableDatabase {
         AND job_type = 'evaluation' FOR UPDATE
     )", job.id, job.target_id, job.generation, job.attempt);
     if (owned.empty()) throw ApiError(409, "JOB_LEASE_LOST", "评分任务租约已失效");
+    const auto session = tx.exec_params("SELECT context_version, status FROM sessions WHERE id=$1", job.target_id)[0];
+    if ((session["context_version"].as<int>() >= 2) != v2 || std::string(session["status"].c_str()) != "completed")
+      throw ApiError(409, "REPORT_CONTEXT_MISMATCH", "评分版本或会话状态不匹配");
+    if (v2) {
+      const auto context = readPatientProfiles(tx, job.target_id).at("context");
+      json history = json::array();
+      for (const auto& row : tx.exec_params("SELECT role, content, round FROM messages WHERE session_id=$1 ORDER BY round, created_at", job.target_id))
+        history.push_back({{"role", row["role"].c_str()}, {"content", row["content"].c_str()}, {"round", row["round"].as<int>()}});
+      auto assessment = oral_training::rag::replayKnowledgeAssessment(context, history, report.at("_knowledgeAssessment"));
+      // Generate persistent IDs only after owning the lease. All references and public rows commit together.
+      for (auto& trace : assessment["knowledgeTraces"]) {
+        const auto temporary = trace.at("traceId");
+        const auto id = makeId("trace");
+        for (auto& check : assessment["knowledgeChecks"]) for (auto& ref : check["evidenceRefs"])
+          if (ref["traceId"] == temporary) ref["traceId"] = id;
+        trace["traceId"] = id;
+        tx.exec_params(R"(
+          INSERT INTO rag_traces(id,context_id,purpose,attempt_token,evidence_json,model_version,is_public)
+          VALUES($1,$2,'claim_verification',$3,$4::jsonb,$5,TRUE)
+        )", id, context["contextId"].get<std::string>(), job.id + ":" + std::to_string(job.generation) + ":" + std::to_string(job.attempt),
+            trace["evidence"].dump(), model_version);
+      }
+      report.erase("_knowledgeAssessment");
+      report = oral_training::rag::prepareKnowledgeReport(report, assessment, context);
+    }
+
     tx.exec_params(R"(
       INSERT INTO evaluations
         (session_id, status, report, model_version, prompt_version, error_type, generated_at, updated_at)
-      VALUES ($1, 'ready', $2::jsonb, $3, 'score-prompt-v3', NULL, NOW(), NOW())
+      VALUES ($1, 'ready', $2::jsonb, $3, $4, NULL, NOW(), NOW())
       ON CONFLICT (session_id) DO UPDATE SET status = 'ready', report = EXCLUDED.report,
         model_version = EXCLUDED.model_version, prompt_version = EXCLUDED.prompt_version,
         error_type = NULL, generated_at = NOW(), updated_at = NOW()
-    )", job.target_id, report.dump(), model_version);
+    )", job.target_id, report.dump(), model_version, report["promptVersion"].get<std::string>());
     tx.exec_params(R"(
-      UPDATE sessions SET evaluation_status = 'ready', total_score = $2, updated_at = NOW() WHERE id = $1
-    )", job.target_id, report["totalScore"].get<int>());
+      UPDATE sessions SET evaluation_status = 'ready', total_score = NULLIF($2, '')::integer, updated_at = NOW() WHERE id = $1
+    )", job.target_id, report["totalScore"].is_null() ? std::string() : std::to_string(report["totalScore"].get<int>()));
     completeJob(tx, job);
     tx.commit();
   }
@@ -1448,6 +1503,26 @@ class ReliableDatabase {
 
   // 错题「复现原回合」的上下文聚合：错题详情 + 患者当时提问原话 + 学员当时发言 + 场景画像。
   // 患者提问是历史事实，直接从 messages 表取原话复现，不依赖模型重演。
+  json currentTrainingKnowledge(const std::string& service_id) const {
+    auto connection = database_pool_->acquire();
+    pqxx::read_transaction tx(connection.get());
+    const auto rows = tx.exec_params(R"(
+      SELECT s.current_revision_id, statement_timestamp()::text AS knowledge_as_of,
+        COALESCE((SELECT jsonb_agg(r.id ORDER BY r.id) FROM knowledge_entries e
+          JOIN knowledge_revisions r ON r.id=e.current_revision_id
+          WHERE e.status='active' AND r.metadata->>'trainingScope'='demo'
+            AND (e.scope='general' OR e.service_id=s.id)), '[]'::jsonb) AS manifest
+      FROM clinic_services s JOIN service_revisions sr ON sr.id=s.current_revision_id
+      WHERE s.id=$1 AND s.status='active'
+    )", service_id);
+    if (rows.empty()) throw ApiError(409, "SERVICE_UNAVAILABLE", "当前服务不可用，暂不能复练");
+    const auto manifest = json::parse(rows[0]["manifest"].c_str());
+    const std::string revision = rows[0]["current_revision_id"].c_str();
+    return {{"contextId", makeId("retrain")}, {"serviceId", service_id}, {"serviceRevisionId", revision},
+        {"manifest", manifest}, {"manifestHash", oral_training::rag::manifestHash(revision, manifest, "demo")},
+        {"trainingScope", "demo"}, {"knowledgeAsOf", rows[0]["knowledge_as_of"].c_str()}};
+  }
+
   json getMistakeRetrainContext(const std::string& user_id, const std::string& session_id,
                                 const std::string& mistake_key) const {
     if (session_id.empty() || session_id.size() > 120 || mistake_key.empty() || mistake_key.size() > 120) {
@@ -1456,7 +1531,8 @@ class ReliableDatabase {
     auto connection = database_pool_->acquire();
     pqxx::work tx(connection.get());
     const auto rows = tx.exec_params(R"(
-      SELECT s.scenario_id, s.custom_patient_profile, e.report FROM sessions s
+      SELECT s.scenario_id, s.custom_patient_profile, s.context_version, s.service_id, s.service_revision_id, cs.current_revision_id, e.report FROM sessions s
+      LEFT JOIN clinic_services cs ON cs.id=s.service_id
       JOIN evaluations e ON e.session_id = s.id
       WHERE s.id = $1 AND s.user_id = $2 AND s.status = 'completed' AND e.status = 'ready'
     )", session_id, user_id);
@@ -1474,7 +1550,9 @@ class ReliableDatabase {
     const auto round = jsonInt(mistake, "round", 0);
     if (round <= 0) throw ApiError(404, "MISTAKE_ROUND_NOT_FOUND", "该错题缺少可复现的回合信息");
     const auto patient_rows = tx.exec_params(
-        "SELECT content, emotion FROM messages WHERE session_id = $1 AND role = 'patient' AND round = $2",
+        rows[0]["context_version"].as<int>() >= 2
+            ? "SELECT content, emotion FROM messages WHERE session_id=$1 AND role='patient' AND round<$2 ORDER BY round DESC LIMIT 1"
+            : "SELECT content, emotion FROM messages WHERE session_id=$1 AND role='patient' AND round=$2",
         session_id, round);
     if (patient_rows.empty()) throw ApiError(404, "MISTAKE_ROUND_NOT_FOUND", "该错题对应的回合信息不存在");
     const auto user_rows = tx.exec_params(
@@ -1492,10 +1570,16 @@ class ReliableDatabase {
     tx.commit();
     const auto scenario = getScenarioInternal(scenario_id);
     return {
-        {"session", {{"id", session_id}, {"scenarioId", scenario_id}, {"status", "completed"}}},
+        {"session", {{"id", session_id}, {"scenarioId", scenario_id}, {"status", "completed"},
+          {"contextVersion", rows[0]["context_version"].as<int>()},
+          {"serviceId", rows[0]["service_id"].is_null() ? "" : rows[0]["service_id"].c_str()},
+          {"originalRevisionId", rows[0]["service_revision_id"].is_null() ? "" : rows[0]["service_revision_id"].c_str()},
+          {"currentRevisionId", rows[0]["current_revision_id"].is_null() ? "" : rows[0]["current_revision_id"].c_str()},
+          {"versionChanged", !rows[0]["service_revision_id"].is_null() && (rows[0]["current_revision_id"].is_null() ||
+              std::string(rows[0]["service_revision_id"].c_str()) != rows[0]["current_revision_id"].c_str())}}},
         {"mistake", {
             {"mistakeKey", mistake_key}, {"kind", jsonString(mistake, "kind")},
-            {"priority", jsonString(mistake, "priority")}, {"round", round},
+            {"priority", jsonString(mistake, "priority")}, {"topic", jsonString(mistake, "topic")}, {"round", round},
             {"originalQuote", jsonString(mistake, "originalQuote")},
             {"reason", jsonString(mistake, "reason")},
             {"recommendedRewrite", jsonString(mistake, "recommendedRewrite")},
