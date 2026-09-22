@@ -628,3 +628,15 @@ N03 替代上述 N02 阶段限制：默认 DeepSeek 网关支持患者初始化�
 `GET /scenarios?serviceId=...` 和 `GET /roleplay/scenarios?serviceId=...` 仅返回该已发布、未归档服务的兼容场景，进行中会话按服务隔离；客服训练最佳成绩同样按服务隔离。省略 serviceId 为旧版通用场景及无服务会话。归档服务不能新建，但已有会话按 sessionId 读取仍有效。
 
 客服训练历史列表新增可选 `serviceName`，取会话锁定的服务版本名称。小程序默认按服务训练，保留显式旧版入口；创建 v2 时不发送 customPatientProfile。创建请求 ID 在用户/模式/服务/场景范围内持久化，直到成功进入会话。初始化状态来自会话详情的 initializationStatus，显式重试使用已有 initialization/retry 接口。
+
+### N06：服务训练评分报告 v2
+
+`GET /api/sessions/:id/evaluation` 对 `contextVersion=2` 的会话返回 `schemaVersion=2` 报告。知识核验固定使用会话 manifest，沟通四维单独评价；总分固定权重为知识 25%、合规 25%、共情 20%、需求 20%、礼仪 10%。知识无法核验时 `knowledgeAccuracy/totalScore/passed` 为 `null`，不重分配权重；`knowledgeAssessment.nullReason` 解释原因。
+
+新增报告字段：`serviceRevisionId`、`knowledgeManifestHash`、`knowledgeAssessment`（status、knowledgeAccuracy、assessableCount、unassessableCount、coverage、rubricVersion、nullReason）、`knowledgeChecks`。每条核验包含原始轮次和原句、verdict、reason、evidenceRefs、evidenceTexts、recommendedRewrite、scoringUnit、correctedInLaterRound。未回答项单独保留患者问题，不伪造客服原句。`learningMistakes` 只包含有引用、仍计分且未被后续纠正的 contradicted 项。
+
+`GET /api/sessions/:id/evidence/:traceId` 需要会话所有者身份，且会话已完成、报告 ready。仅返回当前报告实际引用的公开 claim_verification trace，响应为 `{traceId, manifestHash, citations:[{text,citation}]}`。不存在、其他用户、其他会话、初始化/患者回复私有 trace、未被当前报告引用的 trace 均返回 `404 EVIDENCE_NOT_FOUND`。
+
+错题复练上下文的 session 新增 `contextVersion/serviceId/originalRevisionId/currentRevisionId/versionChanged`。v2 单轮提交在提交时读取当前已发布服务与知识快照，返回实际 `currentRevisionId/versionChanged/assessmentStatus`。依据不足时 `passed=null`，明确已核实错误或缺漏为 false，目标知识确认且无其他错误/未知为 true。该操作不改写原报告，也不把复练快照当作原报告公开证据。
+
+v1 报告和单轮复练契约保持兼容。N06 不增加数据迁移，不调用真实模型进行验收。
