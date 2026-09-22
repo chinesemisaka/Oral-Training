@@ -417,7 +417,7 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 
 ## 附录 A：RAG v2 分阶段契约
 
-本附录冻结 `contextVersion=2`、`schemaVersion=2` 的目标契约。旧客户端未提交 `serviceId` 时继续走 v1；服务端不得替旧请求随机选择服务。当前已实现 `/services`、按服务筛选的角色互换场景、角色互换 v2 会话/消息及其 evidence 读取；客服训练 v2 初始化及逐轮回复已实现，知识核验评分仍待后续阶段完成。
+本附录冻结 `contextVersion=2`、`schemaVersion=2` 的目标契约。旧客户端未提交 `serviceId` 时继续走 v1；服务端不得替旧请求随机选择服务。当前已实现 `/services`、按服务筛选的角色互换场景、角色互换 v2 会话/消息及其 evidence 读取；客服训练 v2 初始化、逐轮回复、固定知识核验评分与报告已实现；N07 新建开关默认关闭，真实联调与人工验收状态另见 N07 记录。
 
 ### A.1 学员接口
 
@@ -551,7 +551,7 @@ API 和 Worker 运行在同一个便携程序中。Worker 默认并发 1，可�
 | 409 | `PATIENT_INITIALIZATION_PENDING` | 患者画像或开场仍在生成 |
 | 409 | `PATIENT_INITIALIZATION_FAILED` | 患者初始化失败，需要显式重试 |
 | 503 | `KNOWLEDGE_NOT_READY` | 当前运行范围没有满足开练条件的已发布资料 |
-| 503 | `RAG_UNAVAILABLE` | RAG 被停用或检索基础设施不可用 |
+| 503 | `RAG_UNAVAILABLE` | 固定知识上下文缺失或检索基础设施不可用 |
 | 503 | `EVIDENCE_VALIDATION_FAILED` | 模型输出经过一次修复后仍不能由证据支持 |
 
 证据读取必须同时验证当前用户拥有会话、`traceId` 属于该会话且证据已被胜出消息或报告公开。任一条件不满足时统一返回无资源响应，避免枚举其他用户或失败尝试的 trace。
@@ -640,3 +640,11 @@ N03 替代上述 N02 阶段限制：默认 DeepSeek 网关支持患者初始化�
 错题复练上下文的 session 新增 `contextVersion/serviceId/originalRevisionId/currentRevisionId/versionChanged`。v2 单轮提交在提交时读取当前已发布服务与知识快照，返回实际 `currentRevisionId/versionChanged/assessmentStatus`。依据不足时 `passed=null`，明确已核实错误或缺漏为 false，目标知识确认且无其他错误/未知为 true。该操作不改写原报告，也不把复练快照当作原报告公开证据。
 
 v1 报告和单轮复练契约保持兼容。N06 不增加数据迁移，不调用真实模型进行验收。
+
+### N07：分段新建开关与受控调用
+
+三个 `RAG_*_ENABLED` 环境变量默认 false，启动时生效。`RAG_ROLEPLAY_ENABLED` 控制新建服务患者模拟；新建服务客服训练同时要求 `RAG_PATIENT_ENABLED && RAG_EVALUATION_V2_ENABLED`。关闭时新建/角色互换重新开始返回 `503 RAG_NEW_SESSIONS_PAUSED`；已成功 clientSessionId 的重放、已有会话消息/初始化重试/评分/复盘/历史/证据继续原 v2 路径，绝不降级。无服务 v1 路径保持兼容。
+
+health 新增 `rag.roleplayNewSessions/patientNewSessions/evaluationV2Enabled`、`modelCallLimit/modelCallCount`。`MODEL_CALL_LIMIT` 为非负整数，默认 0（不限）；正值按后端进程限制全部模型 HTTP 尝试，重试也计数，并发不能超额。耗尽返回 `503 MODEL_CALL_BUDGET_EXHAUSTED`，队列不自动重试；重启清零，所以不能用作跨进程/跨重启的账单额度。
+
+每次实际 HTTP 尝试输出一个 `event=model_call` JSON 审计记录：logicalCallId、attempt、callNumber、requestedModel、actualModel、promptVersion、maxOutputTokens、usage、httpStatus、finishReason、latencyMs、retry、errorType。缺失的提供商 usage 保持缺失，不能当 0；无返回时 actualModel 为 null。日志不记录密钥、对话、资料正文或完整模型响应。该记录反映传输/JSON 解析结果，后续领域验证失败还需关联 Worker 失败日志。v2 复盘为确定性证据汇总，本身不增加模型调用。

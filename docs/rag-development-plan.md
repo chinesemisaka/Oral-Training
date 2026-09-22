@@ -364,7 +364,7 @@ DeepSeek 选择 evidenceId
 
 ### N06 — 报告 v2、错题复练与完整测试
 
-当前状态（2026-09-22）：代码已实现，82 条固定规则案例与完整 Windows/PostgreSQL 自动回归通过，尚未合并。业务/医疗人员对固定集的人工复核及微信 DevTools 验收仍待完成，因此尚不认定全部发布门槛通过，不启动 N07。详见 [N06 验收记录](rag-validation-report.md)。
+当前状态（2026-09-22）：代码已实现，82 条固定规则案例与完整 Windows/PostgreSQL 自动回归通过，尚未合并。业务/医疗人员对固定集的人工复核及微信 DevTools 验收仍待完成，因此尚不认定全部发布门槛通过；按后续用户指令进入 N07 准备，真实联调与发布仍须通过人工门槛。详见 [N06 验收记录](rag-validation-report.md)。
 
 对应原任务：R12、R13。  
 预计：3—4 人日。  
@@ -408,6 +408,8 @@ DeepSeek 选择 evidenceId
 实施时新增 `docs/rag-validation-report.md`，记录实际命令、环境、退出码、Passed/Failed/Skipped、指标分母和剩余限制。
 
 ### N07 — 受控 DeepSeek 联调与分段发布
+
+当前状态（2026-09-22）：按用户指令完成发布开关、调用上限、审计与受控批次准备，完整 Windows/PostgreSQL 自动回归已通过。真实模型联调尚未执行，人工前置门槛仍保留。详见 [N07 验证与执行记录](rag-n07-validation.md)。
 
 对应原任务：R14。  
 预计：1—2 人日。  
