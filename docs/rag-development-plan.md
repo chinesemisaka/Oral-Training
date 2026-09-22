@@ -285,7 +285,7 @@ DeepSeek 选择 evidenceId
 
 ### N04 — 客服训练服务选择与初始化交互
 
-当前状态（2026-09-21）：实现完成，完整 CI 验证中。详见 [N04 验证记录](rag-n04-validation.md)。
+当前状态（2026-09-22）：实现完成，完整 Windows/PostgreSQL CI 通过，尚未合并。详见 [N04 验证记录](rag-n04-validation.md)。
 
 对应原任务：R10。  
 预计：1.5—2 人日。  
