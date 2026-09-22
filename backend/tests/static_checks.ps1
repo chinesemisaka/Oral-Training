@@ -41,4 +41,7 @@ $parseErrors = $null
 $parseTokens = $null
 [System.Management.Automation.Language.Parser]::ParseFile(
   (Join-Path $PSScriptRoot 'rag_controlled_smoke.ps1'), [ref]$parseTokens, [ref]$parseErrors) | Out-Null
-if ($parseErrors.Count -ne 0) { throw 'Controlled smoke PowerShell syntax invalid.' }
+if ($parseErrors.Count -ne 0) {
+  $parseErrors | ForEach-Object { Write-Output ($_.ToString()) }
+  throw 'Controlled smoke PowerShell syntax invalid.'
+}
