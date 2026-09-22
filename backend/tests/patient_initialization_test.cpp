@@ -250,9 +250,9 @@ int main() {
       tx.exec_params("UPDATE sessions SET max_rounds=1 WHERE id=$1",final_id);
       tx.commit();
     }
-    const auto final_claim=db.claimUserMessage("init-user",final_id,"last","请确认服务流程");
+    const auto final_claim=db.claimUserMessage("init-user",final_id,"last","费用5000元。");
     const auto final_reply=oral_training::rag::groundedPatientReply(json::object(),store.profiles(final_id),
-        final_evidence,makeId("trace"),"请确认服务流程",1);
+        final_evidence,makeId("trace"),"费用5000元。",1);
     const auto final_saved=db.savePatientReply("init-user",final_id,1,
         final_claim["attemptToken"].get<std::string>(),final_reply);
     requireInit(final_saved["shouldFinish"]==true && store.profiles(final_id)["state"]["endingReason"]=="round_limit",
@@ -273,6 +273,16 @@ int main() {
       tx.exec("UPDATE clinic_services SET current_revision_id='init-sr-b' WHERE id='init-service-b'");
       tx.exec("INSERT INTO service_scenarios(service_id,scenario_id) VALUES ('init-service-b','implant-basic')");
       tx.commit();
+    }
+    {
+      // N05 read-only service seam uses a deterministic extractor and locked DB retrieval.
+      Config offline{}; offline.worker_concurrency=0; offline.knowledge_worker_concurrency=0;
+      Service service(offline,pool,std::make_unique<InitGateway>());
+      const auto assessed=service.assessTrainingKnowledge(final_id);
+      requireInit(assessed["knowledgeAssessment"]["knowledgeAccuracy"].is_null(),"missing knowledge received a score");
+      requireInit(assessed["knowledgeChecks"].size()==1 && assessed["knowledgeTraces"].size()==1,"claim retrieval not exercised");
+      requireInit(assessed["knowledgeManifestHash"]==final_context["manifestHash"],"assessment snapshot changed");
+      expectInitError([&]{service.assessTrainingKnowledge(id);},"KNOWLEDGE_ASSESSMENT_NOT_READY");
     }
     const auto active_a=store.create("init-user","implant-basic","init-service","n04-a");
     const auto active_b=store.create("init-user","implant-basic","init-service-b","n04-b");

@@ -23,6 +23,7 @@ class IModelGateway {
   virtual json groundedPatientReply(const json&, const json&, const json&) const {
     return json::object();
   }
+  virtual json extractKnowledgeClaims(const json&) const { return json::array(); }
   virtual json patientReply(const json& scenario, const json& patient_state,
                             const json& history) const = 0;
   virtual json evaluate(const json& scenario, const json& messages) const = 0;
