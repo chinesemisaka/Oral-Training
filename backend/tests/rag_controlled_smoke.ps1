@@ -14,6 +14,8 @@ $ErrorActionPreference = 'Stop'
 if (-not $ReviewedInputs) { throw 'Reviewed synthetic inputs and completed N06 manual gates are required.' }
 if (-not $env:RAG_SMOKE_ADMIN_TOKEN -or -not $env:RAG_SMOKE_LEARNER_TOKEN) { throw 'Set RAG_SMOKE_ADMIN_TOKEN and RAG_SMOKE_LEARNER_TOKEN locally.' }
 if (Test-Path -LiteralPath $OutputPath) { throw 'Use a new output path for this single batch.' }
+$outputDirectory = Split-Path -Parent ([IO.Path]::GetFullPath($OutputPath))
+if (-not (Test-Path -LiteralPath $outputDirectory -PathType Container)) { throw 'Create the output directory before running the batch.' }
 $batch = [guid]::NewGuid().ToString('N')
 $record = [ordered]@{ batchId=$batch; status='running'; maxHttpCalls=$MaxHttpCalls; serviceId=$ServiceId; scenarioId=$ScenarioId; steps=@() }
 function Invoke-BatchApi([string]$Method, [string]$Path, $Body=$null, [switch]$Admin) {
@@ -42,13 +44,17 @@ try {
     $job = Invoke-BatchApi POST '/admin/knowledge/generation-jobs' @{
       kind=$draft.kind; draftId=$draft.id; count=1; brief='仅生成模拟演示候选草稿，未知信息保持 unknown，不编造真实诊所或医学来源。'
     } -Admin
+    $step = @{stage=$draft.kind;jobId=$job.jobId;status='pending'}
+    $record.steps += $step
     $result = Wait-Batch "/admin/knowledge/generation-jobs/$($job.jobId)" 'succeeded' -Admin
-    $record.steps += @{stage=$draft.kind;jobId=$job.jobId;modelVersion=$result.modelVersion;promptVersion=$result.promptVersion;attempts=$result.attempts}
+    $step.status=$result.status; $step.modelVersion=$result.modelVersion
+    $step.promptVersion=$result.promptVersion; $step.attempts=$result.attempts
   }
   # Generated drafts are never published. Training uses already reviewed, published synthetic versions.
   $training = Invoke-BatchApi POST '/sessions' @{scenarioId=$ScenarioId;serviceId=$ServiceId;clientSessionId="$batch-training"}
   $trainingId = $training.session.id
   $record.trainingSessionId=$trainingId
+  $record.trainingRevisionId=$training.session.serviceRevisionId
   $init = Wait-Batch "/sessions/$trainingId/initialization" 'ready'
   $record.manifestHash=$init.manifestHash
   Invoke-BatchApi POST "/sessions/$trainingId/messages" @{clientMessageId="$batch-training-msg";content=$LearnerAnswer} | Out-Null
@@ -65,11 +71,13 @@ try {
   $roleplay = Invoke-BatchApi POST '/roleplay/sessions' @{scenarioId=$ScenarioId;serviceId=$ServiceId;clientSessionId="$batch-roleplay"}
   $roleplayId=$roleplay.session.id
   $record.roleplaySessionId=$roleplayId
+  $record.roleplayRevisionId=$roleplay.session.serviceRevisionId
   $reply = Invoke-BatchApi POST "/roleplay/sessions/$roleplayId/messages" @{clientMessageId="$batch-roleplay-msg";content='请介绍已发布资料中的价格、适用条件和需要进一步确认的事项。'}
   foreach ($ref in $reply.standardCustomerMessage.citations) { Invoke-BatchApi GET "/roleplay/sessions/$roleplayId/evidence/$($ref.traceId)" | Out-Null }
   Invoke-BatchApi POST "/roleplay/sessions/$roleplayId/finish" @{} | Out-Null
   $summary = Wait-Batch "/roleplay/sessions/$roleplayId/summary" 'ready'
   $record.steps += @{stage='roleplay';summaryStatus=$summary.status;summary=$summary.summary}
+  $record.modelCallCount=(Invoke-BatchApi GET '/health').modelCallCount
   $record.status='passed'
 } catch {
   $record.status='failed'

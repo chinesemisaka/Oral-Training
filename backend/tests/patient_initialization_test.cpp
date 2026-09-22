@@ -418,6 +418,10 @@ int main() {
     requireInit(paused_roleplay.getSession("init-user",rps)["session"]["status"]=="in_progress","pause abandoned original roleplay");
     paused_roleplay.claimLearnerMessage("init-user",rps,"n07-continue","我想了解费用");
     requireInit(paused_roleplay.getHistory(rps).size()==1,"paused roleplay cannot continue old session");
+    const auto restored_training=store.create("init-other","implant-basic","init-service","n07-restored");
+    requireInit(!restored_training.empty(),"restored training gate cannot create");
+    const auto restored_roleplay=roleplay.createSession("init-other","implant-basic","","init-service","n07-restored");
+    requireInit(restored_roleplay["session"]["contextVersion"]==2,"restored roleplay downgraded");
     std::cout<<"N07 gates passed: new creation/restart blocked, replay/snapshot/null history/old messages preserved\n";
     // Fixed synthetic professional retrieval set: 10 independently assigned relevant revisions, 20 queries.
     const std::vector<std::pair<std::string,std::vector<std::string>>> retrieval_cases={

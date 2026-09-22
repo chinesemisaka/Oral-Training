@@ -1067,7 +1067,7 @@ passed 仅当新回答达到可直接发送给真实患者的水平且无违规�
         "\n学员的新回答：" + new_answer);
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
     messages.push_back({{"role", "user"}, {"content", "请输出本次单回合复练的 JSON 点评。"}});
-    return structuredCompletion(messages, 1000, 0.2, true,"","service-reply-v1");
+    return structuredCompletion(messages, 1000, 0.2, true,"","single-round-v1");
   }
 
   /* 训练辅助提示：必须针对「患者当前这一轮说了什么、学员上一轮答了什么」来写，
@@ -1115,7 +1115,7 @@ hint 用 40—120 个中文字符，写成 1—2 句可直接照做的指引，�
         "\n输入（包括当前草稿和管理员生成说明）：" + input.dump());
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
     messages.push_back({{"role", "user"}, {"content", "请生成一份可供管理员复核编辑的模拟草稿候选。"}});
-    return structuredCompletion(messages, 2600, 0.35,false,"","knowledge-draft-v1");
+    return structuredCompletion(messages, 2600, 0.35,false,"",kind == "service_draft" ? "service-draft-v1" : "knowledge-draft-v1");
   }
 
  private:
