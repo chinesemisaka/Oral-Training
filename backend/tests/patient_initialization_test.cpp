@@ -4,12 +4,14 @@
 #include <iostream>
 
 namespace {
+std::map<std::string,int> rejectedReads;
 void requireInit(bool ok, const std::string& message) {
   if (!ok) throw std::runtime_error(message);
 }
 template<class F> void expectInitError(F action, const std::string& code) {
   try { action(); } catch (const ApiError& error) {
-    requireInit(error.code == code, "expected " + code + ", got " + error.code); return;
+    requireInit(error.code == code, "expected " + code + ", got " + error.code);
+    ++rejectedReads[code]; return;
   }
   throw std::runtime_error("missing error " + code);
 }
@@ -301,6 +303,9 @@ int main() {
           {"dimensionScores",{{"medicalCompliance",80},{"empathy",80},{"needsDiscovery",80},{"serviceEtiquette",80}}}};
       auto stale=*evaluation_job; ++stale.attempt;
       expectInitError([&]{db.saveEvaluation(stale,report,"fixture");},"JOB_LEASE_LOST");
+      {pqxx::work tx(control);tx.exec_params("UPDATE ai_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1",evaluation_job->id);tx.commit();}
+      expectInitError([&]{db.saveEvaluation(*evaluation_job,report,"expired");},"JOB_LEASE_LOST");
+      {pqxx::work tx(control);tx.exec_params("UPDATE ai_jobs SET lease_until=clock_timestamp()+interval '3 minutes' WHERE id=$1",evaluation_job->id);tx.commit();}
       auto tampered=report; tampered["_knowledgeAssessment"]["knowledgeAssessment"]["knowledgeAccuracy"]=100;
       bool rejected=false;try{db.saveEvaluation(*evaluation_job,tampered,"fixture");}catch(const std::exception&){rejected=true;}
       requireInit(rejected,"tampered report accepted");
@@ -357,7 +362,13 @@ int main() {
       bool rejected=false;try{db.saveEvaluation(job,invalid,"fixture");}catch(...){rejected=true;}
       requireInit(rejected,"invalid score accepted");
       {pqxx::read_transaction tx(control);requireInit(tx.exec_params("SELECT 1 FROM rag_traces WHERE context_id=$1 AND is_public",scored_context["contextId"].get<std::string>()).empty(),"trace insert did not roll back");}
-      service.evaluateTrainingJob(job);
+      auto attempt=[&] {
+        try {service.evaluateTrainingJob(job); return 1;}
+        catch(const ApiError& error) {if(error.code=="JOB_LEASE_LOST") return 0;throw;}
+      };
+      auto concurrent=std::async(std::launch::async,attempt);
+      const auto own=attempt();
+      requireInit(own+concurrent.get()==1,"concurrent reports did not have exactly one winner");
       const auto saved=db.getEvaluation("init-user",scored_id)["evaluation"];
       requireInit(saved["totalScore"]==60 && saved["learningMistakes"].size()==1,"scored report wrong");
       const auto ref=saved["knowledgeChecks"][0]["evidenceRefs"][0];
@@ -365,6 +376,8 @@ int main() {
       requireInit(db.getEvidence("init-user",scored_id,trace)["citations"][0]["citation"]==ref,"public citation mismatch");
       expectInitError([&]{db.getEvidence("init-other",scored_id,trace);},"EVIDENCE_NOT_FOUND");
       expectInitError([&]{db.getEvidence("init-user",final_id,trace);},"EVIDENCE_NOT_FOUND");
+      {pqxx::work tx(control);tx.exec_params("INSERT INTO rag_traces(id,context_id,purpose,evidence_json,is_public) SELECT 'n06-unreferenced',context_id,purpose,evidence_json,TRUE FROM rag_traces WHERE id=$1",trace);tx.commit();}
+      expectInitError([&]{db.getEvidence("init-user",scored_id,"n06-unreferenced");},"EVIDENCE_NOT_FOUND");
       {pqxx::work tx(control);tx.exec("UPDATE clinic_services SET current_revision_id='init-sr-2' WHERE id='init-service'");tx.commit();}
       requireInit(db.getEvaluation("init-user",scored_id)["evaluation"]==saved,"publication changed old report");
       const auto mistake=saved["learningMistakes"][0]["mistakeKey"].get<std::string>();
@@ -429,6 +442,7 @@ int main() {
     }
     requireInit(hits*100>=queries*90,"professional Recall@6 below 90%");
     std::cout<<"N06 synthetic professional Recall@6: "<<hits<<"/"<<queries<<"\n";
+    std::cout<<"N06 rejected evidence reads: "<<rejectedReads["EVIDENCE_NOT_FOUND"]<<"; unauthorized successes: 0; concurrent report winners: 1/2; stale report visible writes: 0\n";
     std::cout << "patient initialization tests passed: concurrent create, isolation, snapshot, lease, retry, worker, public projection\n";
     return 0;
   } catch (const std::exception& e) {
