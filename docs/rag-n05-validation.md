@@ -27,6 +27,13 @@
 
 ## 验证
 
-本地 GCC 严格警告编译与纯函数固定回归进行中；新增数据库回归使用假网关调用真实 Service/检索器，验证缺失资料为空分、检索范围锁定和未结束会话拒绝核验。完整 Windows/PostgreSQL CI 待运行。
+本地 GCC `-Wall -Wextra -Werror` 编译通过，54 项固定检查通过；客户端恢复、患者交互以及 51 项页面渲染数据检查通过。新增数据库回归使用假网关调用真实 Service/检索器，验证缺失资料为空分、检索范围锁定和未结束会话拒绝核验。
+
+完整 [Windows/PostgreSQL CI](https://github.com/chinesemisaka/Oral-Training/actions/runs/35675197546) 已通过，验证提交 `14864f0bd76bcf3d062d03da4aa5b443bc0b1ea6`：
+
+- MSVC Release 构建成功；CTest 11 项通过、2 项数据库测试按设计跳过并在后续独立步骤执行通过。
+- 52 个 JavaScript 和 37 个 JSON 文件静态检查通过。
+- 空库、历史数据、重复迁移、知识管理 API 和患者初始化/知识核验数据库回归通过。
+- 无模型 API、双模式状态机以及每种模式 20 个请求的并发测试通过。
 
 未调用真实 DeepSeek；专业语义质量、80 条完整标注评测集与报告端到端验收按计划留在 N06/N07。
