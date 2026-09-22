@@ -153,7 +153,11 @@ const run = async () => {
           { id: 'm3', role: 'standard_customer', content: 'c', createdAt: ISO_MSG, emotion: '缓和' }
         ]
       }),
-      getEvaluation: () => Promise.resolve({ status: 'ready' })
+      getEvaluation: () => Promise.resolve({ status: 'ready', evaluation: {
+        schemaVersion: 2, totalScore: null, dimensionScores: {
+          knowledgeAccuracy: null, medicalCompliance: 80, empathy: 80, needsDiscovery: 80, serviceEtiquette: 80
+        }
+      } })
     });
     page.sessionId = 's1';
     page.data.isRoleplay = false;
@@ -164,6 +168,8 @@ const run = async () => {
     expect('session-detail/patient emotion text', page.data.messages[1].emotionText, '缓和');
     expect('session-detail/patient emotion tone', page.data.messages[1].emotionTone, 'tag-success');
     expect('session-detail/roleplay message has no emotion', page.data.messages[2].emotionText, '');
+    expect('session-detail/null score preserved', page.data.evaluation.totalScore, null);
+    expect('session-detail/unscored knowledge excluded', page.data.dimensions.length, 4);
   }
 
   /* ---------- 4. 结果页起止区间（同日折叠） ---------- */
