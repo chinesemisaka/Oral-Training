@@ -404,6 +404,21 @@ int main() {
     }
     requireInit(db.listScenarios("init-user","init-service-b")["items"].empty(),"archived service selectable");
     requireInit(db.getSession("init-user",active_b)["session"]["id"]==active_b,"archive broke saved session");
+    // Pausing new v2 sessions must preserve replay, history and existing workers.
+    PatientInitializationStore paused_training(pool,false);
+    requireInit(paused_training.create("init-user","implant-basic","init-service","final-round")==final_id,"paused training replay failed");
+    expectInitError([&]{paused_training.create("init-user","implant-basic","init-service","n07-blocked");},"RAG_NEW_SESSIONS_PAUSED");
+    requireInit(paused_training.profiles(final_id)==store.profiles(final_id),"pause changed private snapshot");
+    requireInit(db.getEvaluation("init-user",final_id)["evaluation"]["totalScore"].is_null(),"pause broke null history");
+    const auto rps=roleplay.createSession("init-user","implant-basic","","init-service","n07-roleplay")["session"]["id"].get<std::string>();
+    ReliableRoleplayDatabase paused_roleplay(pool,false);
+    requireInit(paused_roleplay.createSession("init-user","implant-basic","","init-service","n07-roleplay")["session"]["id"]==rps,"paused roleplay replay failed");
+    expectInitError([&]{paused_roleplay.createSession("init-user","implant-basic","","init-service","n07-blocked");},"RAG_NEW_SESSIONS_PAUSED");
+    expectInitError([&]{paused_roleplay.restartSession("init-user",rps,"n07-restart");},"RAG_NEW_SESSIONS_PAUSED");
+    requireInit(paused_roleplay.getSession("init-user",rps)["session"]["status"]=="in_progress","pause abandoned original roleplay");
+    paused_roleplay.claimLearnerMessage("init-user",rps,"n07-continue","我想了解费用");
+    requireInit(paused_roleplay.getHistory(rps).size()==1,"paused roleplay cannot continue old session");
+    std::cout<<"N07 gates passed: new creation/restart blocked, replay/snapshot/null history/old messages preserved\n";
     // Fixed synthetic professional retrieval set: 10 independently assigned relevant revisions, 20 queries.
     const std::vector<std::pair<std::string,std::vector<std::string>>> retrieval_cases={
       {"种植牙组成",{"种植牙组成","种牙组成"}}, {"正畸托槽",{"正畸托槽","托槽"}},

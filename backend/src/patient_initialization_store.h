@@ -37,7 +37,8 @@ inline json readPatientProfiles(pqxx::transaction_base& tx,const std::string& id
 
 class PatientInitializationStore {
  public:
-  explicit PatientInitializationStore(std::shared_ptr<DatabasePool> pool) : pool_(std::move(pool)) {}
+  explicit PatientInitializationStore(std::shared_ptr<DatabasePool> pool, bool allow_new = true)
+      : pool_(std::move(pool)), allow_new_(allow_new) {}
 
   std::string create(const std::string& user, const std::string& scenario,
                      const std::string& service, const std::string& client) const {
@@ -58,6 +59,7 @@ class PatientInitializationStore {
         throw ApiError(409, "IDEMPOTENCY_CONFLICT", "clientSessionId 对应不同会话参数");
       return replay[0]["id"].c_str();
     }
+    if (!allow_new_) throw ApiError(503, "RAG_NEW_SESSIONS_PAUSED", "服务训练暂停新建，已有会话仍可继续");
     // Wait for any publisher before taking the statement snapshot / knowledgeAsOf timestamp.
     // Otherwise READ COMMITTED row-lock rechecks could see a newer service pointer.
     tx.exec_params("SELECT id FROM clinic_services WHERE id = $1 FOR SHARE", service);
@@ -247,4 +249,5 @@ class PatientInitializationStore {
       throw ApiError(409, "JOB_LEASE_LOST", "初始化任务租约已失效");
   }
   std::shared_ptr<DatabasePool> pool_;
+  bool allow_new_;
 };

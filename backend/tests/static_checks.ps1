@@ -35,3 +35,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Knowledge report client tests failed.' }
   JavaScriptFiles = $javascriptFiles.Count
   JsonFiles = $jsonFiles.Count
 } | ConvertTo-Json -Compress
+
+# Parse the opt-in real-model harness without executing it or making network calls.
+$parseErrors = $null
+$parseTokens = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+  (Join-Path $PSScriptRoot 'rag_controlled_smoke.ps1'), [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+if ($parseErrors.Count -ne 0) { throw 'Controlled smoke PowerShell syntax invalid.' }

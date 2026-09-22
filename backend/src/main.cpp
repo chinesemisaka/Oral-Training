@@ -184,11 +184,21 @@ struct Config {
   int database_pool_size;
   int database_pool_wait_ms;
   int rate_limit_per_minute;
+  bool rag_roleplay_enabled = false;
+  bool rag_patient_enabled = false;
+  bool rag_evaluation_v2_enabled = false;
+  int model_call_limit = 0; // Optional per-process HTTP-attempt cap, including retries.
+
 
   static Config fromEnvironment() {
     Config config;
     config.database_url = getEnv(
         "DATABASE_URL", "postgresql://oral_training_app@127.0.0.1:5432/oral_training");
+    config.rag_roleplay_enabled = getEnvBool("RAG_ROLEPLAY_ENABLED", false);
+    config.rag_patient_enabled = getEnvBool("RAG_PATIENT_ENABLED", false);
+    config.rag_evaluation_v2_enabled = getEnvBool("RAG_EVALUATION_V2_ENABLED", false);
+    config.model_call_limit = getEnvInt("MODEL_CALL_LIMIT", 0);
+    if (config.model_call_limit < 0) throw std::runtime_error("MODEL_CALL_LIMIT must be nonnegative");
     config.deepseek_key = trim(getEnv("DEEPSEEK_API_KEY"));
     config.deepseek_model = trim(getEnv("DEEPSEEK_MODEL", "deepseek-v4-flash"));
     config.bind_address = trim(getEnv("BIND_ADDRESS", "127.0.0.1"));
@@ -805,6 +815,31 @@ bool isRepairableModelError(const std::string& code) {
   return code == "MODEL_INVALID_RESPONSE" || code == "MODEL_SCORE_INVALID";
 }
 
+int reserveModelCall(std::atomic<int>& calls, int limit) {
+  int current = calls.load();
+  do {
+    if (limit > 0 && current >= limit)
+      throw ApiError(503, "MODEL_CALL_BUDGET_EXHAUSTED", "受控模型调用次数已用完");
+  } while (!calls.compare_exchange_weak(current, current + 1));
+  return current + 1;
+}
+
+struct ModelCallAudit {
+  bool started = false;
+  json fields;
+  std::chrono::steady_clock::time_point began = std::chrono::steady_clock::now();
+  ~ModelCallAudit() noexcept {
+    if (!started) return;
+    try {
+      fields["latencyMs"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - began).count();
+      static std::mutex output;
+      std::lock_guard<std::mutex> lock(output);
+      std::cerr << fields.dump() << '\n';
+    } catch (...) {}
+  }
+};
+
 class ModelGateway final : public oral_training::IModelGateway {
  public:
   explicit ModelGateway(Config config) : config_(std::move(config)) {}
@@ -815,6 +850,7 @@ class ModelGateway final : public oral_training::IModelGateway {
   }
 
   std::string modelVersion() const override { return "deepseek:" + config_.deepseek_model; }
+  int modelCallCount() const override { return model_calls_.load(); }
 
   void setRuntimeKey(const std::string& api_key) override {
     if (!config_.allow_runtime_api_key) {
@@ -839,7 +875,7 @@ class ModelGateway final : public oral_training::IModelGateway {
         "emotion:平静/犹豫/焦虑。不得输出自由文本画像或开场白。"}},
         {{"role","user"},{"content",json({{"scenario",scenario["public"]},
             {"manifestHash",context["manifestHash"]},{"evidence",evidence}}).dump()}}});
-    return structuredCompletion(messages,400,0.45,true);
+    return structuredCompletion(messages,400,0.45,true,"","patient-init-v1");
   }
 
   json groundedPatientReply(const json& view, const json& history, const json& evidence) const override {
@@ -850,7 +886,7 @@ class ModelGateway final : public oral_training::IModelGateway {
         "只能选择当前证据 ID；资料不足就追问确认，不接受未经核实的报价或绝对承诺。"
         "结合已公开画像、可披露信息和对话保持连贯；尚未提供的私有信息不得推测。"}},
         {{"role","user"},{"content",json({{"patient",view},{"history",history},{"evidence",evidence}}).dump()}}});
-    return structuredCompletion(messages,400,0.35,true);
+    return structuredCompletion(messages,400,0.35,true,"","patient-reply-rag-v1");
   }
 
   json extractKnowledgeClaims(const json& history) const override {
@@ -860,7 +896,7 @@ class ModelGateway final : public oral_training::IModelGateway {
         "field 只允许 price/includedItems/visitDuration/treatmentDuration/followupInterval/appointment/professional。"
         "保留否定、假设、转述、单位、条件和纠正上下文，不把 patient 的话作为客服陈述。"
         "不得输出评分、判定或虚构原句。"}},{{"role","user"},{"content",history.dump()}}});
-    const auto result=structuredCompletion(messages,4000,0.0,true);
+    const auto result=structuredCompletion(messages,4000,0.0,true,"","knowledge-extraction-v1");
     if(!result.contains("claims") || !result["claims"].is_array())
       throw ApiError(503,"MODEL_INVALID_RESPONSE","知识陈述提取格式无效");
     return result["claims"];
@@ -892,7 +928,7 @@ class ModelGateway final : public oral_training::IModelGateway {
       messages.push_back({{"role", message["role"] == "patient" ? "assistant" : "user"},
                           {"content", message["content"]}});
     }
-    return normalizePatientReply(structuredCompletion(messages, 500, 0.45, true), patient_state);
+    return normalizePatientReply(structuredCompletion(messages, 500, 0.45, true,"","patient-reply-v1"), patient_state);
   }
 
   json evaluateCommunication(const json& history, const json& assessment) const override {
@@ -901,7 +937,7 @@ class ModelGateway final : public oral_training::IModelGateway {
         {{"role", "user"}, {"content", json({{"history", history},
           {"knowledgeAssessment", assessment.at("knowledgeAssessment")},
           {"knowledgeChecks", assessment.at("knowledgeChecks")},
-          {"knowledgeManifestHash", assessment.at("knowledgeManifestHash")}}).dump()}}}), 4096, 0.2, true);
+          {"knowledgeManifestHash", assessment.at("knowledgeManifestHash")}}).dump()}}}), 4096, 0.2, true,"","score-rag-v1");
   }
 
   json evaluate(const json& scenario, const json& messages) const override {
@@ -947,7 +983,7 @@ recommendedRewrite 的写法：必须是客服能直接对患者说出口的完�
         "或 0 到 1 的比值），并且不能把五个维度都填 0。";
     // 7 轮对话的完整评分报告实测约 2800 输出 tokens；1800 会在第 4 轮左右被截断，
     // 导致整份 JSON 不完整、评估任务反复失败。4096 留出约一倍余量。
-    return structuredCompletion(model_messages, 4096, 0.2, false, repair_hint);
+    return structuredCompletion(model_messages, 4096, 0.2, false, repair_hint,"score-prompt-v3");
   }
 
   json standardServiceReply(const json& scenario, const json& history) const override {
@@ -969,7 +1005,7 @@ reply 控制在 40—260 个中文字符；learningPoints 必须有 2—4 条，
       messages.push_back({{"role", message["role"] == "standard_customer" ? "assistant" : "user"},
                           {"content", message["content"]}});
     }
-    return structuredCompletion(messages, 1000, 0.2, true);
+    return structuredCompletion(messages, 1000, 0.2, true,"","service-reply-v1");
   }
 
   json groundedServiceReply(const json& scenario, const json& history,
@@ -988,7 +1024,7 @@ evidenceIds 最多 4 个，只选择确实回答当前问题的证据。intro �
       messages.push_back({{"role", message["role"] == "standard_customer" ? "assistant" : "user"},
                           {"content", message["content"]}});
     }
-    return structuredCompletion(messages, 900, 0.15, true);
+    return structuredCompletion(messages, 900, 0.15, true,"","service-reply-rag-v1");
   }
 
   json roleplaySummary(const json& scenario, const json& history) const override {
@@ -1008,7 +1044,7 @@ summary 控制在 80—260 个中文字符；coveredTopics 1—6 条；keyPrinci
         "\n完整角色互换对话：" + history.dump());
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
     messages.push_back({{"role", "user"}, {"content", "请生成本次角色互换练习的 JSON 复盘。"}});
-    return structuredCompletion(messages, 1500, 0.1);
+    return structuredCompletion(messages, 1500, 0.1,false,"","roleplay-summary-v1");
   }
 
   // 错题「复现原回合」的单轮点评：只评学员对同一患者提问的新回答，不做整场评分、
@@ -1031,7 +1067,7 @@ passed 仅当新回答达到可直接发送给真实患者的水平且无违规�
         "\n学员的新回答：" + new_answer);
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
     messages.push_back({{"role", "user"}, {"content", "请输出本次单回合复练的 JSON 点评。"}});
-    return structuredCompletion(messages, 1000, 0.2, true);
+    return structuredCompletion(messages, 1000, 0.2, true,"","service-reply-v1");
   }
 
   /* 训练辅助提示：必须针对「患者当前这一轮说了什么、学员上一轮答了什么」来写，
@@ -1059,7 +1095,7 @@ hint 用 40—120 个中文字符，写成 1—2 句可直接照做的指引，�
         "\n完整对话（role=patient 为模拟患者，role=user 为受训客服）：" + history.dump();
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
     messages.push_back({{"role", "user"}, {"content", "请输出本轮训练提示的 JSON。"}});
-    return structuredCompletion(messages, 800, 0.1);
+    return structuredCompletion(messages, 800, 0.1,false,"","training-hint-v1");
   }
 
   json generateKnowledgeDraft(const std::string& kind,
@@ -1079,7 +1115,7 @@ hint 用 40—120 个中文字符，写成 1—2 句可直接照做的指引，�
         "\n输入（包括当前草稿和管理员生成说明）：" + input.dump());
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
     messages.push_back({{"role", "user"}, {"content", "请生成一份可供管理员复核编辑的模拟草稿候选。"}});
-    return structuredCompletion(messages, 2600, 0.35);
+    return structuredCompletion(messages, 2600, 0.35,false,"","knowledge-draft-v1");
   }
 
  private:
@@ -1092,13 +1128,19 @@ hint 用 40—120 个中文字符，写成 1—2 句可直接照做的指引，�
 
   json structuredCompletion(const json& messages, int max_tokens, double temperature,
                             bool allow_plain_patient_reply = false,
-                            const std::string& repair_hint = "") const {
+                            const std::string& repair_hint = "", const std::string& prompt_version = "legacy-v1") const {
+    const auto logical_id = makeId("model-call");
     ApiError last_error(503, "MODEL_INVALID_RESPONSE", "模型未返回可解析 JSON");
     // 输出被 max_tokens 截断是确定性失败：同参数重试必然再次截断（7 轮对话实测需要约 2800 输出 tokens，
     // 而评分请求只给了 1800）。因此第一次截断就把预算翻倍再试，而不是把同一个错误重复三次后宣告失败。
     constexpr int kMaxOutputTokens = 8192;
     int effective_max_tokens = std::max(max_tokens, 1000);
     for (int attempt = 0; attempt < 2; ++attempt) {
+      ModelCallAudit audit;
+      audit.fields = {{"event", "model_call"}, {"logicalCallId", logical_id}, {"attempt", attempt + 1},
+          {"requestedModel", config_.deepseek_model}, {"actualModel", nullptr}, {"usage", nullptr},
+          {"promptVersion", prompt_version}, {"maxOutputTokens", effective_max_tokens},
+          {"retry", attempt > 0}, {"errorType", "MODEL_INVALID_RESPONSE"}};
       try {
         auto attempt_messages = messages;
         if (attempt > 0 && !attempt_messages.empty() && attempt_messages[0].contains("content")) {
@@ -1111,7 +1153,11 @@ hint 用 40—120 个中文字符，写成 1—2 句可直接照做的指引，�
             config_.deepseek_model, attempt_messages,
             effective_max_tokens,
             attempt == 0 ? temperature : 0.0, json_output);
-        const auto response = postDeepSeek(apiKey(), request.dump());
+        const auto key = apiKey();
+        audit.fields["callNumber"] = reserveModelCall(model_calls_, config_.model_call_limit);
+        audit.started = true;
+        const auto response = postDeepSeek(key, request.dump());
+        audit.fields["httpStatus"] = response.status;
         if (response.status == 401 || response.status == 403) {
           throw ApiError(503, "MODEL_AUTH_FAILED", "DeepSeek API Key 无效或无权调用模型");
         }
@@ -1120,8 +1166,15 @@ hint 用 40—120 个中文字符，写成 1—2 句可直接照做的指引，�
           throw ApiError(503, "MODEL_ERROR", "模型服务暂时不可用");
         }
         const auto payload = json::parse(response.body);
+        audit.fields["actualModel"] = payload.value("model", "unknown");
+        audit.fields["usage"] = json::object();
+        if (payload.contains("usage") && payload["usage"].is_object())
+          for (const auto* key : {"prompt_tokens", "completion_tokens", "total_tokens", "prompt_cache_hit_tokens", "prompt_cache_miss_tokens"})
+            if (payload["usage"].contains(key) && payload["usage"][key].is_number_integer())
+              audit.fields["usage"][key] = payload["usage"][key];
         const auto& choice = payload.at("choices").at(0);
         const auto finish_reason = jsonString(choice, "finish_reason", "unknown");
+        audit.fields["finishReason"] = finish_reason;
         const auto& message = choice.at("message");
         const auto content_bytes = message.contains("content") && message["content"].is_string()
             ? message["content"].get_ref<const std::string&>().size() : 0;
@@ -1156,15 +1209,19 @@ hint 用 40—120 个中文字符，写成 1—2 句可直接照做的指引，�
         }
         const auto content = message["content"].get<std::string>();
         try {
-          return parseModelJsonContent(content);
+          const auto result = parseModelJsonContent(content);
+          audit.fields["errorType"] = nullptr;
+          return result;
         } catch (const ApiError& error) {
           if (allow_plain_patient_reply && attempt == 1 && error.code == "MODEL_INVALID_RESPONSE") {
             std::cerr << "model returned plain patient text after JSON retries; using safe reply fallback\n";
+            audit.fields["fallback"] = "plain_patient_reply";
             return plainPatientReply(content);
           }
           throw;
         }
       } catch (const ApiError& error) {
+        audit.fields["errorType"] = error.code;
         last_error = error;
         if (!isRepairableModelError(error.code)) throw;
         std::cerr << "model JSON validation failed on attempt " << attempt + 1 << ": " << error.what() << '\n';
@@ -1177,6 +1234,7 @@ hint 用 40—120 个中文字符，写成 1—2 句可直接照做的指引，�
   }
 
   Config config_;
+  mutable std::atomic<int> model_calls_{0};
   mutable std::mutex key_mutex_;
   std::string runtime_key_;
 };
@@ -1775,7 +1833,7 @@ class Service {
   Service(const Config& config, std::shared_ptr<DatabasePool> database_pool,
           std::unique_ptr<oral_training::IModelGateway> model)
       : database_pool_(std::move(database_pool)), database_(database_pool_),
-        roleplay_database_(database_pool_), rag_retriever_(database_pool_),
+        roleplay_database_(database_pool_, config.rag_roleplay_enabled), rag_retriever_(database_pool_),
         model_(std::move(model)), queue_(database_pool_),
         knowledge_queue_(database_pool_), worker_concurrency_(config.worker_concurrency),
         knowledge_worker_concurrency_(config.knowledge_worker_concurrency) {
@@ -2234,7 +2292,7 @@ class Service {
  private:
   static bool retryableJobError(const std::string& code) {
     return code != "MODEL_AUTH_FAILED" && code != "MODEL_NOT_CONFIGURED" &&
-           code != "MODEL_CONTENT_FILTERED" && code != "MODEL_UNSAFE_RESPONSE" &&
+           code != "MODEL_CALL_BUDGET_EXHAUSTED" && code != "MODEL_CONTENT_FILTERED" && code != "MODEL_UNSAFE_RESPONSE" &&
            code != "SESSION_NOT_FOUND" && code != "ROLEPLAY_SESSION_NOT_FOUND" &&
            code != "SCENARIO_NOT_FOUND" && code != "UNKNOWN_JOB_TYPE" &&
            code != "PATIENT_INITIALIZATION_UNAVAILABLE" && code != "SESSION_ABANDONED";
@@ -2484,6 +2542,10 @@ int main() {
                                       worker_healthy, model_configured);
       return ok({{"status", ready ? "healthy" : "unhealthy"}, {"ready", ready},
                  {"database", database_healthy}, {"modelConfigured", model_configured},
+                 {"rag", {{"roleplayNewSessions", config.rag_roleplay_enabled},
+                          {"patientNewSessions", config.rag_patient_enabled && config.rag_evaluation_v2_enabled},
+                          {"evaluationV2Enabled", config.rag_evaluation_v2_enabled}}},
+                 {"modelCallLimit", config.model_call_limit}, {"modelCallCount", service.model().modelCallCount()},
                  {"workerRunning", worker_healthy},
                  {"workerThreads", service.runningWorkerCount()},
                  {"knowledgeWorkerThreads", service.knowledgeWorkerCount()},
@@ -2679,7 +2741,8 @@ int main() {
       if (!service_id.empty()) {
         if (body.contains("customPatientProfile"))
           throw ApiError(400, "INVALID_ARGUMENT", "服务训练暂不接受自定义患者画像");
-        PatientInitializationStore initialization(database_pool);
+        PatientInitializationStore initialization(database_pool,
+            config.rag_patient_enabled && config.rag_evaluation_v2_enabled);
         const auto id = initialization.create(user.id, scenario_id, service_id, client_id);
         service.notifyJobs();
         return ok({{"session", service.database().getSession(user.id, id)["session"]},

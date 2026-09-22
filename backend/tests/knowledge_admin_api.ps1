@@ -68,7 +68,7 @@ $environmentNames = @(
   'PGOPTIONS', 'DATABASE_URL', 'PRODUCTION', 'AUTH_MODE', 'ALLOW_RUNTIME_API_KEY',
   'BIND_ADDRESS', 'PORT', 'ALLOWED_ORIGIN', 'REQUIRE_HTTPS', 'AI_WORKER_CONCURRENCY',
   'KNOWLEDGE_WORKER_CONCURRENCY', 'DATABASE_POOL_SIZE', 'DATABASE_POOL_WAIT_MS',
-  'DEEPSEEK_API_KEY'
+  'DEEPSEEK_API_KEY', 'RAG_ROLEPLAY_ENABLED', 'RAG_PATIENT_ENABLED', 'RAG_EVALUATION_V2_ENABLED'
 )
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) {
@@ -79,6 +79,9 @@ $stdout = Join-Path $env:TEMP "knowledge-api-$schema.stdout.log"
 $stderr = Join-Path $env:TEMP "knowledge-api-$schema.stderr.log"
 
 try {
+  $env:RAG_ROLEPLAY_ENABLED = 'true'
+  $env:RAG_PATIENT_ENABLED = 'true'
+  $env:RAG_EVALUATION_V2_ENABLED = 'true'
   & $PsqlPath --dbname=$DatabaseUrl -v ON_ERROR_STOP=1 -X -q -c "CREATE SCHEMA $schema;"
   if ($LASTEXITCODE -ne 0) { throw 'Failed to create disposable schema.' }
   $env:PGOPTIONS = "-c search_path=$schema"

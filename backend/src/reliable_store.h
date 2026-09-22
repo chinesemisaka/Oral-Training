@@ -3029,8 +3029,8 @@ class ReliableDatabase {
 
 class ReliableRoleplayDatabase {
  public:
-  explicit ReliableRoleplayDatabase(std::shared_ptr<DatabasePool> database_pool)
-      : database_pool_(std::move(database_pool)) {}
+  explicit ReliableRoleplayDatabase(std::shared_ptr<DatabasePool> database_pool, bool allow_new = true)
+      : database_pool_(std::move(database_pool)), allow_new_(allow_new) {}
 
   json listScenarios(const std::string& user_id, const std::string& service_id = "") const {
     auto connection = database_pool_->acquire();
@@ -3108,6 +3108,8 @@ class ReliableRoleplayDatabase {
                 {"messages", json::array()}};
       }
     }
+    if (!service_id.empty() && !allow_new_)
+      throw ApiError(503, "RAG_NEW_SESSIONS_PAUSED", "服务训练暂停新建，已有会话仍可继续");
     const auto session_id = makeId("rpsess");
     const auto max_rounds = clampInt(scenario[0]["max_rounds"].as<int>(), 1, 10);
     std::string service_revision_id;
@@ -3163,6 +3165,8 @@ class ReliableRoleplayDatabase {
         ? std::string() : std::string(previous[0]["free_description"].c_str());
     const auto service_id = previous[0]["service_id"].is_null()
         ? std::string() : std::string(previous[0]["service_id"].c_str());
+    if (!service_id.empty() && !allow_new_)
+      throw ApiError(503, "RAG_NEW_SESSIONS_PAUSED", "服务训练暂停新建，原会话仍可继续");
     const auto scenario = tx.exec_params(
         "SELECT name, max_rounds FROM scenarios WHERE id = $1", scenario_id);
     tx.exec_params(
@@ -3952,6 +3956,7 @@ class ReliableRoleplayDatabase {
     return roleplaySessionJson(rows[0]);
   }
 
+  bool allow_new_;
   std::shared_ptr<DatabasePool> database_pool_;
 };
 
