@@ -1787,7 +1787,7 @@ class Service {
 
   void notifyJobs() { wakeWorkers(); }
 
-  // N05 service seam for N06's v2 evaluation job. No public endpoint or report writes here.
+  // Read-only knowledge assessment used by the v2 evaluation job.
   json assessTrainingKnowledge(const std::string& session_id) const {
     const auto detail=database_.getSessionInternal(session_id);
     if(detail["session"].value("contextVersion",1)<2 || detail["session"]["status"]!="completed")
@@ -1808,6 +1808,43 @@ class Service {
         });
     assessment["claimCandidates"] = candidates;
     return assessment;
+  }
+
+  // Shared worker entry point; permits deterministic gateway integration tests without a network call.
+  void evaluateTrainingJob(const AiJob& job) {
+    if (job.type != "evaluation") throw ApiError(409, "JOB_LEASE_LOST", "任务类型不匹配");
+    const auto detail = database_.getSessionInternal(job.target_id);
+    const auto scenario = database_.getScenarioInternal(
+        detail["session"]["scenarioId"].get<std::string>());
+    const auto history = database_.getHistory(job.target_id);
+    json report;
+    if (detail["session"].value("contextVersion", 1) >= 2) {
+      const auto assessment = assessTrainingKnowledge(job.target_id);
+      auto communication = model_->evaluateCommunication(history, assessment);
+      for (const auto* key : {"medicalCompliance", "empathy", "needsDiscovery", "serviceEtiquette"}) {
+        const auto score = communication.at("dimensionScores").at(key);
+        if (!score.is_number_integer() || score < 0 || score > 100)
+          throw ApiError(503, "MODEL_SCORE_INVALID", "沟通维度必须为 0—100 整数");
+      }
+      for (const auto& strength : communication.at("strengths")) {
+        bool found = false;
+        for (const auto& message : history) if (message["role"] == "user" && message["round"] == strength["round"])
+          found = message["content"].get<std::string>().find(strength.at("evidence").get<std::string>()) != std::string::npos;
+        if (!found) throw ApiError(503, "MODEL_INVALID_RESPONSE", "沟通优势必须引用客服原话");
+      }
+      // Compatibility normalizer validates quotes and communication scores; this placeholder is never published.
+      communication["dimensionScores"]["knowledgeAccuracy"] = 80;
+      report = normalizeReport(communication, history);
+      std::size_t user_rounds = 0;
+      for (const auto& message : history) if (message["role"] == "user") ++user_rounds;
+      if (report["roundComments"].size() != user_rounds)
+        throw ApiError(503, "MODEL_INVALID_RESPONSE", "沟通点评必须覆盖全部客服轮次");
+      report["schemaVersion"] = 2;
+      report["_knowledgeAssessment"] = assessment;
+    } else {
+      report = normalizeReport(model_->evaluate(scenario, history), history);
+    }
+    database_.saveEvaluation(job, report, model_->modelVersion());
   }
 
   ReliableDatabase& database() { return database_; }
@@ -2151,14 +2188,17 @@ class Service {
                 current["manifest"].get<std::vector<std::string>>(), current["knowledgeAsOf"].get<std::string>(),
                 current["manifestHash"].get<std::string>(), request, "demo");
           });
-      bool supported = false, contradicted = false;
+      bool supported = false, contradicted = false, unknown = false;
       for (const auto& check : assessment["knowledgeChecks"]) {
         if (check["topic"] == field && check["verdict"] == "supported") supported = true;
         if (check["verdict"] == "contradicted" || check["verdict"] == "incomplete") contradicted = true;
+        if (check["verdict"] == "evidence_missing" || check["verdict"] == "conflicted") unknown = true;
       }
-      const bool passed = supported && !contradicted;
+      const bool passed = supported && !contradicted && !unknown;
+      const json outcome = contradicted ? json(false) : (unknown || !supported) ? json(nullptr) : json(true);
       return {{"sessionId", session_id}, {"mistakeKey", mistake_key}, {"round", context["mistake"]["round"]},
-          {"passed", passed}, {"currentRevisionId", current["serviceRevisionId"]},
+          {"passed", outcome}, {"assessmentStatus", outcome.is_null() ? "insufficient_evidence" : "assessed"},
+          {"currentRevisionId", current["serviceRevisionId"]},
           {"versionChanged", current["serviceRevisionId"] != context["session"]["originalRevisionId"]},
           {"comment", passed ? "已按当前服务版本核验通过。" : "当前资料未能确认本次回答完整正确，请核对当前资料后再练。"},
           {"recommendedRewrite", "请按当前已发布资料确认事实；具体适用情况需要医生结合检查评估。"}};
@@ -2222,23 +2262,7 @@ class Service {
       return;
     }
     if (job.type == "evaluation") {
-      const auto detail = database_.getSessionInternal(job.target_id);
-      const auto scenario = database_.getScenarioInternal(
-          detail["session"]["scenarioId"].get<std::string>());
-      const auto history = database_.getHistory(job.target_id);
-      json report;
-      if (detail["session"].value("contextVersion", 1) >= 2) {
-        const auto assessment = assessTrainingKnowledge(job.target_id);
-        auto communication = model_->evaluateCommunication(history, assessment);
-        // Compatibility normalizer validates quotes and communication scores; this placeholder is never published.
-        communication["dimensionScores"]["knowledgeAccuracy"] = 80;
-        report = normalizeReport(communication, history);
-        report["schemaVersion"] = 2;
-        report["_knowledgeAssessment"] = assessment;
-      } else {
-        report = normalizeReport(model_->evaluate(scenario, history), history);
-      }
-      database_.saveEvaluation(job, report, model_->modelVersion());
+      evaluateTrainingJob(job);
       return;
     }
     if (job.type == "roleplay_summary") {

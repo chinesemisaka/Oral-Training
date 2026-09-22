@@ -28,6 +28,18 @@ class InitGateway final : public oral_training::IModelGateway {
   void setRuntimeKey(const std::string&) override {}
   json patientReply(const json&,const json&,const json&) const override { throw std::runtime_error("unexpected model call"); }
   json evaluate(const json&,const json&) const override { throw std::runtime_error("unexpected model call"); }
+  json evaluateCommunication(const json& history,const json& assessment) const override {
+    requireInit(assessment.contains("knowledgeManifestHash"),"communication missing locked knowledge");
+    std::string quote;
+    for(const auto& message:history) if(message["role"]=="user") quote=message["content"].get<std::string>();
+    return {{"dimensionScores",{{"medicalCompliance",80},{"empathy",80},{"needsDiscovery",80},{"serviceEtiquette",80}}},
+        {"summary","Fixture communication report"},
+        {"strengths",json::array({{{"round",1},{"evidence",quote},{"content","Clear expression"}}})},
+        {"improvements",json::array({{{"round",1},{"content","Ask about concerns"}}})},
+        {"violations",json::array()},
+        {"roundComments",json::array({{{"round",1},{"comment","Listen first"},
+          {"recommendedRewrite","您好，我理解您的担忧，请问您最关注哪些方面？"}}})}};
+  }
   json standardServiceReply(const json&,const json&) const override { throw std::runtime_error("unexpected model call"); }
   json roleplaySummary(const json&,const json&) const override { throw std::runtime_error("unexpected model call"); }
   bool supportsPatientInitialization() const override { return true; }
@@ -345,7 +357,7 @@ int main() {
       bool rejected=false;try{db.saveEvaluation(job,invalid,"fixture");}catch(...){rejected=true;}
       requireInit(rejected,"invalid score accepted");
       {pqxx::read_transaction tx(control);requireInit(tx.exec_params("SELECT 1 FROM rag_traces WHERE context_id=$1 AND is_public",scored_context["contextId"].get<std::string>()).empty(),"trace insert did not roll back");}
-      db.saveEvaluation(job,report,"fixture");
+      service.evaluateTrainingJob(job);
       const auto saved=db.getEvaluation("init-user",scored_id)["evaluation"];
       requireInit(saved["totalScore"]==60 && saved["learningMistakes"].size()==1,"scored report wrong");
       const auto ref=saved["knowledgeChecks"][0]["evidenceRefs"][0];
@@ -358,7 +370,7 @@ int main() {
       const auto mistake=saved["learningMistakes"][0]["mistakeKey"].get<std::string>();
       const auto retrain=db.getMistakeRetrainContext("init-user",scored_id,mistake);
       requireInit(retrain["session"]["versionChanged"]==true && retrain["session"]["currentRevisionId"]=="init-sr-2","retrain revision notice missing");
-      requireInit(service.retrainMistake("init-user",scored_id,mistake,"费用3980元起每颗，检查后确认。")["passed"]==false,"retrain used old evidence");
+      requireInit(service.retrainMistake("init-user",scored_id,mistake,"费用3980元起每颗，检查后确认。")["passed"].is_null(),"retrain used old evidence");
       requireInit(db.getEvaluation("init-user",scored_id)["evaluation"]==saved,"retraining changed original report");
     }
     const auto active_a=store.create("init-user","implant-basic","init-service","n04-a");

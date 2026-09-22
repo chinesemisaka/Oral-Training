@@ -312,10 +312,10 @@ inline json applyKnowledgeScores(json report,const json& assessment,int pass_sco
   for(const auto* key:{"knowledgeAssessment","knowledgeChecks","knowledgeManifestHash"}) report[key]=assessment.at(key);
   report["dimensionScores"]["knowledgeAccuracy"]=score;
   report["totalScore"]=nullptr; report["passed"]=nullptr;
+  const auto& d=report.at("dimensionScores");
+  for(const auto* key:{"medicalCompliance","empathy","needsDiscovery","serviceEtiquette"})
+    if(!d.contains(key)||!d[key].is_number_integer()||d[key]<0||d[key]>100) throw std::runtime_error("invalid communication score");
   if(!score.is_null()) {
-    const auto& d=report.at("dimensionScores");
-    for(const auto* key:{"medicalCompliance","empathy","needsDiscovery","serviceEtiquette"})
-      if(!d.contains(key)||!d[key].is_number_integer()||d[key]<0||d[key]>100) throw std::runtime_error("invalid communication score");
     const int total=static_cast<int>(std::lround(score.get<int>()*.25+d["medicalCompliance"].get<int>()*.25+
         d["empathy"].get<int>()*.20+d["needsDiscovery"].get<int>()*.20+d["serviceEtiquette"].get<int>()*.10));
     report["totalScore"]=total; report["passed"]=total>=pass_score;

@@ -45,7 +45,7 @@
 
     <view class="result-card card" wx:if="{{result}}">
       <view class="verdict {{result.passed ? 'verdict-pass' : 'verdict-retry'}}">
-        {{result.passed ? '本次达标' : '建议再练一次'}}
+        {{result.passed === null ? '依据不足，暂不判定' : result.passed ? '本次达标' : '建议再练一次'}}
       </view>
       <text class="field-label">点评</text>
       <text class="result-text">{{result.comment}}</text>

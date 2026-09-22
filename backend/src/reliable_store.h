@@ -2852,6 +2852,7 @@ class ReliableDatabase {
     if (report.contains("learningMistakes") && report["learningMistakes"].is_array()) {
       return report["learningMistakes"];
     }
+    if (report.value("schemaVersion", 1) == 2) return json::array();
     json mistakes = json::array();
     if (!report.contains("violations") || !report["violations"].is_array()) return mistakes;
     for (size_t index = 0; index < report["violations"].size() && mistakes.size() < 12; ++index) {
